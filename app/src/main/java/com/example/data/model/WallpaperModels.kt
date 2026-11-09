@@ -215,7 +215,8 @@ data class WallpaperAppState(
     val resumeFadeEnabled: Boolean = false,
     val darken: DarkenConfig = DarkenConfig(),
     val backupFolderPath: String? = null,
-    val autoBackupEnabled: Boolean = false
+    val autoBackupEnabled: Boolean = false,
+    val showOffsetDebugOverlay: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -227,6 +228,7 @@ data class WallpaperAppState(
         put("darken", darken.toJson())
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
+        put("showOffsetDebugOverlay", showOffsetDebugOverlay)
     }
 
     companion object {
@@ -259,7 +261,8 @@ data class WallpaperAppState(
                 darken = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
                     ?: DarkenConfig(),
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },
-                autoBackupEnabled = json.optBoolean("autoBackupEnabled", false)
+                autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
+                showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false)
             )
         }
     }

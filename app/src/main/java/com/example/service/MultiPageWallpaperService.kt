@@ -9,11 +9,13 @@ import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.os.Bundle
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.animation.LinearInterpolator
+import java.util.Locale
 import com.example.darken.ExtraDimDetector
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
@@ -29,11 +31,28 @@ class MultiPageWallpaperService : WallpaperService() {
         private val repository by lazy { WallpaperRepository.getInstance(applicationContext) }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val dimPaint = Paint()
+        private val offsetOverlayBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(220, 22, 28, 40)
+        }
+        private val offsetOverlayLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.LTGRAY
+            textAlign = Paint.Align.CENTER
+        }
+        private val offsetOverlayValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            typeface = android.graphics.Typeface.create(
+                android.graphics.Typeface.MONOSPACE,
+                android.graphics.Typeface.BOLD
+            )
+        }
 
         private var surfaceWidth = 1080
         private var surfaceHeight = 2400
         private var currentXOffset = 0.5f
         private var currentYOffset = 0.0f
+        private var receivedXOffset: Float? = null
+        private var receivedYOffset: Float? = null
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
         private var resumeFadeAnimator: ValueAnimator? = null
@@ -133,6 +152,8 @@ class MultiPageWallpaperService : WallpaperService() {
             yPixelOffset: Int
         ) {
             super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
+            receivedXOffset = xOffset
+            receivedYOffset = yOffset
             val calib = repository.appState.value.calibration
             val homeOffset = calib.getHomeOffset()
 
@@ -342,6 +363,37 @@ class MultiPageWallpaperService : WallpaperService() {
                     )
                 }
             }
+
+            if (state.showOffsetDebugOverlay) {
+                drawOffsetDebugOverlay(canvas)
+            }
+        }
+
+        private fun drawOffsetDebugOverlay(canvas: android.graphics.Canvas) {
+            val density = resources.displayMetrics.density
+            val cardWidth = 224f * density
+            val cardHeight = 58f * density
+            val left = (surfaceWidth - cardWidth) / 2f
+            val top = 20f * density
+            val bounds = RectF(left, top, left + cardWidth, top + cardHeight)
+
+            offsetOverlayLabelPaint.textSize = 11f * density
+            offsetOverlayValuePaint.textSize = 13f * density
+            canvas.drawRoundRect(bounds, 12f * density, 12f * density, offsetOverlayBackgroundPaint)
+            canvas.drawText(
+                "Launcher offset received",
+                surfaceWidth / 2f,
+                top + 21f * density,
+                offsetOverlayLabelPaint
+            )
+            val xText = receivedXOffset?.let { String.format(Locale.US, "%.4f", it) } ?: "--"
+            val yText = receivedYOffset?.let { String.format(Locale.US, "%.4f", it) } ?: "--"
+            canvas.drawText(
+                "X $xText    Y $yText",
+                surfaceWidth / 2f,
+                top + 43f * density,
+                offsetOverlayValuePaint
+            )
         }
 
         /**

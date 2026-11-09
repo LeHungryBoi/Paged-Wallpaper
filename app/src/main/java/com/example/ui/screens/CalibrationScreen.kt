@@ -34,6 +34,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -131,6 +132,35 @@ fun CalibrationScreen(
                         )
                     }
                 }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("offset_debug_overlay_card"),
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Show live offset overlay",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Display the raw X/Y offsets received from the launcher on the wallpaper.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = appState.showOffsetDebugOverlay,
+                    onCheckedChange = viewModel::toggleOffsetDebugOverlay,
+                    modifier = Modifier.testTag("toggle_offset_debug_overlay")
+                )
             }
         }
 

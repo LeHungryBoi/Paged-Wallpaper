@@ -134,7 +134,8 @@ class ExampleUnitTest {
             pages = pages,
             calibration = CalibrationConfig(pageCount = 3, homePageIndex = 1),
             transitionType = "cube",
-            resumeFadeEnabled = true
+            resumeFadeEnabled = true,
+            showOffsetDebugOverlay = true
         )
         val json = state.toJson()
         val restored = WallpaperAppState.fromJson(json)
@@ -143,6 +144,7 @@ class ExampleUnitTest {
         assertEquals("Home", restored.pages[1].customLabel)
         assertEquals("cube", restored.transitionType)
         assertTrue(restored.resumeFadeEnabled)
+        assertTrue(restored.showOffsetDebugOverlay)
     }
 
     @Test
@@ -157,5 +159,6 @@ class ExampleUnitTest {
         )
 
         assertFalse(restored.resumeFadeEnabled)
+        assertFalse(restored.showOffsetDebugOverlay)
     }
 }

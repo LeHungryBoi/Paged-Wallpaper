@@ -200,6 +200,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(resumeFadeEnabled = enabled) }
     }
 
+    fun toggleOffsetDebugOverlay(enabled: Boolean) {
+        repository.updateState { it.copy(showOffsetDebugOverlay = enabled) }
+    }
+
     fun updateDarkenConfig(darkenConfig: DarkenConfig) {
         repository.updateState { it.copy(darken = darkenConfig) }
     }
