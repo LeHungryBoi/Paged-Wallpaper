@@ -8,6 +8,9 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val configuredVersionCode = providers.gradleProperty("appVersionCode").orNull?.toIntOrNull() ?: 1
+val configuredVersionName = providers.gradleProperty("appVersionName").orNull ?: "1.0"
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -16,8 +19,8 @@ android {
     applicationId = "com.aistudio.multiwall.vibe"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = configuredVersionCode
+    versionName = configuredVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
