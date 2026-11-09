@@ -55,6 +55,9 @@ class MultiPageWallpaperService : WallpaperService() {
         private var receivedYOffset: Float? = null
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
+        private var awaitingResumeOffset = false
+        private var recoveringFromZeroOffset = false
+        private var sawZeroOffsetWhileHidden = false
         private var resumeFadeAnimator: ValueAnimator? = null
         private var resumeFadeProgress = 1f
 
@@ -75,6 +78,7 @@ class MultiPageWallpaperService : WallpaperService() {
             super.onCreate(surfaceHolder)
             val calib = repository.appState.value.calibration
             currentXOffset = repository.getLastKnownOffsetOrHome()
+            awaitingResumeOffset = calib.homePageIndex != 0
             repository.addChangeListener(repoChangeListener)
             extraDimObserver = ExtraDimDetector.registerObserver(applicationContext) {
                 drawFrame()
@@ -104,10 +108,15 @@ class MultiPageWallpaperService : WallpaperService() {
                 // might have sent dummy 0.0f system offsets, restore the user's home offset
                 // if the launcher's home page is not screen 1.
                 if (!wasVisible) {
-                    if (calib.homePageIndex != 0 && (!hasReceivedLauncherOffset || currentXOffset <= 0.001f)) {
+                    if (calib.homePageIndex != 0 &&
+                        (sawZeroOffsetWhileHidden || !hasReceivedLauncherOffset || currentXOffset <= 0.001f)
+                    ) {
                         currentXOffset = homeOffset
                         repository.saveLastKnownOffset(currentXOffset)
                     }
+                    awaitingResumeOffset = calib.homePageIndex != 0
+                    recoveringFromZeroOffset = sawZeroOffsetWhileHidden
+                    sawZeroOffsetWhileHidden = false
                     startResumeFadeIfEnabled()
                 }
                 drawFrame()
@@ -156,6 +165,28 @@ class MultiPageWallpaperService : WallpaperService() {
             receivedYOffset = yOffset
             val calib = repository.appState.value.calibration
             val homeOffset = calib.getHomeOffset()
+            val isZeroOffset = xOffset <= 0.001f
+
+            if (calib.homePageIndex != 0 && !isVisible && isZeroOffset) {
+                sawZeroOffsetWhileHidden = true
+                return
+            }
+
+            if (calib.homePageIndex != 0 && isVisible) {
+                if (awaitingResumeOffset && isZeroOffset) {
+                    recoveringFromZeroOffset = true
+                }
+
+                if (recoveringFromZeroOffset) {
+                    val homeTolerance = maxOf(0.02f, kotlin.math.abs(xOffsetStep) * 0.05f)
+                    if (kotlin.math.abs(xOffset - homeOffset) > homeTolerance) {
+                        drawFrame()
+                        return
+                    }
+                    recoveringFromZeroOffset = false
+                }
+                awaitingResumeOffset = false
+            }
 
             // Detect dummy system resets:
             // When fullscreen apps (like YouTube / PiP) or lock screens are active,
@@ -173,6 +204,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (!hasReceivedLauncherOffset || !isVisible) {
                     currentXOffset = homeOffset
                     currentYOffset = yOffset
+                    recoveringFromZeroOffset = false
+                    awaitingResumeOffset = false
                     if (isVisible) {
                         drawFrame()
                     }
@@ -206,6 +239,9 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (action == "android.home") {
                     // Swiped home or home button pressed
                     currentXOffset = calib.getHomeOffset()
+                    awaitingResumeOffset = calib.homePageIndex != 0
+                    recoveringFromZeroOffset = false
+                    sawZeroOffsetWhileHidden = false
                     repository.saveLastKnownOffset(currentXOffset)
                     if (isVisible) {
                         drawFrame()
@@ -230,6 +266,9 @@ class MultiPageWallpaperService : WallpaperService() {
                                     // User swiped or tapped home button to return to launcher
                                     val calib = repository.appState.value.calibration
                                     currentXOffset = calib.getHomeOffset()
+                                    awaitingResumeOffset = calib.homePageIndex != 0
+                                    recoveringFromZeroOffset = false
+                                    sawZeroOffsetWhileHidden = false
                                     repository.saveLastKnownOffset(currentXOffset)
                                     if (isVisible) {
                                         drawFrame()
