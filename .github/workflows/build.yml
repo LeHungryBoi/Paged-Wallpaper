@@ -1,14 +1,13 @@
 name: Build APK
 
-# Build a fresh APK on every push so you never need a local dev environment.
-# Download the APK from the run's Artifacts section.
+# Build a fresh APK on every push; main-branch builds are also published as releases.
 
 on:
   push:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 # Only the newest commit of a branch matters; cancel superseded runs.
@@ -60,6 +59,31 @@ jobs:
           name: app-debug-${{ github.run_number }}-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Publish APK GitHub release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          apk_path="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          if [ -z "$apk_path" ]; then
+            echo "No debug APK was produced." >&2
+            exit 1
+          fi
+
+          release_tag="build-${RUN_NUMBER}"
+          asset_name="app-debug-${RUN_NUMBER}.apk"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "$apk_path#$asset_name" --clobber
+          else
+            gh release create "$release_tag" "$apk_path#$asset_name" \
+              --title "Debug build ${RUN_NUMBER}" \
+              --notes "Automated debug APK for commit ${COMMIT_SHA}." \
+              --target "$COMMIT_SHA"
+          fi
 
       - name: Keep only the latest three APK artifacts
         uses: actions/github-script@v7

@@ -9,6 +9,7 @@ import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Shader
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -84,6 +85,7 @@ class WallpaperRepository private constructor(private val context: Context) {
 
     // Bitmap cache for fast Live Wallpaper Engine rendering
     private val bitmapCache = mutableMapOf<Int, Bitmap>()
+    private val parallaxBitmapCache = mutableMapOf<Triple<Int, Int, Int>, Bitmap>()
 
     // Listeners for Live Wallpaper to trigger instant redrawing
     private val listeners = mutableListOf<() -> Unit>()
@@ -218,6 +220,48 @@ class WallpaperRepository private constructor(private val context: Context) {
             bitmapCache.values.forEach { it.recycle() }
             bitmapCache.clear()
         }
+        synchronized(parallaxBitmapCache) {
+            parallaxBitmapCache.values.forEach { it.recycle() }
+            parallaxBitmapCache.clear()
+        }
+    }
+
+    fun getParallaxBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
+        if (reqWidth <= 0 || reqHeight <= 0) return null
+        val key = Triple(pageIndex, reqWidth, reqHeight)
+        synchronized(parallaxBitmapCache) {
+            parallaxBitmapCache[key]?.let {
+                if (!it.isRecycled) return it
+            }
+        }
+        fun getScreenSizedPage(): Bitmap? {
+            val pageBitmap = getCroppedBitmap(pageIndex, reqWidth, reqHeight) ?: return null
+            if (pageBitmap.width == reqWidth && pageBitmap.height == reqHeight) return pageBitmap
+            return try {
+                Bitmap.createScaledBitmap(pageBitmap, reqWidth, reqHeight, true).also {
+                    synchronized(parallaxBitmapCache) { parallaxBitmapCache[key] = it }
+                }
+            } catch (e: OutOfMemoryError) {
+                Log.e("WallpaperRepo", "Not enough memory to scale page $pageIndex", e)
+                null
+            }
+        }
+        val page = _appState.value.pages.find { it.pageIndex == pageIndex }
+            ?: return getScreenSizedPage()
+        val media = page.originalId?.let { id -> _originals.value.find { it.id == id } }
+            ?: return getScreenSizedPage()
+        if (media.parallaxAmount <= 0f) return getScreenSizedPage()
+
+        val bitmap = renderMediaBitmap(
+            media = media,
+            targetWidth = reqWidth,
+            targetHeight = reqHeight,
+            requestedTravelPx = reqWidth * 0.25f * media.parallaxAmount
+        ) ?: return getScreenSizedPage()
+        synchronized(parallaxBitmapCache) {
+            parallaxBitmapCache[key] = bitmap
+        }
+        return bitmap
     }
 
     fun getCroppedBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
@@ -325,7 +369,8 @@ class WallpaperRepository private constructor(private val context: Context) {
             blurAmount = updatedMedia.blurAmount.coerceIn(0f, 1f),
             cropPanX = updatedMedia.cropPanX.coerceIn(-1f, 1f),
             cropPanY = updatedMedia.cropPanY.coerceIn(-1f, 1f),
-            cropScale = updatedMedia.cropScale.coerceIn(1f, 3f)
+            cropScale = updatedMedia.cropScale.coerceIn(1f, 3f),
+            parallaxAmount = updatedMedia.parallaxAmount.coerceIn(0f, 1f)
         )
         val assignedPages = _appState.value.pages.filter { it.originalId == existing.id }
         for (page in assignedPages) {
@@ -403,50 +448,101 @@ class WallpaperRepository private constructor(private val context: Context) {
         targetHeight: Int
     ): Boolean {
         if (targetWidth <= 0 || targetHeight <= 0) return false
-        val originalFile = File(originalsDir, media.fileName)
-        if (!originalFile.exists()) return false
-        val fullBitmap = BitmapFactory.decodeFile(originalFile.absolutePath) ?: return false
-        val outputBitmap = try {
-            Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-        } catch (e: OutOfMemoryError) {
-            fullBitmap.recycle()
-            Log.e("WallpaperRepo", "Not enough memory to render media ${media.id}", e)
+        val outputBitmap = renderMediaBitmap(media, targetWidth, targetHeight, 0f)
+            ?: return false
+        try {
+            FileOutputStream(File(croppedDir, "page_$pageIndex.jpg")).use { out ->
+                outputBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            }
+        } catch (e: Exception) {
+            Log.e("WallpaperRepo", "Failed to render media ${media.id} for page $pageIndex", e)
             return false
+        } finally {
+            outputBitmap.recycle()
         }
+        return true
+    }
+
+    private fun renderMediaBitmap(
+        media: OriginalMedia,
+        targetWidth: Int,
+        targetHeight: Int,
+        requestedTravelPx: Float
+    ): Bitmap? {
+        if (targetWidth <= 0 || targetHeight <= 0) return null
+        val originalFile = File(originalsDir, media.fileName)
+        if (!originalFile.exists()) return null
+        val fullBitmap = BitmapFactory.decodeFile(originalFile.absolutePath) ?: return null
+        var outputBitmap: Bitmap? = null
         var blurredBackground: Bitmap? = null
 
         try {
-            val canvas = Canvas(outputBitmap)
-            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-            val destination = Rect(0, 0, targetWidth, targetHeight)
             val sourceWidth = fullBitmap.width
             val sourceHeight = fullBitmap.height
             val targetRatio = targetWidth.toFloat() / targetHeight
             val sourceRatio = sourceWidth.toFloat() / sourceHeight
-            val centerCropWidth = if (sourceRatio > targetRatio) {
-                (sourceHeight * targetRatio).toInt().coerceIn(1, sourceWidth)
-            } else {
-                sourceWidth
-            }
-            val centerCropHeight = if (sourceRatio > targetRatio) {
-                sourceHeight
-            } else {
-                (sourceWidth / targetRatio).toInt().coerceIn(1, sourceHeight)
-            }
-            val centerCrop = Rect(
-                (sourceWidth - centerCropWidth) / 2,
-                (sourceHeight - centerCropHeight) / 2,
-                (sourceWidth + centerCropWidth) / 2,
-                (sourceHeight + centerCropHeight) / 2
-            )
             val scale = media.cropScale.coerceIn(1f, 3f)
             val panX = media.cropPanX.coerceIn(-1f, 1f)
             val panY = media.cropPanY.coerceIn(-1f, 1f)
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+            val baseCropWidth = if (sourceRatio > targetRatio) {
+                sourceHeight * targetRatio
+            } else {
+                sourceWidth.toFloat()
+            }
+            val baseCropHeight = if (sourceRatio > targetRatio) {
+                sourceHeight.toFloat()
+            } else {
+                sourceWidth / targetRatio
+            }
+            val centerCrop = Rect(
+                ((sourceWidth - baseCropWidth) / 2f).toInt().coerceIn(0, sourceWidth - 1),
+                ((sourceHeight - baseCropHeight) / 2f).toInt().coerceIn(0, sourceHeight - 1),
+                ((sourceWidth + baseCropWidth) / 2f).toInt().coerceIn(1, sourceWidth),
+                ((sourceHeight + baseCropHeight) / 2f).toInt().coerceIn(1, sourceHeight)
+            )
+            val actualTravelPx = if (media.cropFillMode == CropFillMode.CROP) {
+                val cropWidth = baseCropWidth / scale
+                val cropHeight = baseCropHeight / scale
+                val centerX = sourceWidth / 2f -
+                    panX * ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
+                val centerY = sourceHeight / 2f -
+                    panY * ((sourceHeight - cropHeight) / 2f).coerceAtLeast(0f)
+                val left = (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
+                val top = (centerY - cropHeight / 2f).coerceIn(0f, sourceHeight - cropHeight)
+                val right = left + cropWidth
+                val availableSource = minOf(left, sourceWidth - right)
+                minOf(requestedTravelPx, availableSource * targetWidth / cropWidth)
+            } else {
+                val availableSource = minOf(
+                    centerCrop.left.toFloat(),
+                    (sourceWidth - centerCrop.right).toFloat()
+                )
+                minOf(requestedTravelPx, availableSource * targetWidth / centerCrop.width())
+            }.coerceAtLeast(0f)
+            val travelPx = actualTravelPx.toInt()
+            val outputWidth = targetWidth + travelPx * 2
+            outputBitmap = try {
+                Bitmap.createBitmap(outputWidth, targetHeight, Bitmap.Config.ARGB_8888)
+            } catch (e: OutOfMemoryError) {
+                Log.e("WallpaperRepo", "Not enough memory to render media ${media.id}", e)
+                return null
+            }
+            val canvas = Canvas(outputBitmap)
+            val destination = Rect(0, 0, outputWidth, targetHeight)
 
             if (media.cropFillMode != CropFillMode.CROP) {
-                val downsampleScale = 1f - media.blurAmount.coerceIn(0f, 1f) * 0.94f
-                val backgroundWidth = (targetWidth * downsampleScale).toInt().coerceAtLeast(1)
-                val backgroundHeight = (targetHeight * downsampleScale).toInt().coerceAtLeast(1)
+                val sourcePerPixel = centerCrop.width().toFloat() / targetWidth
+                val extraSourceWidth = travelPx * sourcePerPixel
+                val expandedBackground = Rect(
+                    (centerCrop.left - extraSourceWidth).toInt().coerceAtLeast(0),
+                    centerCrop.top,
+                    (centerCrop.right + extraSourceWidth).toInt().coerceAtMost(sourceWidth),
+                    centerCrop.bottom
+                )
+                val blurScale = 1f - media.blurAmount.coerceIn(0f, 1f) * 0.94f
+                val backgroundWidth = (outputWidth * blurScale).toInt().coerceAtLeast(1)
+                val backgroundHeight = (targetHeight * blurScale).toInt().coerceAtLeast(1)
                 blurredBackground = Bitmap.createBitmap(
                     backgroundWidth,
                     backgroundHeight,
@@ -454,7 +550,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 )
                 Canvas(blurredBackground!!).drawBitmap(
                     fullBitmap,
-                    centerCrop,
+                    expandedBackground,
                     Rect(0, 0, backgroundWidth, backgroundHeight),
                     paint
                 )
@@ -469,55 +565,55 @@ class WallpaperRepository private constructor(private val context: Context) {
                 ) * scale
                 val drawWidth = sourceWidth * fitScale
                 val drawHeight = sourceHeight * fitScale
-                val centerX = targetWidth / 2f +
+                val centerX = travelPx + targetWidth / 2f +
                     panX * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
                 val centerY = targetHeight / 2f +
                     panY * ((drawHeight - targetHeight) / 2f).coerceAtLeast(0f)
-                val foreground = Rect(
-                    (centerX - drawWidth / 2f).toInt(),
-                    (centerY - drawHeight / 2f).toInt(),
-                    (centerX + drawWidth / 2f).toInt(),
-                    (centerY + drawHeight / 2f).toInt()
+                canvas.drawBitmap(
+                    fullBitmap,
+                    null,
+                    RectF(
+                        centerX - drawWidth / 2f,
+                        centerY - drawHeight / 2f,
+                        centerX + drawWidth / 2f,
+                        centerY + drawHeight / 2f
+                    ),
+                    paint
                 )
-                canvas.drawBitmap(fullBitmap, null, foreground, paint)
             } else {
-                val cropWidth = if (sourceRatio > targetRatio) {
-                    sourceHeight * targetRatio
-                } else {
-                    sourceWidth.toFloat()
-                }
-                val cropHeight = if (sourceRatio > targetRatio) {
-                    sourceHeight.toFloat()
-                } else {
-                    sourceWidth / targetRatio
-                }
-                val effectiveCropWidth = (cropWidth / scale).coerceAtLeast(1f)
-                val effectiveCropHeight = (cropHeight / scale).coerceAtLeast(1f)
-                val centerX = sourceWidth / 2f +
-                    panX * ((sourceWidth - effectiveCropWidth) / 2f).coerceAtLeast(0f)
-                val centerY = sourceHeight / 2f +
-                    panY * ((sourceHeight - effectiveCropHeight) / 2f).coerceAtLeast(0f)
-                val sourceRect = Rect(
-                    (centerX - effectiveCropWidth / 2f).toInt().coerceIn(0, sourceWidth - 1),
-                    (centerY - effectiveCropHeight / 2f).toInt().coerceIn(0, sourceHeight - 1),
-                    (centerX + effectiveCropWidth / 2f).toInt().coerceIn(1, sourceWidth),
-                    (centerY + effectiveCropHeight / 2f).toInt().coerceIn(1, sourceHeight)
+                val cropWidth = baseCropWidth / scale
+                val cropHeight = baseCropHeight / scale
+                val centerX = sourceWidth / 2f -
+                    panX * ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
+                val centerY = sourceHeight / 2f -
+                    panY * ((sourceHeight - cropHeight) / 2f).coerceAtLeast(0f)
+                val left = (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
+                val top = (centerY - cropHeight / 2f).coerceIn(0f, sourceHeight - cropHeight)
+                val sourcePerPixel = cropWidth / targetWidth
+                val extraSourceWidth = travelPx * sourcePerPixel
+                val expandedSource = RectF(
+                    left - extraSourceWidth,
+                    top,
+                    left + cropWidth + extraSourceWidth,
+                    top + cropHeight
                 )
-                canvas.drawBitmap(fullBitmap, sourceRect, destination, paint)
+                val sourceRect = Rect(
+                    expandedSource.left.toInt().coerceAtLeast(0),
+                    expandedSource.top.toInt().coerceAtLeast(0),
+                    expandedSource.right.toInt().coerceAtMost(sourceWidth),
+                    expandedSource.bottom.toInt().coerceAtMost(sourceHeight)
+                )
+                canvas.drawBitmap(fullBitmap, sourceRect, RectF(destination), paint)
             }
-
-            FileOutputStream(File(croppedDir, "page_$pageIndex.jpg")).use { out ->
-                outputBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-            }
+            return outputBitmap
         } catch (e: Exception) {
-            Log.e("WallpaperRepo", "Failed to render media ${media.id} for page $pageIndex", e)
-            return false
+            Log.e("WallpaperRepo", "Failed to render media ${media.id}", e)
+            outputBitmap?.recycle()
+            return null
         } finally {
             blurredBackground?.recycle()
-            outputBitmap.recycle()
             fullBitmap.recycle()
         }
-        return true
     }
 
     private fun ensureStarterWallpapersExist() {

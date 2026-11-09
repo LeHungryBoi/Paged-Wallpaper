@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
 import android.os.Bundle
@@ -288,15 +289,20 @@ class MultiPageWallpaperService : WallpaperService() {
             // Calculate page indices and transition progress based on calibrated anchors
             val (pageA, pageB, progress) = computePageTransition(currentXOffset, calib)
 
-            val pageABitmap = repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
+            val renderer = TransitionRegistry.get(state.transitionType)
+            val getBitmap: (Int, Int, Int) -> Bitmap? = if (renderer.id == "parallax") {
+                repository::getParallaxBitmap
+            } else {
+                repository::getCroppedBitmap
+            }
+            val pageABitmap = getBitmap(pageA, surfaceWidth, surfaceHeight)
             val pageBBitmap = if (pageA != pageB) {
-                repository.getCroppedBitmap(pageB, surfaceWidth, surfaceHeight)
+                getBitmap(pageB, surfaceWidth, surfaceHeight)
             } else {
                 null
             }
 
             // Draw transition
-            val renderer = TransitionRegistry.get(state.transitionType)
             renderer.draw(
                 canvas = canvas,
                 pageABitmap = pageABitmap,

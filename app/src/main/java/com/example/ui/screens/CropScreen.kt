@@ -2,7 +2,11 @@ package com.example.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.RectF
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -63,10 +67,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -75,6 +81,42 @@ import com.example.data.model.OriginalMedia
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
+
+private fun calculatePreviewTravel(
+    sourceWidth: Int,
+    sourceHeight: Int,
+    targetWidth: Float,
+    targetHeight: Float,
+    scale: Float,
+    panX: Float,
+    cropFillMode: CropFillMode,
+    amount: Float
+): Float {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0f || targetHeight <= 0f) {
+        return 0f
+    }
+
+    val sourceRatio = sourceWidth.toFloat() / sourceHeight
+    val targetRatio = targetWidth / targetHeight
+    val baseCropWidth = if (sourceRatio > targetRatio) sourceHeight * targetRatio else sourceWidth.toFloat()
+    val cropWidth = if (cropFillMode == CropFillMode.CROP) {
+        baseCropWidth / scale.coerceIn(1f, 3f)
+    } else {
+        baseCropWidth
+    }
+    val left = if (cropFillMode == CropFillMode.CROP) {
+        val centerX = sourceWidth / 2f -
+            panX.coerceIn(-1f, 1f) * ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
+        (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
+    } else {
+        (sourceWidth - baseCropWidth) / 2f
+    }
+    val availableSource = minOf(left, sourceWidth - left - cropWidth).coerceAtLeast(0f)
+    val availableTravel = availableSource * targetWidth / cropWidth
+    return minOf(targetWidth * 0.25f * amount.coerceIn(0f, 1f), availableTravel)
+        .coerceAtLeast(0f)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,6 +135,7 @@ fun MediaEditorScreen(
     var isAlreadyDark by remember(media.id) { mutableStateOf(media.isAlreadyDark) }
     var cropFillMode by remember(media.id) { mutableStateOf(media.cropFillMode) }
     var blurAmount by remember(media.id) { mutableFloatStateOf(media.blurAmount) }
+    var parallaxAmount by remember(media.id) { mutableFloatStateOf(media.parallaxAmount) }
 
     BackHandler(enabled = !isSaving) { onDismiss() }
 
@@ -174,7 +217,8 @@ fun MediaEditorScreen(
                                     blurAmount = blurAmount,
                                     cropPanX = panX,
                                     cropPanY = panY,
-                                    cropScale = zoom
+                                    cropScale = zoom,
+                                    parallaxAmount = parallaxAmount
                                 )
                             )
                         },
@@ -194,12 +238,28 @@ fun MediaEditorScreen(
             modifier = Modifier.fillMaxSize().padding(innerPadding)
         ) {
             val availableHeight = this.maxHeight
+            val density = LocalDensity.current
             Column(
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 val viewportHeight = (availableHeight * 0.40f).coerceIn(180.dp, 310.dp)
                 val viewportWidth = viewportHeight * (9f / 19.5f)
+                val viewportWidthPx = with(density) { viewportWidth.toPx() }
+                val viewportHeightPx = with(density) { viewportHeight.toPx() }
+                val previewTravelPx = bitmap?.let {
+                    calculatePreviewTravel(
+                        sourceWidth = it.width,
+                        sourceHeight = it.height,
+                        targetWidth = viewportWidthPx,
+                        targetHeight = viewportHeightPx,
+                        scale = zoom,
+                        panX = panX,
+                        cropFillMode = cropFillMode,
+                        amount = parallaxAmount
+                    )
+                } ?: 0f
+                val previewTravel = with(density) { previewTravelPx.toDp() }
                 Box(
                     modifier = Modifier
                         .size(width = viewportWidth, height = viewportHeight)
@@ -231,28 +291,194 @@ fun MediaEditorScreen(
                                 Box(Modifier.fillMaxSize().background(Color(0x5018202C)))
                             }
                         }
-                        Image(
-                            bitmap = source.asImageBitmap(),
-                            contentDescription = "Media preview",
-                            contentScale = if (cropFillMode == CropFillMode.CROP) ContentScale.Crop else ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize().clipToBounds().graphicsLayer {
-                                val baseScale = if (cropFillMode == CropFillMode.CROP) {
-                                    maxOf(size.width / source.width, size.height / source.height)
-                                } else {
-                                    minOf(size.width / source.width, size.height / source.height)
-                                }
-                                val imageWidth = source.width * baseScale
-                                val imageHeight = source.height * baseScale
-                                scaleX = zoom
-                                scaleY = zoom
-                                translationX = panX * ((imageWidth * zoom - size.width) / 2f).coerceAtLeast(0f)
-                                translationY = panY * ((imageHeight * zoom - size.height) / 2f).coerceAtLeast(0f)
+                        Canvas(Modifier.fillMaxSize().clipToBounds()) {
+                            val targetWidth = size.width
+                            val targetHeight = size.height
+                            val sourceRatio = source.width.toFloat() / source.height
+                            val targetRatio = targetWidth / targetHeight
+                            val baseCropWidth = if (sourceRatio > targetRatio) {
+                                source.height * targetRatio
+                            } else {
+                                source.width.toFloat()
                             }
-                        )
+                            val baseCropHeight = if (sourceRatio > targetRatio) {
+                                source.height.toFloat()
+                            } else {
+                                source.width / targetRatio
+                            }
+                            val paint = android.graphics.Paint(
+                                android.graphics.Paint.ANTI_ALIAS_FLAG or
+                                    android.graphics.Paint.FILTER_BITMAP_FLAG
+                            )
+                            drawIntoCanvas { composeCanvas ->
+                                val nativeCanvas = composeCanvas.nativeCanvas
+                                if (cropFillMode == CropFillMode.CROP) {
+                                    val cropWidth = baseCropWidth / zoom
+                                    val cropHeight = baseCropHeight / zoom
+                                    val centerX = source.width / 2f -
+                                        panX * ((source.width - cropWidth) / 2f).coerceAtLeast(0f)
+                                    val centerY = source.height / 2f -
+                                        panY * ((source.height - cropHeight) / 2f).coerceAtLeast(0f)
+                                    val left = (centerX - cropWidth / 2f)
+                                        .coerceIn(0f, source.width - cropWidth)
+                                    val top = (centerY - cropHeight / 2f)
+                                        .coerceIn(0f, source.height - cropHeight)
+                                    val sourceLeft = left.toInt().coerceIn(0, source.width - 1)
+                                    val sourceTop = top.toInt().coerceIn(0, source.height - 1)
+                                    nativeCanvas.drawBitmap(
+                                        source,
+                                        Rect(
+                                            sourceLeft,
+                                            sourceTop,
+                                            (left + cropWidth).toInt()
+                                                .coerceIn(sourceLeft + 1, source.width),
+                                            (top + cropHeight).toInt()
+                                                .coerceIn(sourceTop + 1, source.height)
+                                        ),
+                                        Rect(0, 0, targetWidth.toInt(), targetHeight.toInt()),
+                                        paint
+                                    )
+                                } else {
+                                    val fitScale = minOf(
+                                        targetWidth / source.width,
+                                        targetHeight / source.height
+                                    ) * zoom
+                                    val imageWidth = source.width * fitScale
+                                    val imageHeight = source.height * fitScale
+                                    val centerX = targetWidth / 2f +
+                                        panX * ((imageWidth - targetWidth) / 2f).coerceAtLeast(0f)
+                                    val centerY = targetHeight / 2f +
+                                        panY * ((imageHeight - targetHeight) / 2f).coerceAtLeast(0f)
+                                    nativeCanvas.drawBitmap(
+                                        source,
+                                        null,
+                                        RectF(
+                                            centerX - imageWidth / 2f,
+                                            centerY - imageHeight / 2f,
+                                            centerX + imageWidth / 2f,
+                                            centerY + imageHeight / 2f
+                                        ),
+                                        paint
+                                    )
+                                }
+                            }
+                        }
                     } else {
                         Text("Unable to load image", color = Color.White)
                     }
                     Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(18.dp)))
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Full image: static page and parallax reach",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.Black)
+                        .testTag("crop_parallax_bounds_preview")
+                ) {
+                    val source = bitmap ?: return@Canvas
+                    val imageScale = minOf(size.width / source.width, size.height / source.height)
+                    val imageWidth = source.width * imageScale
+                    val imageHeight = source.height * imageScale
+                    val imageLeft = (size.width - imageWidth) / 2f
+                    val imageTop = (size.height - imageHeight) / 2f
+                    val targetRatio = viewportWidthPx / viewportHeightPx
+                    val sourceRatio = source.width.toFloat() / source.height
+                    val baseCropWidth = if (sourceRatio > targetRatio) {
+                        source.height * targetRatio
+                    } else {
+                        source.width.toFloat()
+                    }
+                    val baseCropHeight = if (sourceRatio > targetRatio) {
+                        source.height.toFloat()
+                    } else {
+                        source.width / targetRatio
+                    }
+                    val cropWidth = if (cropFillMode == CropFillMode.CROP) {
+                        baseCropWidth / zoom
+                    } else {
+                        baseCropWidth
+                    }
+                    val cropHeight = if (cropFillMode == CropFillMode.CROP) {
+                        baseCropHeight / zoom
+                    } else {
+                        baseCropHeight
+                    }
+                    val cropCenterX = source.width / 2f -
+                        panX * ((source.width - cropWidth) / 2f).coerceAtLeast(0f)
+                    val cropCenterY = source.height / 2f -
+                        panY * ((source.height - cropHeight) / 2f).coerceAtLeast(0f)
+                    val cropLeft = (cropCenterX - cropWidth / 2f)
+                        .coerceIn(0f, source.width - cropWidth)
+                    val cropTop = (cropCenterY - cropHeight / 2f)
+                        .coerceIn(0f, source.height - cropHeight)
+                    val sourceTravel = previewTravelPx * cropWidth / viewportWidthPx
+                    val reachLeft = (cropLeft - sourceTravel).coerceAtLeast(0f)
+                    val reachRight = (cropLeft + cropWidth + sourceTravel)
+                        .coerceAtMost(source.width.toFloat())
+                    val nativeCanvas = drawContext.canvas.nativeCanvas
+                    val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                    nativeCanvas.drawBitmap(
+                        source,
+                        null,
+                        RectF(imageLeft, imageTop, imageLeft + imageWidth, imageTop + imageHeight),
+                        imagePaint
+                    )
+
+                    val mapX = { x: Float -> imageLeft + x * imageScale }
+                    val mapY = { y: Float -> imageTop + y * imageScale }
+                    val reachBounds = RectF(
+                        mapX(reachLeft),
+                        mapY(cropTop),
+                        mapX(reachRight),
+                        mapY(cropTop + cropHeight)
+                    )
+                    val staticBounds = RectF(
+                        mapX(cropLeft),
+                        mapY(cropTop),
+                        mapX(cropLeft + cropWidth),
+                        mapY(cropTop + cropHeight)
+                    )
+                    val reachFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.argb(80, 255, 180, 0)
+                        style = Paint.Style.FILL
+                    }
+                    val reachStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.rgb(255, 180, 0)
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2.dp.toPx()
+                    }
+                    val staticStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.rgb(80, 220, 255)
+                        style = Paint.Style.STROKE
+                        strokeWidth = 2.dp.toPx()
+                    }
+                    nativeCanvas.drawRect(reachBounds, reachFill)
+                    nativeCanvas.drawRect(reachBounds, reachStroke)
+                    nativeCanvas.drawRect(staticBounds, staticStroke)
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Static page",
+                        color = Color(0xFF50DCFF),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Text(
+                        "Maximum parallax reach",
+                        color = Color(0xFFFFB400),
+                        style = MaterialTheme.typography.labelSmall
+                    )
                 }
 
                 Spacer(Modifier.height(16.dp))
@@ -297,15 +523,32 @@ fun MediaEditorScreen(
                                 modifier = Modifier.weight(1f).testTag("crop_zoom_slider")
                             )
                         }
+                        Text(
+                            "Parallax: ${(parallaxAmount * 100).toInt()}% · preview travel ${with(density) { previewTravelPx.toDp().value.roundToInt() }} dp each way",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Slider(
+                            value = parallaxAmount,
+                            onValueChange = {
+                                parallaxAmount = it
+                            },
+                            valueRange = 0f..1f,
+                            modifier = Modifier.testTag("crop_parallax_slider")
+                        )
+                        Text(
+                            "Requires the Parallax Scroll transition to be selected.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             OutlinedButton(
                                 onClick = { panX = 0f; panY = 0f; zoom = 1f },
                                 contentPadding = ButtonDefaults.TextButtonContentPadding
                             ) { Text("Center", style = MaterialTheme.typography.labelSmall) }
-                            OutlinedButton(onClick = { panY = -1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
+                            OutlinedButton(onClick = { panY = 1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
                                 Text("Top", style = MaterialTheme.typography.labelSmall)
                             }
-                            OutlinedButton(onClick = { panY = 1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
+                            OutlinedButton(onClick = { panY = -1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
                                 Text("Bottom", style = MaterialTheme.typography.labelSmall)
                             }
                         }

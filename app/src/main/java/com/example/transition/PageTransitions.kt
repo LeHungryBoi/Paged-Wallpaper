@@ -66,6 +66,46 @@ class ClassicScrollTransition : PageTransitionRenderer {
     }
 }
 
+class ParallaxScrollTransition : PageTransitionRenderer {
+    override val id: String = "parallax"
+    override val displayName: String = "Parallax Scroll"
+    override val description: String = "Scrolls each page while its image pans at a different rate"
+
+    override fun draw(
+        canvas: Canvas,
+        pageABitmap: Bitmap?,
+        pageBBitmap: Bitmap?,
+        progress: Float,
+        screenWidth: Int,
+        screenHeight: Int,
+        paint: Paint
+    ) {
+        val p = progress.coerceIn(0f, 1f)
+        val destination = Rect()
+        val source = Rect()
+
+        fun drawPage(bitmap: Bitmap?, left: Int, progressTravel: Float) {
+            if (bitmap == null) return
+            val travel = ((bitmap.width - screenWidth) / 2).coerceAtLeast(0)
+            destination.set(left, 0, left + screenWidth, screenHeight)
+            if (travel == 0) {
+                canvas.drawBitmap(bitmap, null, destination, paint)
+                return
+            }
+            val sourceLeft = (travel + travel * progressTravel)
+                .toInt().coerceIn(0, (bitmap.width - screenWidth).coerceAtLeast(0))
+            source.set(sourceLeft, 0, sourceLeft + screenWidth, bitmap.height)
+            canvas.drawBitmap(bitmap, source, destination, paint)
+        }
+
+        drawPage(pageABitmap, (-p * screenWidth).toInt(), p)
+        drawPage(pageBBitmap, ((1f - p) * screenWidth).toInt(), 1f - p)
+        if (pageABitmap == null && pageBBitmap == null) {
+            canvas.drawColor(Color.rgb(18, 22, 34))
+        }
+    }
+}
+
 /**
  * Cross Fade Dissolve transition
  */
@@ -344,6 +384,7 @@ class CubeTransition : PageTransitionRenderer {
 object TransitionRegistry {
     val transitions: List<PageTransitionRenderer> = listOf(
         ClassicScrollTransition(),
+        ParallaxScrollTransition(),
         CrossFadeTransition(),
         SoftBlurTransition(),
         DepthZoomTransition(),

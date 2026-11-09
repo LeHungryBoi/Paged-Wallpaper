@@ -1,8 +1,10 @@
 package com.example
 
 import com.example.data.model.CalibrationConfig
+import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTrigger
+import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.WallpaperAppState
 import com.example.transition.TransitionRegistry
@@ -72,15 +74,37 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun testOriginalMediaParallaxSerialization() {
+        val media = OriginalMedia(
+            id = "media",
+            fileName = "media.jpg",
+            dateAdded = 1L,
+            width = 1080,
+            height = 2400,
+            averageLuminance = 0.5f,
+            isDarkDetected = false,
+            cropFillMode = CropFillMode.CROP,
+            parallaxAmount = 0.7f
+        )
+
+        assertEquals(0.7f, OriginalMedia.fromJson(media.toJson()).parallaxAmount, 0.001f)
+        assertEquals(0f, OriginalMedia.fromJson(media.toJson().apply {
+            remove("parallaxAmount")
+        }).parallaxAmount, 0.001f)
+    }
+
+    @Test
     fun testTransitionRegistry() {
         val registry = TransitionRegistry
-        assertEquals(5, registry.transitions.size)
+        assertEquals(7, registry.transitions.size)
         assertNotNull(registry.get("scroll"))
+        assertNotNull(registry.get("parallax"))
         assertNotNull(registry.get("fade"))
         assertNotNull(registry.get("depth"))
         assertNotNull(registry.get("slide_over"))
         assertNotNull(registry.get("cube"))
         assertEquals("Classic Scroll", registry.get("scroll").displayName)
+        assertEquals("Parallax Scroll", registry.get("parallax").displayName)
     }
 
     @Test
