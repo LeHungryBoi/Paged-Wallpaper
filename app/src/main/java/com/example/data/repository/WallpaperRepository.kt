@@ -144,9 +144,10 @@ class WallpaperRepository private constructor(private val context: Context) {
                 } else {
                     loaded
                 }
-                _appState.value = migrated
-                if (loaded.schemaVersion < 2) {
-                    if (saveConfigInternal(migrated)) {
+                val synchronized = synchronizeActivePreset(migrated)
+                _appState.value = synchronized
+                if (loaded.schemaVersion < 2 || synchronized != loaded) {
+                    if (saveConfigInternal(synchronized) && loaded.schemaVersion < 2) {
                         saveOriginalsMeta(_originals.value)
                     }
                 }
@@ -244,8 +245,31 @@ class WallpaperRepository private constructor(private val context: Context) {
     private fun saveConfigInternal(state: WallpaperAppState): Boolean =
         writeAtomically(configFile, state.toJson().toString(2))
 
+    private fun synchronizeActivePreset(state: WallpaperAppState): WallpaperAppState =
+        state.copy(
+            presets = state.presets.map { preset ->
+                if (preset.id == state.activePresetId) {
+                    preset.copy(pages = state.pages, transitions = state.transitions)
+                } else {
+                    preset
+                }
+            },
+            presetNeedsSave = false,
+            schemaVersion = 2
+        )
+
     fun updateState(transform: (WallpaperAppState) -> WallpaperAppState) {
-        val newState = transform(_appState.value).copy(schemaVersion = 2)
+        val previousState = _appState.value
+        val transformed = transform(previousState)
+        val shouldUpdateActivePreset =
+            transformed.pages != previousState.pages ||
+                transformed.transitions != previousState.transitions ||
+                transformed.activePresetId != previousState.activePresetId
+        val newState = if (shouldUpdateActivePreset) {
+            synchronizeActivePreset(transformed)
+        } else {
+            transformed.copy(presetNeedsSave = false, schemaVersion = 2)
+        }
         _appState.value = newState
         saveConfigInternal(newState)
         invalidateCache()
@@ -286,9 +310,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 pages = pages,
                 transitions = transitions,
                 transitionType = firstTransition,
-                activePresetId = preset.id,
-                presetNeedsSave = preset.pages.size != count ||
-                    preset.transitions.size != (count - 1).coerceAtLeast(0)
+                activePresetId = preset.id
             )
         }
     }
@@ -307,11 +329,49 @@ class WallpaperRepository private constructor(private val context: Context) {
         updateState {
             it.copy(
                 presets = it.presets + preset,
-                activePresetId = id,
-                presetNeedsSave = false
+                activePresetId = id
             )
         }
         return id
+    }
+
+    fun deletePreset(presetId: String, pageCount: Int): Boolean {
+        val state = _appState.value
+        if (state.presets.size <= 1 || state.presets.none { it.id == presetId }) return false
+
+        val remainingPresets = state.presets.filterNot { it.id == presetId }
+        if (presetId != state.activePresetId) {
+            updateState { it.copy(presets = remainingPresets) }
+            return true
+        }
+
+        val fallback = remainingPresets.first()
+        val count = pageCount.coerceIn(2, 7)
+        val pages = fallback.pages.take(count).toMutableList()
+        while (pages.size < count) {
+            val index = pages.size
+            pages.add(
+                PageItem(
+                    pageIndex = index,
+                    customLabel = "Page ${index + 1}",
+                    isBlank = true
+                )
+            )
+        }
+        val transitions = fallback.transitions.take(count - 1).toMutableList()
+        while (transitions.size < count - 1) {
+            transitions.add(transitions.lastOrNull() ?: PageTransitionSetting())
+        }
+        updateState {
+            it.copy(
+                presets = remainingPresets,
+                pages = pages.mapIndexed { index, page -> page.copy(pageIndex = index) },
+                transitions = transitions,
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
+                activePresetId = fallback.id
+            )
+        }
+        return true
     }
 
     fun updatePageTransition(boundaryIndex: Int, setting: PageTransitionSetting) {
@@ -322,8 +382,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         updateState {
             it.copy(
                 transitions = transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
-                presetNeedsSave = true
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll"
             )
         }
     }
@@ -335,8 +394,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         updateState {
             it.copy(
                 transitionType = transitionId,
-                transitions = transitions,
-                presetNeedsSave = true
+                transitions = transitions
             )
         }
     }
@@ -506,7 +564,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         val updatedPages = _appState.value.pages.map {
             if (it.originalId == id) it.copy(originalId = null) else it
         }
-        updateState { it.copy(pages = updatedPages, presetNeedsSave = true) }
+        updateState { it.copy(pages = updatedPages) }
     }
 
     suspend fun updatePageSettings(
@@ -534,7 +592,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         val updatedPages = _appState.value.pages.map {
             if (it.pageIndex == pageIndex) normalized else it
         }
-        updateState { it.copy(pages = updatedPages, presetNeedsSave = true) }
+        updateState { it.copy(pages = updatedPages) }
         true
     }
 
@@ -578,7 +636,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         val pages = _appState.value.pages.toMutableList()
         val existingIndex = pages.indexOfFirst { it.pageIndex == pageIndex }
         if (existingIndex >= 0) pages[existingIndex] = newPage else pages.add(newPage)
-        updateState { it.copy(pages = pages, presetNeedsSave = true) }
+        updateState { it.copy(pages = pages) }
         true
     }
 

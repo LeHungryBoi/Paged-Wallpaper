@@ -165,8 +165,7 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
                 calibration = newCalib,
                 pages = trimmedPages,
                 transitions = transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: it.transitionType,
-                presetNeedsSave = true
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: it.transitionType
             )
         }
     }
@@ -184,7 +183,7 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.saveLastKnownOffset(newCalib.getHomeOffset())
 
         repository.updateState {
-            it.copy(calibration = newCalib, pages = updatedPages, presetNeedsSave = true)
+            it.copy(calibration = newCalib, pages = updatedPages)
         }
     }
 
@@ -215,6 +214,9 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun saveCurrentPreset(name: String): String? = repository.saveCurrentPreset(name)
+
+    fun deletePreset(presetId: String): Boolean =
+        repository.deletePreset(presetId, appState.value.calibration.pageCount)
 
     fun updatePageSettings(
         pageIndex: Int,
@@ -249,7 +251,7 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = appState.value.pages.map {
             if (it.pageIndex == pageIndex) it.copy(isAlreadyDark = isDark) else it
         }
-        repository.updateState { it.copy(pages = updated, presetNeedsSave = true) }
+        repository.updateState { it.copy(pages = updated) }
     }
 
     fun exportBackup(out: OutputStream, onResult: (Boolean) -> Unit) {

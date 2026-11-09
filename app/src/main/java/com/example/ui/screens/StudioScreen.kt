@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -44,6 +45,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -92,7 +94,7 @@ fun StudioScreen(
     var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var presetName by remember { mutableStateOf("") }
-    var pendingPresetId by remember { mutableStateOf<String?>(null) }
+    var presetToDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
     val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
 
     // Reload page thumbnails
@@ -128,27 +130,39 @@ fun StudioScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     appState.presets.forEach { preset ->
-                        androidx.compose.material3.FilterChip(
-                            selected = preset.id == appState.activePresetId,
-                            onClick = {
-                                if (preset.id != appState.activePresetId && appState.presetNeedsSave) {
-                                    pendingPresetId = preset.id
-                                } else {
-                                    viewModel.selectPreset(preset.id)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            androidx.compose.material3.FilterChip(
+                                selected = preset.id == appState.activePresetId,
+                                onClick = {
+                                    if (preset.id != appState.activePresetId) {
+                                        viewModel.selectPreset(preset.id)
+                                    }
+                                },
+                                label = { Text(preset.name) },
+                                modifier = Modifier.testTag("preset_${preset.id}")
+                            )
+                            if (appState.presets.size > 1) {
+                                IconButton(
+                                    onClick = { presetToDelete = preset.id to preset.name },
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .testTag("delete_preset_${preset.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete ${preset.name} preset",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
                                 }
-                            },
-                            label = { Text(preset.name) },
-                            modifier = Modifier.testTag("preset_${preset.id}")
-                        )
+                            }
+                        }
                     }
                 }
-                if (appState.presetNeedsSave) {
-                    Text(
-                        "This setup differs from its saved preset (page count or page settings changed). Save it as a new preset to keep both versions.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    "Changes to pages and effects are saved automatically to the selected preset.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedButton(
                     onClick = {
                         presetName = ""
@@ -156,7 +170,7 @@ fun StudioScreen(
                     },
                     modifier = Modifier.fillMaxWidth().testTag("save_preset_button")
                 ) {
-                    Text("Save current setup as a new preset")
+                    Text("Save a copy as a new preset")
                 }
             }
         }
@@ -525,7 +539,7 @@ fun StudioScreen(
         if (showSavePresetDialog) {
             AlertDialog(
                 onDismissRequest = { showSavePresetDialog = false },
-                title = { Text("Save as new preset") },
+                title = { Text("Create a new preset") },
                 text = {
                     OutlinedTextField(
                         value = presetName,
@@ -544,30 +558,36 @@ fun StudioScreen(
                         },
                         enabled = presetName.isNotBlank(),
                         modifier = Modifier.testTag("confirm_save_preset")
-                    ) { Text("Save") }
+                    ) { Text("Create") }
                 },
                 dismissButton = {
                     TextButton(onClick = { showSavePresetDialog = false }) { Text("Cancel") }
                 }
             )
         }
-        if (pendingPresetId != null) {
+        presetToDelete?.let { (presetId, presetNameToDelete) ->
             AlertDialog(
-                onDismissRequest = { pendingPresetId = null },
-                title = { Text("Discard unsaved setup?") },
+                onDismissRequest = { presetToDelete = null },
+                title = { Text("Delete preset?") },
                 text = {
-                    Text("Switching presets will discard the current unsaved page setup. You can save it as a new preset first.")
+                    Text(
+                        if (presetId == appState.activePresetId) {
+                            "Delete \"$presetNameToDelete\"? Another preset will become active. This cannot be undone."
+                        } else {
+                            "Delete \"$presetNameToDelete\"? This cannot be undone."
+                        }
+                    )
                 },
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            pendingPresetId?.let(viewModel::selectPreset)
-                            pendingPresetId = null
+                            viewModel.deletePreset(presetId)
+                            presetToDelete = null
                         }
-                    ) { Text("Switch preset") }
+                    ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingPresetId = null }) { Text("Keep editing") }
+                    TextButton(onClick = { presetToDelete = null }) { Text("Cancel") }
                 }
             )
         }
