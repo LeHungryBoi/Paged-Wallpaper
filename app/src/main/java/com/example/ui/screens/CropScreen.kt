@@ -6,11 +6,14 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -136,6 +139,7 @@ fun MediaEditorScreen(
     var cropFillMode by remember(media.id) { mutableStateOf(media.cropFillMode) }
     var blurAmount by remember(media.id) { mutableFloatStateOf(media.blurAmount) }
     var parallaxAmount by remember(media.id) { mutableFloatStateOf(media.parallaxAmount) }
+    var expandedPreview by remember(media.id) { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = !isSaving) { onDismiss() }
 
@@ -243,7 +247,23 @@ fun MediaEditorScreen(
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                val viewportHeight = (availableHeight * 0.40f).coerceIn(180.dp, 310.dp)
+                val defaultViewportHeight = (availableHeight * 0.40f).coerceIn(180.dp, 310.dp)
+                val largeViewportHeight = (availableHeight * 0.58f).coerceIn(240.dp, 420.dp)
+                val smallViewportHeight = (defaultViewportHeight * 0.62f).coerceAtLeast(120.dp)
+                val viewportHeight by animateDpAsState(
+                    targetValue = when (expandedPreview) {
+                        "page" -> largeViewportHeight
+                        "full" -> smallViewportHeight
+                        else -> defaultViewportHeight
+                    }
+                )
+                val fullImageHeight by animateDpAsState(
+                    targetValue = when (expandedPreview) {
+                        "full" -> (availableHeight * 0.42f).coerceIn(260.dp, 420.dp)
+                        "page" -> 110.dp
+                        else -> 190.dp
+                    }
+                )
                 val viewportWidth = viewportHeight * (9f / 19.5f)
                 val viewportWidthPx = with(density) { viewportWidth.toPx() }
                 val viewportHeightPx = with(density) { viewportHeight.toPx() }
@@ -262,11 +282,22 @@ fun MediaEditorScreen(
                 val previewTravel = with(density) { previewTravelPx.toDp() }
                 Box(
                     modifier = Modifier
+                        .animateContentSize()
                         .size(width = viewportWidth, height = viewportHeight)
                         .clip(RoundedCornerShape(18.dp))
                         .clipToBounds()
                         .background(Color.Black)
-                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(18.dp))
+                        .border(
+                            if (expandedPreview == "page") 3.dp else 2.dp,
+                            if (expandedPreview == "page") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                            RoundedCornerShape(18.dp)
+                        )
+                        .clickable(
+                            onClick = {
+                                expandedPreview = if (expandedPreview == "page") null else "page"
+                            }
+                        )
                         .pointerInput(bitmap, cropFillMode, zoom) {
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
@@ -378,9 +409,21 @@ fun MediaEditorScreen(
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(190.dp)
+                        .animateContentSize()
+                        .height(fullImageHeight)
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color.Black)
+                        .border(
+                            if (expandedPreview == "full") 3.dp else 1.dp,
+                            if (expandedPreview == "full") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(14.dp)
+                        )
+                        .clickable(
+                            onClick = {
+                                expandedPreview = if (expandedPreview == "full") null else "full"
+                            }
+                        )
                         .testTag("crop_parallax_bounds_preview")
                 ) {
                     val source = bitmap ?: return@Canvas
