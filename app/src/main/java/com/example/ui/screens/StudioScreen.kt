@@ -89,18 +89,33 @@ fun StudioScreen(
 
     // Reload page thumbnails
     LaunchedEffect(appState.pages) {
-        withContext(Dispatchers.IO) {
+        val loadedBitmaps = withContext(Dispatchers.IO) {
             val croppedDir = File(context.filesDir, "cropped")
-            appState.pages.forEach { page ->
+            appState.pages.mapNotNull { page ->
                 val fileName = page.croppedFileName ?: "starter_page_${page.pageIndex}.jpg"
                 val file = File(croppedDir, fileName)
-                if (file.exists()) {
-                    val bmp = BitmapFactory.decodeFile(file.absolutePath)
-                    if (bmp != null) {
-                        pageBitmaps[page.pageIndex] = bmp
-                    }
+                if (!file.exists()) {
+                    return@mapNotNull null
+                }
+
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, options)
+                var sampleSize = 1
+                while (
+                    options.outWidth / sampleSize > 540 ||
+                    options.outHeight / sampleSize > 960
+                ) {
+                    sampleSize *= 2
+                }
+                options.inJustDecodeBounds = false
+                options.inSampleSize = sampleSize
+                BitmapFactory.decodeFile(file.absolutePath, options)?.let {
+                    page.pageIndex to it
                 }
             }
+        }
+        loadedBitmaps.forEach { (pageIndex, bitmap) ->
+            pageBitmaps[pageIndex] = bitmap
         }
     }
 
