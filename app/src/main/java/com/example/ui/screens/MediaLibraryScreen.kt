@@ -2,7 +2,6 @@ package com.example.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,7 +25,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
@@ -213,18 +211,6 @@ fun MediaLibraryScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            viewModel.duplicateOriginal(media.id) { success ->
-                                                if (!success) {
-                                                    Toast.makeText(context, "Could not duplicate media.", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp).testTag("duplicate_media_${media.id}")
-                                    ) {
-                                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate media", modifier = Modifier.size(18.dp))
                                     }
                                     IconButton(
                                         onClick = { viewModel.deleteOriginal(media.id) },

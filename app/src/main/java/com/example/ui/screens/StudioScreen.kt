@@ -296,7 +296,6 @@ fun StudioScreen(
                     Card(
                         modifier = Modifier
                             .width(180.dp)
-                            .clickable { onChooseMediaForPage(index) }
                             .testTag("page_card_$index"),
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
@@ -313,7 +312,9 @@ fun StudioScreen(
                                     .fillMaxWidth()
                                     .aspectRatio(9f / 17f)
                                     .clip(RoundedCornerShape(14.dp))
-                                    .background(Color.Black),
+                                    .background(Color.Black)
+                                    .clickable { onChooseMediaForPage(index) }
+                                    .testTag("choose_page_preview_$index"),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (bmp != null) {
@@ -378,20 +379,22 @@ fun StudioScreen(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            Text(
-                                text = "Screen ${index + 1}",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (page.originalId != null) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "Screen ${index + 1}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 TextButton(
-                                    onClick = { onEditPage(index) },
-                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
-                                    modifier = Modifier.testTag("edit_page_${index}_button")
+                                    onClick = { onChooseMediaForPage(index) },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                    modifier = Modifier.testTag("replace_page_${index}_button")
                                 ) {
-                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Edit page settings", style = MaterialTheme.typography.labelSmall)
+                                    Text("Choose image", style = MaterialTheme.typography.labelSmall)
                                 }
                             }
 
@@ -413,35 +416,30 @@ fun StudioScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
+                            if (page.originalId != null) {
                                 Button(
-                                    onClick = { onChooseMediaForPage(index) },
+                                    onClick = { onEditPage(index) },
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("replace_page_${index}_button"),
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-                                    shape = RoundedCornerShape(10.dp)
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("edit_page_${index}_button"),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                    shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Choose image", style = MaterialTheme.typography.labelSmall)
+                                    Text("Edit page settings", style = MaterialTheme.typography.labelLarge)
                                 }
+                            }
 
-                                if (!isHome) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.setHomePage(index) },
-                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-                                        shape = RoundedCornerShape(10.dp),
-                                        modifier = Modifier.testTag("set_home_${index}_button")
-                                    ) {
-                                        Icon(Icons.Outlined.Home, contentDescription = "Set as Home", modifier = Modifier.size(14.dp))
-                                    }
-
+                            if (!isHome) {
+                                OutlinedButton(
+                                    onClick = { viewModel.setHomePage(index) },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.align(Alignment.End).testTag("set_home_${index}_button")
+                                ) {
+                                    Icon(Icons.Outlined.Home, contentDescription = "Set as Home", modifier = Modifier.size(14.dp))
                                 }
                             }
                         }
