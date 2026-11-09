@@ -6,8 +6,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,15 +19,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Timeline
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -55,7 +50,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.ui.WallpaperViewModel
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CalibrationScreen(
     viewModel: WallpaperViewModel
@@ -220,125 +214,7 @@ fun CalibrationScreen(
             }
         }
 
-        // Section 2: Live Diagnostic Capture (Observed Offsets)
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("diagnostic_monitor_card"),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Timeline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Diagnostic Offset Monitor",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    if (calib.observedRawOffsets.isNotEmpty()) {
-                        IconButton(
-                            onClick = { viewModel.clearObservedOffsets() },
-                            modifier = Modifier.testTag("clear_observed_offsets_button")
-                        ) {
-                            Icon(Icons.Default.Clear, contentDescription = "Clear")
-                        }
-                    }
-                }
-
-                Text(
-                    text = "As you swipe across your launcher, Android calls onOffsetsChanged(). The list below shows the discrete offset points captured in real time from your launcher:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                if (calib.observedRawOffsets.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                            .padding(16.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "No offsets captured yet.\nApply the wallpaper and swipe through all your home screen pages, then return here!",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                } else {
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        calib.observedRawOffsets.sorted().forEach { offset ->
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
-                            ) {
-                                Text(
-                                    text = String.format("%.3f", offset),
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                    }
-
-                    // Auto-calibrate button based on captured data
-                    Button(
-                        onClick = {
-                            val sorted = calib.observedRawOffsets.sorted()
-                            if (sorted.size >= calib.pageCount) {
-                                // Pick evenly spaced samples from observed points
-                                val stepSize = (sorted.size - 1).toFloat() / (calib.pageCount - 1).toFloat()
-                                val derived = (0 until calib.pageCount).map { i ->
-                                    val index = Math.round(i * stepSize).coerceIn(0, sorted.size - 1)
-                                    sorted[index]
-                                }
-                                viewModel.updateCustomOffsets(derived)
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("auto_calibrate_button"),
-                        enabled = calib.observedRawOffsets.size >= calib.pageCount
-                    ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Auto-Calibrate Anchors from Launcher")
-                    }
-                }
-            }
-        }
-
-        // Section 3: Fine-Tuning Anchor Sliders
+        // Fine-Tuning Anchor Sliders
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp)

@@ -25,8 +25,7 @@ class ExampleUnitTest {
             pageCount = 3,
             homePageIndex = 1,
             autoCalibrate = false,
-            customOffsets = listOf(0.0f, 0.48f, 1.0f),
-            observedRawOffsets = listOf(0.0f, 0.48f, 1.0f)
+            customOffsets = listOf(0.0f, 0.48f, 1.0f)
         )
         val json = config.toJson()
         val restored = CalibrationConfig.fromJson(json)

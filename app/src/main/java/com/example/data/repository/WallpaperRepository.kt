@@ -251,17 +251,6 @@ class WallpaperRepository private constructor(private val context: Context) {
         return bmp
     }
 
-    fun recordObservedRawOffset(offset: Float) {
-        val currentObserved = _appState.value.calibration.observedRawOffsets
-        val rounded = (Math.round(offset * 1000f) / 1000f)
-        if (!currentObserved.contains(rounded)) {
-            val updated = (currentObserved + rounded).takeLast(25)
-            val newCalib = _appState.value.calibration.copy(observedRawOffsets = updated)
-            _appState.value = _appState.value.copy(calibration = newCalib)
-            saveConfigInternal(_appState.value)
-        }
-    }
-
     suspend fun importFromUri(uri: Uri): OriginalMedia = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString()
         val destFile = File(originalsDir, "$id.jpg")

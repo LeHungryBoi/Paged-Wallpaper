@@ -166,11 +166,6 @@ class MultiPageWallpaperService : WallpaperService() {
             // Persist the last valid offset so it survives service recreation
             repository.saveLastKnownOffset(currentXOffset)
 
-            // Record observed raw offset to help user with calibration wizard (only if visible and real)
-            if (isVisible && !isDummySystemReset) {
-                repository.recordObservedRawOffset(xOffset)
-            }
-
             if (isVisible) {
                 drawFrame()
             }

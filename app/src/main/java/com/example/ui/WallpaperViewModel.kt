@@ -192,11 +192,6 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         updateCustomOffsets(uniformOffsets)
     }
 
-    fun clearObservedOffsets() {
-        val currentCalib = appState.value.calibration.copy(observedRawOffsets = emptyList())
-        repository.updateState { it.copy(calibration = currentCalib) }
-    }
-
     fun setTransition(transitionId: String) {
         repository.updateState { it.copy(transitionType = transitionId) }
     }

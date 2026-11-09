@@ -54,8 +54,7 @@ data class CalibrationConfig(
     val pageCount: Int = 3,
     val homePageIndex: Int = 1,
     val autoCalibrate: Boolean = false,
-    val customOffsets: List<Float> = listOf(0.0f, 0.5f, 1.0f),
-    val observedRawOffsets: List<Float> = emptyList()
+    val customOffsets: List<Float> = listOf(0.0f, 0.5f, 1.0f)
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("pageCount", pageCount)
@@ -64,9 +63,6 @@ data class CalibrationConfig(
         val offsetsArray = JSONArray()
         customOffsets.forEach { offsetsArray.put(it.toDouble()) }
         put("customOffsets", offsetsArray)
-        val observedArray = JSONArray()
-        observedRawOffsets.take(30).forEach { observedArray.put(it.toDouble()) }
-        put("observedRawOffsets", observedArray)
     }
 
     /**
@@ -104,19 +100,11 @@ data class CalibrationConfig(
                 }
             }
 
-            val observedList = mutableListOf<Float>()
-            json.optJSONArray("observedRawOffsets")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    observedList.add(arr.optDouble(i, 0.0).toFloat())
-                }
-            }
-
             return CalibrationConfig(
                 pageCount = pageCount,
                 homePageIndex = homeIndex,
                 autoCalibrate = autoCalibrate,
-                customOffsets = finalOffsets,
-                observedRawOffsets = observedList
+                customOffsets = finalOffsets
             )
         }
     }
