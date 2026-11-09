@@ -43,6 +43,12 @@ import java.util.zip.ZipOutputStream
 
 class WallpaperRepository private constructor(private val context: Context) {
 
+    data class ParallaxBitmap(
+        val bitmap: Bitmap,
+        val leftTravelPx: Int,
+        val rightTravelPx: Int
+    )
+
     private val originalsDir: File by lazy {
         File(context.filesDir, "originals").apply { if (!exists()) mkdirs() }
     }
@@ -85,7 +91,8 @@ class WallpaperRepository private constructor(private val context: Context) {
 
     // Bitmap cache for fast Live Wallpaper Engine rendering
     private val bitmapCache = mutableMapOf<Int, Bitmap>()
-    private val parallaxBitmapCache = mutableMapOf<Triple<Int, Int, Int>, Bitmap>()
+    private val parallaxBitmapCache =
+        mutableMapOf<Triple<Int, Int, Int>, ParallaxBitmap>()
 
     // Listeners for Live Wallpaper to trigger instant redrawing
     private val listeners = mutableListOf<() -> Unit>()
@@ -221,25 +228,31 @@ class WallpaperRepository private constructor(private val context: Context) {
             bitmapCache.clear()
         }
         synchronized(parallaxBitmapCache) {
-            parallaxBitmapCache.values.forEach { it.recycle() }
+            parallaxBitmapCache.values.forEach { it.bitmap.recycle() }
             parallaxBitmapCache.clear()
         }
     }
 
-    fun getParallaxBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
+    fun getParallaxBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): ParallaxBitmap? {
         if (reqWidth <= 0 || reqHeight <= 0) return null
         val key = Triple(pageIndex, reqWidth, reqHeight)
         synchronized(parallaxBitmapCache) {
             parallaxBitmapCache[key]?.let {
-                if (!it.isRecycled) return it
+                if (!it.bitmap.isRecycled) return it
             }
         }
-        fun getScreenSizedPage(): Bitmap? {
+        fun getScreenSizedPage(): ParallaxBitmap? {
             val pageBitmap = getCroppedBitmap(pageIndex, reqWidth, reqHeight) ?: return null
-            if (pageBitmap.width == reqWidth && pageBitmap.height == reqHeight) return pageBitmap
+            if (pageBitmap.width == reqWidth && pageBitmap.height == reqHeight) {
+                return ParallaxBitmap(pageBitmap, 0, 0)
+            }
             return try {
-                Bitmap.createScaledBitmap(pageBitmap, reqWidth, reqHeight, true).also {
-                    synchronized(parallaxBitmapCache) { parallaxBitmapCache[key] = it }
+                Bitmap.createScaledBitmap(pageBitmap, reqWidth, reqHeight, true).let {
+                    ParallaxBitmap(it, 0, 0).also { parallaxBitmap ->
+                        synchronized(parallaxBitmapCache) {
+                            parallaxBitmapCache[key] = parallaxBitmap
+                        }
+                    }
                 }
             } catch (e: OutOfMemoryError) {
                 Log.e("WallpaperRepo", "Not enough memory to scale page $pageIndex", e)
@@ -252,16 +265,17 @@ class WallpaperRepository private constructor(private val context: Context) {
             ?: return getScreenSizedPage()
         if (media.parallaxAmount <= 0f) return getScreenSizedPage()
 
-        val bitmap = renderMediaBitmap(
+        val rendered = renderMediaBitmap(
             media = media,
             targetWidth = reqWidth,
             targetHeight = reqHeight,
-            requestedTravelPx = reqWidth * 0.25f * media.parallaxAmount
+            requestedLeftTravelPx = reqWidth * 0.25f * media.parallaxAmount,
+            requestedRightTravelPx = reqWidth * 0.25f * media.parallaxAmount
         ) ?: return getScreenSizedPage()
         synchronized(parallaxBitmapCache) {
-            parallaxBitmapCache[key] = bitmap
+            parallaxBitmapCache[key] = rendered
         }
-        return bitmap
+        return rendered
     }
 
     fun getCroppedBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
@@ -448,8 +462,13 @@ class WallpaperRepository private constructor(private val context: Context) {
         targetHeight: Int
     ): Boolean {
         if (targetWidth <= 0 || targetHeight <= 0) return false
-        val outputBitmap = renderMediaBitmap(media, targetWidth, targetHeight, 0f)
-            ?: return false
+        val outputBitmap = renderMediaBitmap(
+            media = media,
+            targetWidth = targetWidth,
+            targetHeight = targetHeight,
+            requestedLeftTravelPx = 0f,
+            requestedRightTravelPx = 0f
+        )?.bitmap ?: return false
         try {
             FileOutputStream(File(croppedDir, "page_$pageIndex.jpg")).use { out ->
                 outputBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
@@ -467,8 +486,9 @@ class WallpaperRepository private constructor(private val context: Context) {
         media: OriginalMedia,
         targetWidth: Int,
         targetHeight: Int,
-        requestedTravelPx: Float
-    ): Bitmap? {
+        requestedLeftTravelPx: Float,
+        requestedRightTravelPx: Float
+    ): ParallaxBitmap? {
         if (targetWidth <= 0 || targetHeight <= 0) return null
         val originalFile = File(originalsDir, media.fileName)
         if (!originalFile.exists()) return null
@@ -501,7 +521,9 @@ class WallpaperRepository private constructor(private val context: Context) {
                 ((sourceWidth + baseCropWidth) / 2f).toInt().coerceIn(1, sourceWidth),
                 ((sourceHeight + baseCropHeight) / 2f).toInt().coerceIn(1, sourceHeight)
             )
-            val actualTravelPx = if (media.cropFillMode == CropFillMode.CROP) {
+            val availableLeftTravelPx: Float
+            val availableRightTravelPx: Float
+            if (media.cropFillMode == CropFillMode.CROP) {
                 val cropWidth = baseCropWidth / scale
                 val cropHeight = baseCropHeight / scale
                 val centerX = sourceWidth / 2f -
@@ -510,34 +532,48 @@ class WallpaperRepository private constructor(private val context: Context) {
                     panY * ((sourceHeight - cropHeight) / 2f).coerceAtLeast(0f)
                 val left = (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
                 val top = (centerY - cropHeight / 2f).coerceIn(0f, sourceHeight - cropHeight)
-                val right = left + cropWidth
-                val availableSource = minOf(left, sourceWidth - right)
-                minOf(requestedTravelPx, availableSource * targetWidth / cropWidth)
+                availableLeftTravelPx = left * targetWidth / cropWidth
+                availableRightTravelPx =
+                    (sourceWidth - left - cropWidth) * targetWidth / cropWidth
             } else {
-                val availableSource = minOf(
-                    centerCrop.left.toFloat(),
-                    (sourceWidth - centerCrop.right).toFloat()
-                )
-                minOf(requestedTravelPx, availableSource * targetWidth / centerCrop.width())
-            }.coerceAtLeast(0f)
-            val travelPx = actualTravelPx.toInt()
-            val outputWidth = targetWidth + travelPx * 2
+                val fitScale = minOf(
+                    targetWidth.toFloat() / sourceWidth,
+                    targetHeight.toFloat() / sourceHeight
+                ) * scale
+                val drawWidth = sourceWidth * fitScale
+                val centerX = targetWidth / 2f +
+                    panX * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
+                val imageLeft = centerX - drawWidth / 2f
+                availableLeftTravelPx = (-imageLeft).coerceAtLeast(0f)
+                availableRightTravelPx =
+                    (imageLeft + drawWidth - targetWidth).coerceAtLeast(0f)
+            }
+            val leftTravelPx = minOf(
+                requestedLeftTravelPx.coerceAtLeast(0f),
+                availableLeftTravelPx
+            ).toInt()
+            val rightTravelPx = minOf(
+                requestedRightTravelPx.coerceAtLeast(0f),
+                availableRightTravelPx
+            ).toInt()
+            val outputWidth = targetWidth + leftTravelPx + rightTravelPx
             outputBitmap = try {
                 Bitmap.createBitmap(outputWidth, targetHeight, Bitmap.Config.ARGB_8888)
             } catch (e: OutOfMemoryError) {
                 Log.e("WallpaperRepo", "Not enough memory to render media ${media.id}", e)
                 return null
             }
-            val canvas = Canvas(outputBitmap)
-            val destination = Rect(0, 0, outputWidth, targetHeight)
+            val renderedBitmap = outputBitmap ?: return null
+            val canvas = Canvas(renderedBitmap)
 
             if (media.cropFillMode != CropFillMode.CROP) {
                 val sourcePerPixel = centerCrop.width().toFloat() / targetWidth
-                val extraSourceWidth = travelPx * sourcePerPixel
                 val expandedBackground = Rect(
-                    (centerCrop.left - extraSourceWidth).toInt().coerceAtLeast(0),
+                    (centerCrop.left - leftTravelPx * sourcePerPixel)
+                        .toInt().coerceAtLeast(0),
                     centerCrop.top,
-                    (centerCrop.right + extraSourceWidth).toInt().coerceAtMost(sourceWidth),
+                    (centerCrop.right + rightTravelPx * sourcePerPixel)
+                        .toInt().coerceAtMost(sourceWidth),
                     centerCrop.bottom
                 )
                 val blurScale = 1f - media.blurAmount.coerceIn(0f, 1f) * 0.94f
@@ -554,7 +590,12 @@ class WallpaperRepository private constructor(private val context: Context) {
                     Rect(0, 0, backgroundWidth, backgroundHeight),
                     paint
                 )
-                canvas.drawBitmap(blurredBackground!!, null, destination, paint)
+                canvas.drawBitmap(
+                    blurredBackground!!,
+                    null,
+                    Rect(0, 0, outputWidth, targetHeight),
+                    paint
+                )
                 if (media.cropFillMode == CropFillMode.GLASS) {
                     canvas.drawColor(Color.argb(58, 24, 28, 38))
                 }
@@ -565,7 +606,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 ) * scale
                 val drawWidth = sourceWidth * fitScale
                 val drawHeight = sourceHeight * fitScale
-                val centerX = travelPx + targetWidth / 2f +
+                val centerX = leftTravelPx + targetWidth / 2f +
                     panX * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
                 val centerY = targetHeight / 2f +
                     panY * ((drawHeight - targetHeight) / 2f).coerceAtLeast(0f)
@@ -590,11 +631,10 @@ class WallpaperRepository private constructor(private val context: Context) {
                 val left = (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
                 val top = (centerY - cropHeight / 2f).coerceIn(0f, sourceHeight - cropHeight)
                 val sourcePerPixel = cropWidth / targetWidth
-                val extraSourceWidth = travelPx * sourcePerPixel
                 val expandedSource = RectF(
-                    left - extraSourceWidth,
+                    left - leftTravelPx * sourcePerPixel,
                     top,
-                    left + cropWidth + extraSourceWidth,
+                    left + cropWidth + rightTravelPx * sourcePerPixel,
                     top + cropHeight
                 )
                 val sourceRect = Rect(
@@ -603,9 +643,14 @@ class WallpaperRepository private constructor(private val context: Context) {
                     expandedSource.right.toInt().coerceAtMost(sourceWidth),
                     expandedSource.bottom.toInt().coerceAtMost(sourceHeight)
                 )
-                canvas.drawBitmap(fullBitmap, sourceRect, RectF(destination), paint)
+                canvas.drawBitmap(
+                    fullBitmap,
+                    sourceRect,
+                    RectF(0f, 0f, outputWidth.toFloat(), targetHeight.toFloat()),
+                    paint
+                )
             }
-            return outputBitmap
+            return ParallaxBitmap(renderedBitmap, leftTravelPx, rightTravelPx)
         } catch (e: Exception) {
             Log.e("WallpaperRepo", "Failed to render media ${media.id}", e)
             outputBitmap?.recycle()

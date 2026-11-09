@@ -1,5 +1,9 @@
 package com.example
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
@@ -8,6 +12,7 @@ import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.WallpaperAppState
 import com.example.transition.TransitionRegistry
+import com.example.transition.ParallaxScrollTransition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -105,6 +110,48 @@ class ExampleUnitTest {
         assertNotNull(registry.get("cube"))
         assertEquals("Classic Scroll", registry.get("scroll").displayName)
         assertEquals("Parallax Scroll", registry.get("parallax").displayName)
+    }
+
+    @Test
+    fun testParallaxTransitionUsesDirectionalTravelLimits() {
+        val source = Bitmap.createBitmap(140, 1, Bitmap.Config.ARGB_8888)
+        val columns = IntArray(140) { Color.rgb(it, 0, 0) }
+        source.setPixels(columns, 0, 140, 0, 0, 140, 1)
+        val output = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888)
+        val renderer = ParallaxScrollTransition()
+
+        renderer.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = source,
+            pageBBitmap = null,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 10,
+            pageARightTravelPx = 30,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0
+        )
+        assertEquals(75, Color.red(output.getPixel(0, 0)))
+
+        renderer.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = source,
+            pageBBitmap = null,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 10,
+            pageARightTravelPx = 30,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0,
+            reverseDirection = true
+        )
+        assertEquals(55, Color.red(output.getPixel(0, 0)))
+        source.recycle()
+        output.recycle()
     }
 
     @Test

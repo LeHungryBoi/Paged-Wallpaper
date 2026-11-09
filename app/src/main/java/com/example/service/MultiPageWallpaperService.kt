@@ -51,6 +51,7 @@ class MultiPageWallpaperService : WallpaperService() {
         private var surfaceWidth = 1080
         private var surfaceHeight = 2400
         private var currentXOffset = 0.5f
+        private var offsetDirection = 0
         private var currentYOffset = 0.0f
         private var receivedXOffset: Float? = null
         private var receivedYOffset: Float? = null
@@ -215,7 +216,13 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             // Real launcher offset from user swiping
-            currentXOffset = xOffset.coerceIn(0f, 1f)
+            val nextXOffset = xOffset.coerceIn(0f, 1f)
+            if (nextXOffset > currentXOffset + 0.0001f) {
+                offsetDirection = 1
+            } else if (nextXOffset < currentXOffset - 0.0001f) {
+                offsetDirection = -1
+            }
+            currentXOffset = nextXOffset
             currentYOffset = yOffset
             hasReceivedLauncherOffset = true
 
@@ -351,28 +358,54 @@ class MultiPageWallpaperService : WallpaperService() {
             val (pageA, pageB, progress) = computePageTransition(currentXOffset, calib)
 
             val renderer = TransitionRegistry.get(state.transitionType)
-            val getBitmap: (Int, Int, Int) -> Bitmap? = if (renderer.id == "parallax") {
-                repository::getParallaxBitmap
+            val pageAParallax = if (renderer.id == "parallax") {
+                repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
             } else {
-                repository::getCroppedBitmap
+                null
             }
-            val pageABitmap = getBitmap(pageA, surfaceWidth, surfaceHeight)
+            val pageBParallax = if (renderer.id == "parallax" && pageA != pageB) {
+                repository.getParallaxBitmap(pageB, surfaceWidth, surfaceHeight)
+            } else {
+                null
+            }
+            val pageABitmap = pageAParallax?.bitmap
+                ?: if (renderer.id == "parallax") null
+                else repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
             val pageBBitmap = if (pageA != pageB) {
-                getBitmap(pageB, surfaceWidth, surfaceHeight)
+                pageBParallax?.bitmap
+                    ?: if (renderer.id == "parallax") null
+                    else repository.getCroppedBitmap(pageB, surfaceWidth, surfaceHeight)
             } else {
                 null
             }
 
             // Draw transition
-            renderer.draw(
-                canvas = canvas,
-                pageABitmap = pageABitmap,
-                pageBBitmap = pageBBitmap,
-                progress = progress,
-                screenWidth = surfaceWidth,
-                screenHeight = surfaceHeight,
-                paint = paint
-            )
+            if (renderer.id == "parallax") {
+                renderer.drawWithParallax(
+                    canvas = canvas,
+                    pageABitmap = pageABitmap,
+                    pageBBitmap = pageBBitmap,
+                    progress = progress,
+                    screenWidth = surfaceWidth,
+                    screenHeight = surfaceHeight,
+                    paint = paint,
+                    pageALeftTravelPx = pageAParallax?.leftTravelPx ?: 0,
+                    pageARightTravelPx = pageAParallax?.rightTravelPx ?: 0,
+                    pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
+                    pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
+                    reverseDirection = offsetDirection < 0
+                )
+            } else {
+                renderer.draw(
+                    canvas = canvas,
+                    pageABitmap = pageABitmap,
+                    pageBBitmap = pageBBitmap,
+                    progress = progress,
+                    screenWidth = surfaceWidth,
+                    screenHeight = surfaceHeight,
+                    paint = paint
+                )
+            }
 
             // Evaluate Darken / Extra Dim condition
             val isDimCondition = ExtraDimDetector.isDimConditionActive(applicationContext, state.darken)
