@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
+import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -72,6 +73,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteOriginal(id)
         }
+    }
+
+    fun updateOriginalMedia(media: OriginalMedia) {
+        repository.updateOriginalMedia(media)
     }
 
     fun setPageCount(count: Int) {
@@ -173,6 +178,8 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         targetWidth: Int,
         targetHeight: Int,
         isDark: Boolean?,
+        cropFillMode: CropFillMode,
+        blurAmount: Float,
         onDone: (Boolean) -> Unit
     ) {
         viewModelScope.launch {
@@ -184,7 +191,9 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
                 scale = scale,
                 targetWidth = targetWidth,
                 targetHeight = targetHeight,
-                isAlreadyDarkManual = isDark
+                isAlreadyDarkManual = isDark,
+                cropFillMode = cropFillMode,
+                blurAmount = blurAmount
             )
             onDone(success)
         }

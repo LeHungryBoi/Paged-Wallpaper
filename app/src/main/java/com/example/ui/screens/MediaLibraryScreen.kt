@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,14 +44,20 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,6 +69,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
@@ -78,6 +87,7 @@ fun MediaLibraryScreen(
     val isImporting by viewModel.isImporting.collectAsState()
 
     val thumbnails = remember { mutableStateMapOf<String, Bitmap>() }
+    var editingMedia by remember { mutableStateOf<OriginalMedia?>(null) }
 
     // Android Standard PhotoPicker supporting both device storage and Cloud Media Apps (Google Photos, etc.)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -142,7 +152,7 @@ fun MediaLibraryScreen(
                         ) {
                             Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Text(
-                                text = "Uncropped Asset Library",
+                                text = "Media Library",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -152,7 +162,7 @@ fun MediaLibraryScreen(
                             text = if (targetPageIndexToCrop != null) {
                                 "Select an image to crop for Screen ${targetPageIndexToCrop + 1}"
                             } else {
-                                "Full-resolution original photos are preserved here to crop or assign anytime."
+                                "Select a screen, then choose its image. Each image keeps its own crop and dimming defaults."
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -292,9 +302,9 @@ fun MediaLibraryScreen(
                                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             Icon(
-                                                if (media.isDarkDetected) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                                if (media.isAlreadyDark) Icons.Default.DarkMode else Icons.Default.LightMode,
                                                 contentDescription = null,
-                                                tint = if (media.isDarkDetected) Color.Yellow else Color.White,
+                                                tint = if (media.isAlreadyDark) Color.Yellow else Color.White,
                                                 modifier = Modifier.size(12.dp)
                                             )
                                             Text(
@@ -338,9 +348,23 @@ fun MediaLibraryScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = if (media.isDarkDetected) "Dark Preset" else "Bright Preset",
+                                            text = "${media.cropFillMode.displayName} · ${if (media.isAlreadyDark) "Already dark" else "Auto dim"}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { editingMedia = media },
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .testTag("media_settings_${media.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Tune,
+                                            contentDescription = "Edit image settings",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
 
@@ -379,6 +403,91 @@ fun MediaLibraryScreen(
             containerColor = MaterialTheme.colorScheme.primary
         ) {
             Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Import Photos")
+        }
+
+        editingMedia?.let { media ->
+            AlertDialog(
+                onDismissRequest = { editingMedia = null },
+                title = { Text("Image defaults for assignments") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "These settings are saved with this image and applied when you assign it to a screen.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        CropFillMode.values().forEach { mode ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        editingMedia = media.copy(cropFillMode = mode)
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = media.cropFillMode == mode,
+                                    onClick = { editingMedia = media.copy(cropFillMode = mode) }
+                                )
+                                Column {
+                                    Text(mode.displayName, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        mode.description,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                        if (media.cropFillMode != CropFillMode.CROP) {
+                            Text(
+                                text = "Background blur: ${(media.blurAmount * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = media.blurAmount,
+                                onValueChange = { editingMedia = media.copy(blurAmount = it) },
+                                valueRange = 0f..1f,
+                                modifier = Modifier.testTag("media_blur_slider")
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Already dark", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Skip automatic dimming for this image",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = media.isAlreadyDark,
+                                onCheckedChange = { editingMedia = media.copy(isAlreadyDark = it) },
+                                modifier = Modifier.testTag("media_already_dark_switch")
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.updateOriginalMedia(media)
+                            editingMedia = null
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editingMedia = null }) {
+                        Text("Cancel")
+                    }
+                }
+            )
         }
     }
 }

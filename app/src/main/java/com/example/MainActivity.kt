@@ -102,8 +102,6 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
 
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
     val appState by viewModel.appState.collectAsState()
-    val originals by viewModel.originals.collectAsState()
-
     // Dedicated Full-Screen Cropper (No dialogs, no black borders, strictly bounded viewport)
     if (croppingMedia != null) {
         CropScreen(
@@ -113,7 +111,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
             onDismiss = {
                 croppingMedia = null
             },
-            onConfirm = { pageIndex, panX, panY, scale, isAlreadyDark ->
+            onConfirm = { pageIndex, panX, panY, scale, isAlreadyDark, cropFillMode, blurAmount ->
                 val screenW = context.resources.displayMetrics.widthPixels
                 val screenH = context.resources.displayMetrics.heightPixels
                 viewModel.cropAndAssign(
@@ -124,7 +122,9 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                     scale = scale,
                     targetWidth = screenW,
                     targetHeight = screenH,
-                    isDark = isAlreadyDark
+                    isDark = isAlreadyDark,
+                    cropFillMode = cropFillMode,
+                    blurAmount = blurAmount
                 ) {
                     croppingMedia = null
                     targetCropPageIndex = null
@@ -214,13 +214,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                             viewModel = viewModel,
                             onNavigateToMediaForPage = { pageIdx ->
                                 targetCropPageIndex = pageIdx
-                                val existingPage = appState.pages.find { it.pageIndex == pageIdx }
-                                val media = originals.find { it.id == existingPage?.originalId }
-                                if (media != null) {
-                                    croppingMedia = media
-                                } else {
-                                    selectedTab = AppTab.MEDIA
-                                }
+                                selectedTab = AppTab.MEDIA
                             },
                             onNavigateToCalibration = {
                                 selectedTab = AppTab.CALIBRATE

@@ -15,6 +15,7 @@ import android.provider.DocumentsContract
 import android.util.Log
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
+import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -323,6 +324,17 @@ class WallpaperRepository private constructor(private val context: Context) {
         updateState { it.copy(pages = updatedPages) }
     }
 
+    fun updateOriginalMedia(updatedMedia: OriginalMedia) {
+        val updatedList = _originals.value.map { media ->
+            if (media.id == updatedMedia.id) {
+                updatedMedia.copy(blurAmount = updatedMedia.blurAmount.coerceIn(0f, 1f))
+            } else {
+                media
+            }
+        }
+        saveOriginalsMeta(updatedList)
+    }
+
     suspend fun cropAndAssignToPage(
         originalId: String,
         pageIndex: Int,
@@ -331,63 +343,122 @@ class WallpaperRepository private constructor(private val context: Context) {
         scale: Float,          // 1f to 3f
         targetWidth: Int,
         targetHeight: Int,
-        isAlreadyDarkManual: Boolean? = null
+        isAlreadyDarkManual: Boolean? = null,
+        cropFillMode: CropFillMode = CropFillMode.BLUR,
+        blurAmount: Float = 0.65f
     ): Boolean = withContext(Dispatchers.IO) {
+        if (targetWidth <= 0 || targetHeight <= 0) return@withContext false
         val originalFile = File(originalsDir, "$originalId.jpg")
         if (!originalFile.exists()) return@withContext false
 
         val fullBmp = BitmapFactory.decodeFile(originalFile.absolutePath) ?: return@withContext false
+        val boundedScale = scale.coerceIn(1f, 3f)
+        val boundedBlur = blurAmount.coerceIn(0f, 1f)
         val srcW = fullBmp.width
         val srcH = fullBmp.height
-
-        val outBmp = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(outBmp)
-
-        val targetRatio = targetWidth.toFloat() / targetHeight.toFloat()
-        val srcRatio = srcW.toFloat() / srcH.toFloat()
-
-        // Base fit calculation
-        val baseW: Float
-        val baseH: Float
-        if (srcRatio > targetRatio) {
-            baseH = srcH.toFloat()
-            baseW = baseH * targetRatio
-        } else {
-            baseW = srcW.toFloat()
-            baseH = baseW / targetRatio
-        }
-
-        val effectiveCropW = (baseW / scale).coerceIn(10f, srcW.toFloat())
-        val effectiveCropH = (baseH / scale).coerceIn(10f, srcH.toFloat())
-
-        val maxPanX = (srcW - effectiveCropW) / 2f
-        val maxPanY = (srcH - effectiveCropH) / 2f
-
-        val centerX = srcW / 2f + panXNormalized * maxPanX
-        val centerY = srcH / 2f + panYNormalized * maxPanY
-
-        val left = (centerX - effectiveCropW / 2f).toInt().coerceIn(0, (srcW - effectiveCropW).toInt().coerceAtLeast(0))
-        val top = (centerY - effectiveCropH / 2f).toInt().coerceIn(0, (srcH - effectiveCropH).toInt().coerceAtLeast(0))
-        val right = (left + effectiveCropW).toInt().coerceAtMost(srcW)
-        val bottom = (top + effectiveCropH).toInt().coerceAtMost(srcH)
-
-        val srcRect = Rect(left, top, right, bottom)
-        val dstRect = Rect(0, 0, targetWidth, targetHeight)
-
+        val targetRatio = targetWidth.toFloat() / targetHeight
+        val srcRatio = srcW.toFloat() / srcH
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-        canvas.drawBitmap(fullBmp, srcRect, dstRect, paint)
-        fullBmp.recycle()
-
-        // Save to croppedDir
+        val outBmp = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
+        var blurredBackground: Bitmap? = null
         val croppedFileName = "page_$pageIndex.jpg"
-        val croppedFile = File(croppedDir, croppedFileName)
-        FileOutputStream(croppedFile).use { out ->
-            outBmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+
+        try {
+            val canvas = Canvas(outBmp)
+            val dstRect = Rect(0, 0, targetWidth, targetHeight)
+            val centerCropWidth = if (srcRatio > targetRatio) {
+                (srcH * targetRatio).toInt().coerceIn(1, srcW)
+            } else {
+                srcW
+            }
+            val centerCropHeight = if (srcRatio > targetRatio) {
+                srcH
+            } else {
+                (srcW / targetRatio).toInt().coerceIn(1, srcH)
+            }
+            val centerCropRect = Rect(
+                (srcW - centerCropWidth) / 2,
+                (srcH - centerCropHeight) / 2,
+                (srcW + centerCropWidth) / 2,
+                (srcH + centerCropHeight) / 2
+            )
+
+            if (cropFillMode != CropFillMode.CROP) {
+                val downsampleScale = 1f - boundedBlur * 0.94f
+                val backgroundWidth = (targetWidth * downsampleScale).toInt().coerceAtLeast(1)
+                val backgroundHeight = (targetHeight * downsampleScale).toInt().coerceAtLeast(1)
+                blurredBackground = Bitmap.createBitmap(
+                    backgroundWidth,
+                    backgroundHeight,
+                    Bitmap.Config.ARGB_8888
+                )
+                Canvas(blurredBackground!!).drawBitmap(
+                    fullBmp,
+                    centerCropRect,
+                    Rect(0, 0, backgroundWidth, backgroundHeight),
+                    paint
+                )
+                canvas.drawBitmap(blurredBackground!!, null, dstRect, paint)
+                if (cropFillMode == CropFillMode.GLASS) {
+                    canvas.drawColor(Color.argb(58, 24, 28, 38))
+                }
+
+                val fitScale = minOf(
+                    targetWidth.toFloat() / srcW,
+                    targetHeight.toFloat() / srcH
+                ) * boundedScale
+                val drawWidth = srcW * fitScale
+                val drawHeight = srcH * fitScale
+                val travelX = ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
+                val travelY = ((drawHeight - targetHeight) / 2f).coerceAtLeast(0f)
+                val centerX = targetWidth / 2f + panXNormalized.coerceIn(-1f, 1f) * travelX
+                val centerY = targetHeight / 2f + panYNormalized.coerceIn(-1f, 1f) * travelY
+                val foregroundRect = Rect(
+                    (centerX - drawWidth / 2f).toInt(),
+                    (centerY - drawHeight / 2f).toInt(),
+                    (centerX + drawWidth / 2f).toInt(),
+                    (centerY + drawHeight / 2f).toInt()
+                )
+                canvas.drawBitmap(fullBmp, null, foregroundRect, paint)
+            } else {
+                val cropWidth = if (srcRatio > targetRatio) srcH * targetRatio else srcW.toFloat()
+                val cropHeight = if (srcRatio > targetRatio) srcH.toFloat() else srcW / targetRatio
+                val effectiveCropWidth = (cropWidth / boundedScale).coerceAtLeast(1f)
+                val effectiveCropHeight = (cropHeight / boundedScale).coerceAtLeast(1f)
+                val maxPanX = (srcW - effectiveCropWidth) / 2f
+                val maxPanY = (srcH - effectiveCropHeight) / 2f
+                val centerX = srcW / 2f + panXNormalized.coerceIn(-1f, 1f) * maxPanX
+                val centerY = srcH / 2f + panYNormalized.coerceIn(-1f, 1f) * maxPanY
+                val cropRect = Rect(
+                    (centerX - effectiveCropWidth / 2f).toInt().coerceIn(0, srcW - 1),
+                    (centerY - effectiveCropHeight / 2f).toInt().coerceIn(0, srcH - 1),
+                    (centerX + effectiveCropWidth / 2f).toInt().coerceIn(1, srcW),
+                    (centerY + effectiveCropHeight / 2f).toInt().coerceIn(1, srcH)
+                )
+                canvas.drawBitmap(fullBmp, cropRect, dstRect, paint)
+            }
+
+            val croppedFile = File(croppedDir, croppedFileName)
+            FileOutputStream(croppedFile).use { out ->
+                outBmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            }
+        } finally {
+            blurredBackground?.recycle()
+            outBmp.recycle()
+            fullBmp.recycle()
         }
-        outBmp.recycle()
 
         val origMedia = _originals.value.find { it.id == originalId }
-        val isDark = isAlreadyDarkManual ?: origMedia?.isDarkDetected ?: false
+        val isDark = isAlreadyDarkManual ?: origMedia?.isAlreadyDark ?: false
+        if (origMedia != null) {
+            updateOriginalMedia(
+                origMedia.copy(
+                    isAlreadyDark = isDark,
+                    cropFillMode = cropFillMode,
+                    blurAmount = boundedBlur
+                )
+            )
+        }
 
         // Update PageItem
         val currentPages = _appState.value.pages.toMutableList()

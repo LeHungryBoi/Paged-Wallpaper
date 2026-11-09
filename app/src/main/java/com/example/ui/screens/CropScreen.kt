@@ -63,6 +63,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
@@ -71,6 +73,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -83,16 +86,29 @@ fun CropScreen(
     initialPageIndex: Int,
     pageCount: Int,
     onDismiss: () -> Unit,
-    onConfirm: (pageIndex: Int, panX: Float, panY: Float, scale: Float, isAlreadyDark: Boolean) -> Unit
+    onConfirm: (
+        pageIndex: Int,
+        panX: Float,
+        panY: Float,
+        scale: Float,
+        isAlreadyDark: Boolean,
+        cropFillMode: CropFillMode,
+        blurAmount: Float
+    ) -> Unit
 ) {
     val context = LocalContext.current
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var bitmap by remember(media.id) { mutableStateOf<Bitmap?>(null) }
+    var blurredBitmap by remember(media.id) { mutableStateOf<Bitmap?>(null) }
 
-    var selectedPageIndex by remember { mutableIntStateOf(initialPageIndex.coerceIn(0, pageCount - 1)) }
-    var panX by remember { mutableFloatStateOf(0f) } // -1f to 1f
-    var panY by remember { mutableFloatStateOf(0f) } // -1f to 1f
-    var scale by remember { mutableFloatStateOf(1.0f) } // 1f to 3f
-    var isAlreadyDark by remember { mutableStateOf(media.isDarkDetected) }
+    var selectedPageIndex by remember(initialPageIndex) {
+        mutableIntStateOf(initialPageIndex.coerceIn(0, pageCount - 1))
+    }
+    var panX by remember(media.id) { mutableFloatStateOf(0f) } // -1f to 1f
+    var panY by remember(media.id) { mutableFloatStateOf(0f) } // -1f to 1f
+    var scale by remember(media.id) { mutableFloatStateOf(1.0f) } // 1f to 3f
+    var isAlreadyDark by remember(media.id) { mutableStateOf(media.isAlreadyDark) }
+    var cropFillMode by remember(media.id) { mutableStateOf(media.cropFillMode) }
+    var blurAmount by remember(media.id) { mutableFloatStateOf(media.blurAmount) }
 
     BackHandler {
         onDismiss()
@@ -107,6 +123,24 @@ fun CropScreen(
                 bitmap = bmp
             }
         }
+    }
+
+    LaunchedEffect(media.id, blurAmount, bitmap) {
+        val source = bitmap ?: return@LaunchedEffect
+        val blurScale = 1f - blurAmount.coerceIn(0f, 1f) * 0.94f
+        val previewScale = minOf(blurScale, 512f / maxOf(source.width, source.height))
+        val previewBitmap = withContext(Dispatchers.IO) {
+            Bitmap.createScaledBitmap(
+                source,
+                (source.width * previewScale).toInt().coerceAtLeast(1),
+                (source.height * previewScale).toInt().coerceAtLeast(1),
+                true
+            )
+        }
+        blurredBitmap?.takeIf {
+            it !== previewBitmap && it !== source && !it.isRecycled
+        }?.recycle()
+        blurredBitmap = previewBitmap
     }
 
     Scaffold(
@@ -173,7 +207,15 @@ fun CropScreen(
                     }
                     Button(
                         onClick = {
-                            onConfirm(selectedPageIndex, panX, panY, scale, isAlreadyDark)
+                            onConfirm(
+                                selectedPageIndex,
+                                panX,
+                                panY,
+                                scale,
+                                isAlreadyDark,
+                                cropFillMode,
+                                blurAmount
+                            )
                         },
                         modifier = Modifier
                             .weight(1.5f)
@@ -225,13 +267,48 @@ fun CropScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (bitmap != null) {
+                        if (cropFillMode != CropFillMode.CROP) {
+                            Image(
+                                bitmap = (if (blurAmount == 0f) bitmap!! else blurredBitmap ?: bitmap!!).asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .blur(if (blurredBitmap == null) (blurAmount * 24f).dp else 0.dp)
+                            )
+                            if (cropFillMode == CropFillMode.GLASS) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color(0x5018202C))
+                                )
+                            }
+                        }
                         Image(
                             bitmap = bitmap!!.asImageBitmap(),
                             contentDescription = "Crop Preview",
-                            contentScale = ContentScale.Crop,
+                            contentScale = if (cropFillMode == CropFillMode.CROP) {
+                                ContentScale.Crop
+                            } else {
+                                ContentScale.Fit
+                            },
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clipToBounds()
+                                .graphicsLayer {
+                                    val source = bitmap!!
+                                    val baseScale = if (cropFillMode == CropFillMode.CROP) {
+                                        maxOf(size.width / source.width, size.height / source.height)
+                                    } else {
+                                        minOf(size.width / source.width, size.height / source.height)
+                                    }
+                                    val imageWidth = source.width * baseScale
+                                    val imageHeight = source.height * baseScale
+                                    scaleX = scale
+                                    scaleY = scale
+                                    translationX = panX * ((imageWidth * scale - size.width) / 2f).coerceAtLeast(0f)
+                                    translationY = panY * ((imageHeight * scale - size.height) / 2f).coerceAtLeast(0f)
+                                }
                         )
                     } else {
                         Text(
@@ -327,6 +404,42 @@ fun CropScreen(
                             ) {
                                 Text("Bottom", style = MaterialTheme.typography.labelSmall)
                             }
+                        }
+
+                        Text(
+                            text = "Image fit",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CropFillMode.values().forEach { mode ->
+                                FilterChip(
+                                    selected = cropFillMode == mode,
+                                    onClick = { cropFillMode = mode },
+                                    label = { Text(mode.displayName, style = MaterialTheme.typography.labelSmall) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                        Text(
+                            text = cropFillMode.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (cropFillMode != CropFillMode.CROP) {
+                            Text(
+                                text = "Background blur: ${(blurAmount * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = blurAmount,
+                                onValueChange = { blurAmount = it },
+                                valueRange = 0f..1f,
+                                modifier = Modifier.testTag("crop_blur_slider")
+                            )
                         }
 
                         // Assign to Page chips

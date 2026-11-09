@@ -11,6 +11,17 @@ enum class DarkenTrigger(val displayName: String, val description: String) {
     ALWAYS("Always Dim", "Keep dimming filter always active")
 }
 
+enum class CropFillMode(val displayName: String, val description: String) {
+    CROP("Crop to fill", "Fill the screen by cropping the image edges"),
+    BLUR("Blurred fill", "Keep the whole image over a softly blurred background"),
+    GLASS("Frosted fill", "Keep the whole image over a tinted, blurred background");
+
+    companion object {
+        fun fromName(name: String): CropFillMode =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: BLUR
+    }
+}
+
 data class PageItem(
     val pageIndex: Int,
     val originalId: String? = null,
@@ -160,7 +171,10 @@ data class OriginalMedia(
     val width: Int,
     val height: Int,
     val averageLuminance: Float,
-    val isDarkDetected: Boolean
+    val isDarkDetected: Boolean,
+    val isAlreadyDark: Boolean = isDarkDetected,
+    val cropFillMode: CropFillMode = CropFillMode.BLUR,
+    val blurAmount: Float = 0.65f
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -170,10 +184,14 @@ data class OriginalMedia(
         put("height", height)
         put("averageLuminance", averageLuminance.toDouble())
         put("isDarkDetected", isDarkDetected)
+        put("isAlreadyDark", isAlreadyDark)
+        put("cropFillMode", cropFillMode.name)
+        put("blurAmount", blurAmount.toDouble())
     }
 
     companion object {
         fun fromJson(json: JSONObject): OriginalMedia {
+            val isDarkDetected = json.optBoolean("isDarkDetected", false)
             return OriginalMedia(
                 id = json.optString("id"),
                 fileName = json.optString("fileName"),
@@ -181,7 +199,10 @@ data class OriginalMedia(
                 width = json.optInt("width", 1080),
                 height = json.optInt("height", 2400),
                 averageLuminance = json.optDouble("averageLuminance", 0.5).toFloat(),
-                isDarkDetected = json.optBoolean("isDarkDetected", false)
+                isDarkDetected = isDarkDetected,
+                isAlreadyDark = json.optBoolean("isAlreadyDark", isDarkDetected),
+                cropFillMode = CropFillMode.fromName(json.optString("cropFillMode", CropFillMode.BLUR.name)),
+                blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f)
             )
         }
     }

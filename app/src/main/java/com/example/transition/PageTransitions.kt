@@ -101,6 +101,79 @@ class CrossFadeTransition : PageTransitionRenderer {
     }
 }
 
+class SoftBlurTransition : PageTransitionRenderer {
+    override val id: String = "soft_blur"
+    override val displayName: String = "Soft Blur Fade"
+    override val description: String = "A stationary crossfade with a gentle blur that peaks mid-swipe"
+
+    private var sourceA: Bitmap? = null
+    private var blurredA: Bitmap? = null
+    private var sourceB: Bitmap? = null
+    private var blurredB: Bitmap? = null
+
+    override fun draw(
+        canvas: Canvas,
+        pageABitmap: Bitmap?,
+        pageBBitmap: Bitmap?,
+        progress: Float,
+        screenWidth: Int,
+        screenHeight: Int,
+        paint: Paint
+    ) {
+        val p = progress.coerceIn(0f, 1f)
+        val eased = p * p * (3f - 2f * p)
+        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        val originalAlpha = paint.alpha
+        canvas.drawColor(Color.rgb(18, 22, 34))
+
+        if (pageABitmap != null) {
+            paint.alpha = ((1f - eased) * 255).toInt().coerceIn(0, 255)
+            canvas.drawBitmap(pageABitmap, null, fullRect, paint)
+        }
+        if (pageBBitmap != null) {
+            paint.alpha = (eased * 255).toInt().coerceIn(0, 255)
+            canvas.drawBitmap(pageBBitmap, null, fullRect, paint)
+        }
+
+        val blurStrength = (kotlin.math.sin(Math.PI * eased).toFloat() * 0.22f)
+            .coerceIn(0f, 0.22f)
+        if (blurStrength > 0.001f) {
+            blurred(pageABitmap, true)?.let {
+                paint.alpha = ((1f - eased) * blurStrength * 255).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(it, null, fullRect, paint)
+            }
+            blurred(pageBBitmap, false)?.let {
+                paint.alpha = (eased * blurStrength * 255).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(it, null, fullRect, paint)
+            }
+        }
+        paint.alpha = originalAlpha
+    }
+
+    private fun blurred(source: Bitmap?, firstPage: Boolean): Bitmap? {
+        if (source == null || source.isRecycled) return null
+        val currentSource = if (firstPage) sourceA else sourceB
+        val currentBlur = if (firstPage) blurredA else blurredB
+        if (currentSource === source && currentBlur?.isRecycled == false) return currentBlur
+
+        if (currentBlur != null && !currentBlur.isRecycled) currentBlur.recycle()
+        val result = Bitmap.createScaledBitmap(
+            source,
+            (source.width / 8).coerceAtLeast(1),
+            (source.height / 8).coerceAtLeast(1),
+            true
+        )
+        if (firstPage) {
+            sourceA = source
+            blurredA = result
+        } else {
+            sourceB = source
+            blurredB = result
+        }
+        return result
+    }
+}
+
 /**
  * Depth & Zoom 3D Layered transition
  */
@@ -272,6 +345,7 @@ object TransitionRegistry {
     val transitions: List<PageTransitionRenderer> = listOf(
         ClassicScrollTransition(),
         CrossFadeTransition(),
+        SoftBlurTransition(),
         DepthZoomTransition(),
         SlideOverTransition(),
         CubeTransition()

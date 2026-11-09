@@ -6,6 +6,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,6 +81,7 @@ fun StudioScreen(
 ) {
     val context = LocalContext.current
     val appState by viewModel.appState.collectAsState()
+    val originals by viewModel.originals.collectAsState()
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
 
     var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
@@ -244,6 +246,7 @@ fun StudioScreen(
                     Card(
                         modifier = Modifier
                             .width(180.dp)
+                            .clickable { onNavigateToMediaForPage(index) }
                             .testTag("page_card_$index"),
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
@@ -326,6 +329,16 @@ fun StudioScreen(
                             )
 
                             Text(
+                                text = if (originals.any { it.id == page.originalId }) {
+                                    "Assigned from media library"
+                                } else {
+                                    "Built-in wallpaper"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            Text(
                                 text = if (isHome) "Home Screen (Center)" else "Offset: ${String.format("%.2f", appState.calibration.customOffsets.getOrNull(index) ?: 0f)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -347,7 +360,7 @@ fun StudioScreen(
                                 ) {
                                     Icon(Icons.Default.Crop, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Crop", style = MaterialTheme.typography.labelSmall)
+                                    Text("Choose image", style = MaterialTheme.typography.labelSmall)
                                 }
 
                                 if (!isHome) {
