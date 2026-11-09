@@ -1,0 +1,61 @@
+name: Build APK
+
+# Build a fresh APK on every push so you never need a local dev environment.
+# Download the APK from the run's Artifacts section.
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only the newest commit of a branch matters; cancel superseded runs.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The repo ships only gradle-wrapper.properties (no gradlew scripts/jar),
+      # so provision the matching Gradle version directly instead of ./gradlew.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      # app/build.gradle.kts signs the debug build with ${rootDir}/debug.keystore
+      # (alias "androiddebugkey", store/key password "android"). The keystore is
+      # committed so every CI APK has the same signature and updates install over
+      # old installs; this step only generates a throwaway one if it is missing.
+      - name: Ensure debug keystore
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug, O=Android, C=US"
+          fi
+
+      - name: Build debug APK
+        run: gradle assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-${{ github.run_number }}-${{ github.sha }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

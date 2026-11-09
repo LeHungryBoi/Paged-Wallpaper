@@ -15,4 +15,6 @@
 .cxx
 local.properties
 .env
-debug.keystore
+# debug.keystore is committed on purpose: CI (.github/workflows/build.yml) signs
+# every build with the same key so new APKs install over old ones.
+my-upload-key.jks
