@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan to eliminate wallpaper flashing upon resuming from full-screen apps like YouTube, anchoring the initial resume offset to the designated Home screen, adding a smooth resume fade-in with toggle, and making diagnostic offset tracking strictly in-memory with zero disk writes.",
+  "updatedAt":  "2026-11-09T02:57:19.725641240Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

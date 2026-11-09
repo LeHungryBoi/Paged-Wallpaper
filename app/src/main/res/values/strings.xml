@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">PaperPages</string>
+    <string name="wallpaper_service_label">PaperPages Multi-Page Wallpaper</string>
+    <string name="wallpaper_description">Displays custom cropped wallpapers for each launcher screen with offset calibration and transitions.</string>
+</resources>
