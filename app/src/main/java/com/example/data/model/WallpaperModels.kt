@@ -191,6 +191,7 @@ data class WallpaperAppState(
     val pages: List<PageItem>,
     val calibration: CalibrationConfig,
     val transitionType: String = "scroll",
+    val resumeFadeEnabled: Boolean = false,
     val darken: DarkenConfig = DarkenConfig(),
     val backupFolderPath: String? = null,
     val autoBackupEnabled: Boolean = false
@@ -201,6 +202,7 @@ data class WallpaperAppState(
         put("pages", pagesArr)
         put("calibration", calibration.toJson())
         put("transitionType", transitionType)
+        put("resumeFadeEnabled", resumeFadeEnabled)
         put("darken", darken.toJson())
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
@@ -232,6 +234,7 @@ data class WallpaperAppState(
                 pages = finalPages,
                 calibration = calib,
                 transitionType = json.optString("transitionType", "scroll"),
+                resumeFadeEnabled = json.optBoolean("resumeFadeEnabled", false),
                 darken = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
                     ?: DarkenConfig(),
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },

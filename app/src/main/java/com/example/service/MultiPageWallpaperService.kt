@@ -1,5 +1,6 @@
 package com.example.service
 
+import android.animation.ValueAnimator
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.os.Bundle
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
+import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
@@ -33,6 +35,8 @@ class MultiPageWallpaperService : WallpaperService() {
         private var currentYOffset = 0.0f
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
+        private var resumeFadeAnimator: ValueAnimator? = null
+        private var resumeFadeProgress = 1f
 
         private var extraDimObserver: ContentObserver? = null
         private var systemBroadcastReceiver: BroadcastReceiver? = null
@@ -60,6 +64,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             super.onDestroy()
+            resumeFadeAnimator?.cancel()
+            resumeFadeAnimator = null
             repository.removeChangeListener(repoChangeListener)
             ExtraDimDetector.unregisterObserver(applicationContext, extraDimObserver)
             extraDimObserver = null
@@ -82,8 +88,31 @@ class MultiPageWallpaperService : WallpaperService() {
                         currentXOffset = homeOffset
                         repository.saveLastKnownOffset(currentXOffset)
                     }
+                    startResumeFadeIfEnabled()
                 }
                 drawFrame()
+            } else {
+                resumeFadeAnimator?.cancel()
+                resumeFadeAnimator = null
+                resumeFadeProgress = 1f
+            }
+        }
+
+        private fun startResumeFadeIfEnabled() {
+            resumeFadeAnimator?.cancel()
+            resumeFadeAnimator = null
+            resumeFadeProgress = 1f
+            if (!repository.appState.value.resumeFadeEnabled) return
+
+            resumeFadeProgress = 0f
+            resumeFadeAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 250L
+                interpolator = LinearInterpolator()
+                addUpdateListener {
+                    resumeFadeProgress = it.animatedValue as Float
+                    drawFrame()
+                }
+                start()
             }
         }
 
@@ -228,6 +257,19 @@ class MultiPageWallpaperService : WallpaperService() {
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
+                    if (resumeFadeProgress < 1f) {
+                        canvas.drawColor(Color.BLACK)
+                        val layer = canvas.saveLayerAlpha(
+                            0f,
+                            0f,
+                            surfaceWidth.toFloat(),
+                            surfaceHeight.toFloat(),
+                            (resumeFadeProgress * 255).toInt().coerceIn(0, 255)
+                        )
+                        renderWallpaper(canvas)
+                        canvas.restoreToCount(layer)
+                        return
+                    }
                     renderWallpaper(canvas)
                 }
             } catch (e: Exception) {

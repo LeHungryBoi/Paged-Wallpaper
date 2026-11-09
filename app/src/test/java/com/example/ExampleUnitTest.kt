@@ -7,6 +7,7 @@ import com.example.data.model.PageItem
 import com.example.data.model.WallpaperAppState
 import com.example.transition.TransitionRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -109,7 +110,8 @@ class ExampleUnitTest {
         val state = WallpaperAppState(
             pages = pages,
             calibration = CalibrationConfig(pageCount = 3, homePageIndex = 1),
-            transitionType = "cube"
+            transitionType = "cube",
+            resumeFadeEnabled = true
         )
         val json = state.toJson()
         val restored = WallpaperAppState.fromJson(json)
@@ -117,5 +119,20 @@ class ExampleUnitTest {
         assertEquals(3, restored.pages.size)
         assertEquals("Home", restored.pages[1].customLabel)
         assertEquals("cube", restored.transitionType)
+        assertTrue(restored.resumeFadeEnabled)
+    }
+
+    @Test
+    fun testWallpaperAppStateDefaultsResumeFadeOffForExistingConfigs() {
+        val restored = WallpaperAppState.fromJson(
+            WallpaperAppState(
+                pages = emptyList(),
+                calibration = CalibrationConfig()
+            ).toJson().apply {
+                remove("resumeFadeEnabled")
+            }
+        )
+
+        assertFalse(restored.resumeFadeEnabled)
     }
 }
