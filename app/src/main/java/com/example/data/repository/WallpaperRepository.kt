@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.util.AtomicFile
 import android.util.Log
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
@@ -20,6 +21,9 @@ import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
+import com.example.data.model.PageTransitionSetting
+import com.example.data.model.WallpaperPreset
+import com.example.data.migration.PresetDataMigration
 import com.example.data.model.WallpaperAppState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -90,7 +94,7 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     // Bitmap cache for fast Live Wallpaper Engine rendering
-    private val bitmapCache = mutableMapOf<Int, Bitmap>()
+    private val bitmapCache = mutableMapOf<Triple<Int, Int, Int>, Bitmap>()
     private val parallaxBitmapCache =
         mutableMapOf<Triple<Int, Int, Int>, ParallaxBitmap>()
 
@@ -127,14 +131,25 @@ class WallpaperRepository private constructor(private val context: Context) {
 
     private fun loadInitialData() {
         // Load originals metadata
-        loadOriginalsMeta()
+        val legacyMediaMetadata = loadOriginalsMeta()
 
         // Load config
         if (configFile.exists()) {
             try {
                 val jsonStr = configFile.readText()
-                val loaded = WallpaperAppState.fromJson(JSONObject(jsonStr))
-                _appState.value = loaded
+                val json = JSONObject(jsonStr)
+                val loaded = WallpaperAppState.fromJson(json)
+                val migrated = if (loaded.schemaVersion < 2) {
+                    PresetDataMigration.migrateLegacy(loaded, legacyMediaMetadata)
+                } else {
+                    loaded
+                }
+                _appState.value = migrated
+                if (loaded.schemaVersion < 2) {
+                    if (saveConfigInternal(migrated)) {
+                        saveOriginalsMeta(_originals.value)
+                    }
+                }
             } catch (e: Exception) {
                 Log.e("WallpaperRepo", "Error loading config", e)
                 initDefaultState()
@@ -173,20 +188,27 @@ class WallpaperRepository private constructor(private val context: Context) {
         saveConfigInternal(defaultState)
     }
 
-    private fun loadOriginalsMeta() {
+    private fun loadOriginalsMeta(): Map<String, JSONObject> {
         if (originalsMetaFile.exists()) {
             try {
                 val jsonStr = originalsMetaFile.readText()
                 val arr = JSONArray(jsonStr)
                 val list = mutableListOf<OriginalMedia>()
+                val legacySettings = mutableMapOf<String, JSONObject>()
                 for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { list.add(OriginalMedia.fromJson(it)) }
+                    arr.optJSONObject(i)?.let { mediaJson ->
+                        val media = OriginalMedia.fromJson(mediaJson)
+                        list.add(media)
+                        legacySettings[media.id] = mediaJson
+                    }
                 }
                 _originals.value = list
+                return legacySettings
             } catch (e: Exception) {
                 Log.e("WallpaperRepo", "Error loading originals meta", e)
             }
         }
+        return emptyMap()
     }
 
     private fun saveOriginalsMeta(list: List<OriginalMedia>) {
@@ -194,22 +216,36 @@ class WallpaperRepository private constructor(private val context: Context) {
         try {
             val arr = JSONArray()
             list.forEach { arr.put(it.toJson()) }
-            originalsMetaFile.writeText(arr.toString())
+            writeAtomically(originalsMetaFile, arr.toString())
         } catch (e: Exception) {
             Log.e("WallpaperRepo", "Error saving originals meta", e)
         }
     }
 
-    private fun saveConfigInternal(state: WallpaperAppState) {
+    private fun writeAtomically(file: File, contents: String): Boolean {
+        val atomicFile = AtomicFile(file)
+        var stream: FileOutputStream? = null
         try {
-            configFile.writeText(state.toJson().toString(2))
+            stream = atomicFile.startWrite()
+            stream.write(contents.toByteArray(Charsets.UTF_8))
+            atomicFile.finishWrite(stream)
+            return true
         } catch (e: Exception) {
-            Log.e("WallpaperRepo", "Error writing config", e)
+            try {
+                stream?.let(atomicFile::failWrite)
+            } catch (recoveryError: Exception) {
+                e.addSuppressed(recoveryError)
+            }
+            Log.e("WallpaperRepo", "Error writing ${file.name}", e)
+            return false
         }
     }
 
+    private fun saveConfigInternal(state: WallpaperAppState): Boolean =
+        writeAtomically(configFile, state.toJson().toString(2))
+
     fun updateState(transform: (WallpaperAppState) -> WallpaperAppState) {
-        val newState = transform(_appState.value)
+        val newState = transform(_appState.value).copy(schemaVersion = 2)
         _appState.value = newState
         saveConfigInternal(newState)
         invalidateCache()
@@ -219,6 +255,89 @@ class WallpaperRepository private constructor(private val context: Context) {
             CoroutineScope(Dispatchers.IO).launch {
                 autoBackup(newState.backupFolderPath)
             }
+        }
+    }
+
+    fun selectPreset(presetId: String, pageCount: Int) {
+        val state = _appState.value
+        val preset = state.presets.firstOrNull { it.id == presetId } ?: return
+        val count = pageCount.coerceIn(2, 7)
+        val resizedPages = preset.pages.take(count).toMutableList()
+        while (resizedPages.size < count) {
+            val index = resizedPages.size
+            resizedPages.add(
+                PageItem(
+                    pageIndex = index,
+                    customLabel = "Page ${index + 1}",
+                    isBlank = true
+                )
+            )
+        }
+        val pages = resizedPages.mapIndexed { index, page ->
+            page.copy(pageIndex = index)
+        }
+        val transitions = preset.transitions.take((count - 1).coerceAtLeast(0)).toMutableList()
+        while (transitions.size < count - 1) {
+            transitions.add(transitions.lastOrNull() ?: PageTransitionSetting())
+        }
+        val firstTransition = transitions.firstOrNull()?.forwardTransitionId ?: "scroll"
+        updateState {
+            it.copy(
+                pages = pages,
+                transitions = transitions,
+                transitionType = firstTransition,
+                activePresetId = preset.id,
+                presetNeedsSave = preset.pages.size != count ||
+                    preset.transitions.size != (count - 1).coerceAtLeast(0)
+            )
+        }
+    }
+
+    fun saveCurrentPreset(name: String): String? {
+        val cleanName = name.trim().take(40)
+        if (cleanName.isEmpty()) return null
+        val state = _appState.value
+        val id = UUID.randomUUID().toString()
+        val preset = WallpaperPreset(
+            id = id,
+            name = cleanName,
+            pages = state.pages,
+            transitions = state.transitions
+        )
+        updateState {
+            it.copy(
+                presets = it.presets + preset,
+                activePresetId = id,
+                presetNeedsSave = false
+            )
+        }
+        return id
+    }
+
+    fun updatePageTransition(boundaryIndex: Int, setting: PageTransitionSetting) {
+        val state = _appState.value
+        if (boundaryIndex !in state.transitions.indices) return
+        val transitions = state.transitions.toMutableList()
+        transitions[boundaryIndex] = setting
+        updateState {
+            it.copy(
+                transitions = transitions,
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
+                presetNeedsSave = true
+            )
+        }
+    }
+
+    fun setTransitionForAllBoundaries(transitionId: String) {
+        val transitions = List((_appState.value.pages.size - 1).coerceAtLeast(0)) {
+            PageTransitionSetting(transitionId, transitionId)
+        }
+        updateState {
+            it.copy(
+                transitionType = transitionId,
+                transitions = transitions,
+                presetNeedsSave = true
+            )
         }
     }
 
@@ -263,14 +382,15 @@ class WallpaperRepository private constructor(private val context: Context) {
             ?: return getScreenSizedPage()
         val media = page.originalId?.let { id -> _originals.value.find { it.id == id } }
             ?: return getScreenSizedPage()
-        if (media.parallaxAmount <= 0f) return getScreenSizedPage()
+        if (page.parallaxAmount <= 0f) return getScreenSizedPage()
 
         val rendered = renderMediaBitmap(
             media = media,
+            page = page,
             targetWidth = reqWidth,
             targetHeight = reqHeight,
-            requestedLeftTravelPx = reqWidth * 0.25f * media.parallaxAmount,
-            requestedRightTravelPx = reqWidth * 0.25f * media.parallaxAmount
+            requestedLeftTravelPx = reqWidth * 0.25f * page.parallaxAmount,
+            requestedRightTravelPx = reqWidth * 0.25f * page.parallaxAmount
         ) ?: return getScreenSizedPage()
         synchronized(parallaxBitmapCache) {
             parallaxBitmapCache[key] = rendered
@@ -279,13 +399,31 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     fun getCroppedBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
+        if (reqWidth <= 0 || reqHeight <= 0) return null
+        val key = Triple(pageIndex, reqWidth, reqHeight)
         synchronized(bitmapCache) {
-            bitmapCache[pageIndex]?.let {
+            bitmapCache[key]?.let {
                 if (!it.isRecycled) return it
             }
         }
 
         val page = _appState.value.pages.find { it.pageIndex == pageIndex }
+        if (page?.isBlank == true) return null
+        val media = page?.originalId?.let { id -> _originals.value.find { it.id == id } }
+        if (page != null && media != null) {
+            val rendered = renderMediaBitmap(
+                media = media,
+                page = page,
+                targetWidth = reqWidth,
+                targetHeight = reqHeight,
+                requestedLeftTravelPx = 0f,
+                requestedRightTravelPx = 0f
+            )?.bitmap
+            if (rendered != null) {
+                synchronized(bitmapCache) { bitmapCache[key] = rendered }
+                return rendered
+            }
+        }
         val fileName = page?.croppedFileName ?: "starter_page_$pageIndex.jpg"
         val file = File(croppedDir, fileName)
 
@@ -303,7 +441,7 @@ class WallpaperRepository private constructor(private val context: Context) {
 
         if (bmp != null) {
             synchronized(bitmapCache) {
-                bitmapCache[pageIndex] = bmp
+                bitmapCache[key] = bmp
             }
         }
         return bmp
@@ -368,44 +506,35 @@ class WallpaperRepository private constructor(private val context: Context) {
         val updatedPages = _appState.value.pages.map {
             if (it.originalId == id) it.copy(originalId = null) else it
         }
-        updateState { it.copy(pages = updatedPages) }
+        updateState { it.copy(pages = updatedPages, presetNeedsSave = true) }
     }
 
-    suspend fun updateOriginalMedia(
-        updatedMedia: OriginalMedia,
+    suspend fun updatePageSettings(
+        pageIndex: Int,
+        updatedPage: PageItem,
         targetWidth: Int,
         targetHeight: Int
     ): Boolean = withContext(Dispatchers.IO) {
         if (targetWidth <= 0 || targetHeight <= 0) return@withContext false
-        val existing = _originals.value.find { it.id == updatedMedia.id }
+        val current = _appState.value.pages.find { it.pageIndex == pageIndex }
             ?: return@withContext false
-        val normalized = updatedMedia.copy(
-            blurAmount = updatedMedia.blurAmount.coerceIn(0f, 1f),
-            cropPanX = updatedMedia.cropPanX.coerceIn(-1f, 1f),
-            cropPanY = updatedMedia.cropPanY.coerceIn(-1f, 1f),
-            cropScale = updatedMedia.cropScale.coerceIn(1f, 3f),
-            parallaxAmount = updatedMedia.parallaxAmount.coerceIn(0f, 1f)
+        val mediaId = current.originalId ?: return@withContext false
+        val media = _originals.value.find { it.id == mediaId }
+            ?: return@withContext false
+        val normalized = updatedPage.copy(
+            pageIndex = pageIndex,
+            originalId = mediaId,
+            cropPanX = updatedPage.cropPanX.coerceIn(-1f, 1f),
+            cropPanY = updatedPage.cropPanY.coerceIn(-1f, 1f),
+            cropScale = updatedPage.cropScale.coerceIn(1f, 3f),
+            blurAmount = updatedPage.blurAmount.coerceIn(0f, 1f),
+            parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f)
         )
-        val assignedPages = _appState.value.pages.filter { it.originalId == existing.id }
-        for (page in assignedPages) {
-            if (!renderMediaForPage(normalized, page.pageIndex, targetWidth, targetHeight)) {
-                return@withContext false
-            }
+        if (!renderMediaForPage(media, normalized, targetWidth, targetHeight)) return@withContext false
+        val updatedPages = _appState.value.pages.map {
+            if (it.pageIndex == pageIndex) normalized else it
         }
-
-        saveOriginalsMeta(
-            _originals.value.map { if (it.id == normalized.id) normalized else it }
-        )
-        if (assignedPages.isNotEmpty()) {
-            val updatedPages = _appState.value.pages.map { page ->
-                if (page.originalId == normalized.id) {
-                    page.copy(isAlreadyDark = normalized.isAlreadyDark)
-                } else {
-                    page
-                }
-            }
-            updateState { it.copy(pages = updatedPages) }
-        }
+        updateState { it.copy(pages = updatedPages, presetNeedsSave = true) }
         true
     }
 
@@ -433,48 +562,47 @@ class WallpaperRepository private constructor(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         val media = _originals.value.find { it.id == originalId }
             ?: return@withContext false
-        if (!renderMediaForPage(media, pageIndex, targetWidth, targetHeight)) {
-            return@withContext false
-        }
 
         val newPage = PageItem(
             pageIndex = pageIndex,
             originalId = media.id,
             croppedFileName = "page_$pageIndex.jpg",
-            isAlreadyDark = media.isAlreadyDark,
+            isAlreadyDark = media.isDarkDetected,
             customLabel = if (pageIndex == _appState.value.calibration.homePageIndex) {
                 "Home"
             } else {
                 "Page ${pageIndex + 1}"
             }
         )
+        if (!renderMediaForPage(media, newPage, targetWidth, targetHeight)) return@withContext false
         val pages = _appState.value.pages.toMutableList()
         val existingIndex = pages.indexOfFirst { it.pageIndex == pageIndex }
         if (existingIndex >= 0) pages[existingIndex] = newPage else pages.add(newPage)
-        updateState { it.copy(pages = pages) }
+        updateState { it.copy(pages = pages, presetNeedsSave = true) }
         true
     }
 
     private fun renderMediaForPage(
         media: OriginalMedia,
-        pageIndex: Int,
+        page: PageItem,
         targetWidth: Int,
         targetHeight: Int
     ): Boolean {
         if (targetWidth <= 0 || targetHeight <= 0) return false
         val outputBitmap = renderMediaBitmap(
             media = media,
+            page = page,
             targetWidth = targetWidth,
             targetHeight = targetHeight,
             requestedLeftTravelPx = 0f,
             requestedRightTravelPx = 0f
         )?.bitmap ?: return false
         try {
-            FileOutputStream(File(croppedDir, "page_$pageIndex.jpg")).use { out ->
+            FileOutputStream(File(croppedDir, page.croppedFileName ?: "page_${page.pageIndex}.jpg")).use { out ->
                 outputBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
             }
         } catch (e: Exception) {
-            Log.e("WallpaperRepo", "Failed to render media ${media.id} for page $pageIndex", e)
+            Log.e("WallpaperRepo", "Failed to render media ${media.id} for page ${page.pageIndex}", e)
             return false
         } finally {
             outputBitmap.recycle()
@@ -484,6 +612,7 @@ class WallpaperRepository private constructor(private val context: Context) {
 
     private fun renderMediaBitmap(
         media: OriginalMedia,
+        page: PageItem,
         targetWidth: Int,
         targetHeight: Int,
         requestedLeftTravelPx: Float,
@@ -492,7 +621,26 @@ class WallpaperRepository private constructor(private val context: Context) {
         if (targetWidth <= 0 || targetHeight <= 0) return null
         val originalFile = File(originalsDir, media.fileName)
         if (!originalFile.exists()) return null
-        val fullBitmap = BitmapFactory.decodeFile(originalFile.absolutePath) ?: return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(originalFile.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            Log.e("WallpaperRepo", "Could not read dimensions for media ${media.id}")
+            return null
+        }
+        val requestedMaxDimension = maxOf(targetWidth, targetHeight) * 1.5f
+        val sampleSize = (
+            maxOf(bounds.outWidth, bounds.outHeight) / requestedMaxDimension
+        ).toInt().coerceAtLeast(1)
+        val decodeOptions = BitmapFactory.Options().apply {
+            inSampleSize = sampleSize
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val fullBitmap = try {
+            BitmapFactory.decodeFile(originalFile.absolutePath, decodeOptions)
+        } catch (e: OutOfMemoryError) {
+            Log.e("WallpaperRepo", "Not enough memory to decode media ${media.id}", e)
+            return null
+        } ?: return null
         var outputBitmap: Bitmap? = null
         var blurredBackground: Bitmap? = null
 
@@ -501,9 +649,9 @@ class WallpaperRepository private constructor(private val context: Context) {
             val sourceHeight = fullBitmap.height
             val targetRatio = targetWidth.toFloat() / targetHeight
             val sourceRatio = sourceWidth.toFloat() / sourceHeight
-            val scale = media.cropScale.coerceIn(1f, 3f)
-            val panX = media.cropPanX.coerceIn(-1f, 1f)
-            val panY = media.cropPanY.coerceIn(-1f, 1f)
+            val scale = page.cropScale.coerceIn(1f, 3f)
+            val panX = page.cropPanX.coerceIn(-1f, 1f)
+            val panY = page.cropPanY.coerceIn(-1f, 1f)
             val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
             val baseCropWidth = if (sourceRatio > targetRatio) {
                 sourceHeight * targetRatio
@@ -523,7 +671,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             )
             val availableLeftTravelPx: Float
             val availableRightTravelPx: Float
-            if (media.cropFillMode == CropFillMode.CROP) {
+            if (page.cropFillMode == CropFillMode.CROP) {
                 val cropWidth = baseCropWidth / scale
                 val cropHeight = baseCropHeight / scale
                 val centerX = sourceWidth / 2f -
@@ -566,7 +714,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             val renderedBitmap = outputBitmap ?: return null
             val canvas = Canvas(renderedBitmap)
 
-            if (media.cropFillMode != CropFillMode.CROP) {
+            if (page.cropFillMode != CropFillMode.CROP) {
                 val sourcePerPixel = centerCrop.width().toFloat() / targetWidth
                 val expandedBackground = Rect(
                     (centerCrop.left - leftTravelPx * sourcePerPixel)
@@ -576,7 +724,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                         .toInt().coerceAtMost(sourceWidth),
                     centerCrop.bottom
                 )
-                val blurScale = 1f - media.blurAmount.coerceIn(0f, 1f) * 0.94f
+                val blurScale = 1f - page.blurAmount.coerceIn(0f, 1f) * 0.94f
                 val backgroundWidth = (outputWidth * blurScale).toInt().coerceAtLeast(1)
                 val backgroundHeight = (targetHeight * blurScale).toInt().coerceAtLeast(1)
                 blurredBackground = Bitmap.createBitmap(
@@ -596,7 +744,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                     Rect(0, 0, outputWidth, targetHeight),
                     paint
                 )
-                if (media.cropFillMode == CropFillMode.GLASS) {
+                if (page.cropFillMode == CropFillMode.GLASS) {
                     canvas.drawColor(Color.argb(58, 24, 28, 38))
                 }
 

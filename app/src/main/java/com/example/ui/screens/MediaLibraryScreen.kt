@@ -8,7 +8,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +56,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -65,8 +63,7 @@ import java.io.File
 
 @Composable
 fun MediaLibraryScreen(
-    viewModel: WallpaperViewModel,
-    onEditMedia: (OriginalMedia) -> Unit
+    viewModel: WallpaperViewModel
 ) {
     val context = LocalContext.current
     val originals by viewModel.originals.collectAsState()
@@ -77,9 +74,7 @@ fun MediaLibraryScreen(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            viewModel.importMedia(uri) { media ->
-                if (media != null) onEditMedia(media)
-            }
+            viewModel.importMedia(uri)
         }
     }
 
@@ -118,6 +113,11 @@ fun MediaLibraryScreen(
                 }
                 Text("${originals.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Text(
+                "Original image copies are kept here. Cropping, fill, and parallax settings belong to each preset page.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             if (isImporting) {
                 Row(
@@ -165,7 +165,6 @@ fun MediaLibraryScreen(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onEditMedia(media) }
                                 .testTag("media_card_${media.id}"),
                             shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -192,9 +191,9 @@ fun MediaLibraryScreen(
                                         modifier = Modifier.align(Alignment.TopStart)
                                     ) {
                                         Icon(
-                                            if (media.isAlreadyDark) Icons.Default.DarkMode else Icons.Default.LightMode,
-                                            contentDescription = if (media.isAlreadyDark) "Already dark" else "Automatically dim",
-                                            tint = if (media.isAlreadyDark) Color.Yellow else Color.White,
+                                            if (media.isDarkDetected) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                            contentDescription = if (media.isDarkDetected) "Dark original" else "Original image",
+                                            tint = if (media.isDarkDetected) Color.Yellow else Color.White,
                                             modifier = Modifier.padding(6.dp).size(16.dp)
                                         )
                                     }
@@ -210,7 +209,7 @@ fun MediaLibraryScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            media.cropFillMode.displayName,
+                                            "Original image copy",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

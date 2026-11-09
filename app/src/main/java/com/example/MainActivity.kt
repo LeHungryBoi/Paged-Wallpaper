@@ -49,7 +49,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.CalibrationScreen
@@ -100,26 +99,36 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(AppTab.STUDIO) }
     var selectingMediaForPage by remember { mutableStateOf<Int?>(null) }
-    var editingMedia by remember { mutableStateOf<OriginalMedia?>(null) }
+    var editingPageIndex by remember { mutableStateOf<Int?>(null) }
     var isSavingMedia by remember { mutableStateOf(false) }
     var isAssigningMedia by remember { mutableStateOf(false) }
 
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
-    if (editingMedia != null) {
+    val appState by viewModel.appState.collectAsState()
+    val originals by viewModel.originals.collectAsState()
+    val pageToEdit = editingPageIndex?.let { index ->
+        appState.pages.find { it.pageIndex == index }?.let { page ->
+            originals.find { it.id == page.originalId }?.let { media -> index to (page to media) }
+        }
+    }
+    if (pageToEdit != null) {
+        val (pageIndex, pageAndMedia) = pageToEdit
+        val (page, media) = pageAndMedia
         MediaEditorScreen(
-            media = editingMedia!!,
+            media = media,
+            page = page,
             isSaving = isSavingMedia,
-            onDismiss = { if (!isSavingMedia) editingMedia = null },
-            onSave = { updatedMedia ->
+            onDismiss = { if (!isSavingMedia) editingPageIndex = null },
+            onSave = { updatedPage ->
                 val screenWidth = context.resources.displayMetrics.widthPixels
                 val screenHeight = context.resources.displayMetrics.heightPixels
                 isSavingMedia = true
-                viewModel.updateOriginalMedia(updatedMedia, screenWidth, screenHeight) { success ->
+                viewModel.updatePageSettings(pageIndex, updatedPage, screenWidth, screenHeight) { success ->
                     isSavingMedia = false
                     if (success) {
-                        editingMedia = null
+                        editingPageIndex = null
                     } else {
-                        Toast.makeText(context, "Could not save media changes.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Could not save page settings.", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -230,6 +239,9 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                             onChooseMediaForPage = { pageIdx ->
                                 selectingMediaForPage = pageIdx
                             },
+                            onEditPage = { pageIndex ->
+                                editingPageIndex = pageIndex
+                            },
                             onNavigateToCalibration = {
                                 selectedTab = AppTab.CALIBRATE
                             }
@@ -237,10 +249,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                         AppTab.CALIBRATE -> CalibrationScreen(viewModel = viewModel)
                         AppTab.EFFECTS -> EffectsScreen(viewModel = viewModel)
                         AppTab.MEDIA -> MediaLibraryScreen(
-                            viewModel = viewModel,
-                            onEditMedia = { media ->
-                                editingMedia = media
-                            }
+                            viewModel = viewModel
                         )
                         AppTab.BACKUP -> BackupScreen(viewModel = viewModel)
                     }

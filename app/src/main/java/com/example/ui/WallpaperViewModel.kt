@@ -5,6 +5,7 @@ import android.app.WallpaperManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -14,6 +15,7 @@ import com.example.data.model.CalibrationConfig
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
+import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperAppState
 import com.example.data.repository.WallpaperRepository
 import com.example.service.MultiPageWallpaperService
@@ -33,6 +35,16 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
 
     val appState: StateFlow<WallpaperAppState> = repository.appState
     val originals: StateFlow<List<OriginalMedia>> = repository.originals
+
+    fun loadPagePreviewBitmap(pageIndex: Int, width: Int, height: Int): Bitmap? =
+        try {
+            repository.getCroppedBitmap(pageIndex, width, height)
+                ?.takeUnless { it.isRecycled }
+                ?.copy(Bitmap.Config.ARGB_8888, false)
+        } catch (e: OutOfMemoryError) {
+            Log.e("WallpaperViewModel", "Failed to create preview for page $pageIndex", e)
+            null
+        }
 
     private val _isWallpaperActive = MutableStateFlow(false)
     val isWallpaperActive: StateFlow<Boolean> = _isWallpaperActive.asStateFlow()
@@ -72,22 +84,6 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     fun deleteOriginal(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteOriginal(id)
-        }
-    }
-
-    fun updateOriginalMedia(
-        media: OriginalMedia,
-        targetWidth: Int,
-        targetHeight: Int,
-        onDone: (Boolean) -> Unit
-    ) {
-        viewModelScope.launch {
-            try {
-                onDone(repository.updateOriginalMedia(media, targetWidth, targetHeight))
-            } catch (e: Exception) {
-                Log.e("WallpaperViewModel", "Failed to update media ${media.id}", e)
-                onDone(false)
-            }
         }
     }
 
@@ -142,8 +138,8 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
             currentPages.add(
                 PageItem(
                     pageIndex = idx,
-                    croppedFileName = "starter_page_${idx % 3}.jpg",
-                    customLabel = "Page ${idx + 1}"
+                    customLabel = "Page ${idx + 1}",
+                    isBlank = true
                 )
             )
         }
@@ -160,7 +156,19 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
             customOffsets = uniformOffsets
         )
 
-        repository.updateState { it.copy(calibration = newCalib, pages = trimmedPages) }
+        val transitions = appState.value.transitions.take((validCount - 1).coerceAtLeast(0)).toMutableList()
+        while (transitions.size < validCount - 1) {
+            transitions.add(transitions.lastOrNull() ?: PageTransitionSetting())
+        }
+        repository.updateState {
+            it.copy(
+                calibration = newCalib,
+                pages = trimmedPages,
+                transitions = transitions,
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: it.transitionType,
+                presetNeedsSave = true
+            )
+        }
     }
 
     fun setHomePage(index: Int) {
@@ -175,7 +183,9 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         // Immediately update saved offset to the newly designated home page
         repository.saveLastKnownOffset(newCalib.getHomeOffset())
 
-        repository.updateState { it.copy(calibration = newCalib, pages = updatedPages) }
+        repository.updateState {
+            it.copy(calibration = newCalib, pages = updatedPages, presetNeedsSave = true)
+        }
     }
 
     fun updateCustomOffsets(newOffsets: List<Float>) {
@@ -193,7 +203,34 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setTransition(transitionId: String) {
-        repository.updateState { it.copy(transitionType = transitionId) }
+        repository.setTransitionForAllBoundaries(transitionId)
+    }
+
+    fun updatePageTransition(boundaryIndex: Int, setting: PageTransitionSetting) {
+        repository.updatePageTransition(boundaryIndex, setting)
+    }
+
+    fun selectPreset(presetId: String) {
+        repository.selectPreset(presetId, appState.value.calibration.pageCount)
+    }
+
+    fun saveCurrentPreset(name: String): String? = repository.saveCurrentPreset(name)
+
+    fun updatePageSettings(
+        pageIndex: Int,
+        page: PageItem,
+        targetWidth: Int,
+        targetHeight: Int,
+        onDone: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                onDone(repository.updatePageSettings(pageIndex, page, targetWidth, targetHeight))
+            } catch (e: Exception) {
+                Log.e("WallpaperViewModel", "Failed to update page $pageIndex", e)
+                onDone(false)
+            }
+        }
     }
 
     fun toggleResumeFade(enabled: Boolean) {
@@ -212,7 +249,7 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = appState.value.pages.map {
             if (it.pageIndex == pageIndex) it.copy(isAlreadyDark = isDark) else it
         }
-        repository.updateState { it.copy(pages = updated) }
+        repository.updateState { it.copy(pages = updated, presetNeedsSave = true) }
     }
 
     fun exportBackup(out: OutputStream, onResult: (Boolean) -> Unit) {

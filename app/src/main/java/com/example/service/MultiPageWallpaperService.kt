@@ -357,7 +357,10 @@ class MultiPageWallpaperService : WallpaperService() {
             // Calculate page indices and transition progress based on calibrated anchors
             val (pageA, pageB, progress) = computePageTransition(currentXOffset, calib)
 
-            val renderer = TransitionRegistry.get(state.transitionType)
+            val transitionSetting = state.transitions.getOrNull(pageA)
+            val transitionId = transitionSetting?.transitionId(offsetDirection >= 0)
+                ?: state.transitionType
+            val renderer = TransitionRegistry.get(transitionId)
             val pageAParallax = if (renderer.id == "parallax") {
                 repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
             } else {
@@ -380,6 +383,7 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             // Draw transition
+            canvas.drawColor(android.graphics.Color.rgb(18, 22, 34))
             if (renderer.id == "parallax") {
                 renderer.drawWithParallax(
                     canvas = canvas,

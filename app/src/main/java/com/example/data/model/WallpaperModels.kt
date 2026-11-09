@@ -27,7 +27,14 @@ data class PageItem(
     val originalId: String? = null,
     val croppedFileName: String? = null,
     val isAlreadyDark: Boolean = false,
-    val customLabel: String = ""
+    val customLabel: String = "",
+    val cropFillMode: CropFillMode = CropFillMode.BLUR,
+    val blurAmount: Float = 0.65f,
+    val cropPanX: Float = 0f,
+    val cropPanY: Float = 0f,
+    val cropScale: Float = 1f,
+    val parallaxAmount: Float = 0f,
+    val isBlank: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("pageIndex", pageIndex)
@@ -35,6 +42,13 @@ data class PageItem(
         put("croppedFileName", croppedFileName ?: "")
         put("isAlreadyDark", isAlreadyDark)
         put("customLabel", customLabel)
+        put("cropFillMode", cropFillMode.name)
+        put("blurAmount", blurAmount.toDouble())
+        put("cropPanX", cropPanX.toDouble())
+        put("cropPanY", cropPanY.toDouble())
+        put("cropScale", cropScale.toDouble())
+        put("parallaxAmount", parallaxAmount.toDouble())
+        put("isBlank", isBlank)
     }
 
     companion object {
@@ -44,7 +58,77 @@ data class PageItem(
                 originalId = json.optString("originalId").takeIf { it.isNotEmpty() },
                 croppedFileName = json.optString("croppedFileName").takeIf { it.isNotEmpty() },
                 isAlreadyDark = json.optBoolean("isAlreadyDark", false),
-                customLabel = json.optString("customLabel", "")
+                customLabel = json.optString("customLabel", ""),
+                cropFillMode = CropFillMode.fromName(json.optString("cropFillMode", CropFillMode.BLUR.name)),
+                blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f),
+                cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
+                cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
+                cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
+                parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f),
+                isBlank = json.optBoolean("isBlank", false)
+            )
+        }
+    }
+}
+
+data class PageTransitionSetting(
+    val forwardTransitionId: String = "scroll",
+    val reverseTransitionId: String = "scroll",
+    val separateDirections: Boolean = false
+) {
+    fun transitionId(forward: Boolean): String =
+        if (separateDirections && !forward) reverseTransitionId else forwardTransitionId
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("forwardTransitionId", forwardTransitionId)
+        put("reverseTransitionId", reverseTransitionId)
+        put("separateDirections", separateDirections)
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): PageTransitionSetting {
+            val forward = json.optString("forwardTransitionId", json.optString("transitionId", "scroll"))
+            return PageTransitionSetting(
+                forwardTransitionId = forward,
+                reverseTransitionId = json.optString("reverseTransitionId", forward),
+                separateDirections = json.optBoolean("separateDirections", false)
+            )
+        }
+    }
+}
+
+data class WallpaperPreset(
+    val id: String,
+    val name: String,
+    val pages: List<PageItem>,
+    val transitions: List<PageTransitionSetting>
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("pages", JSONArray().apply { pages.forEach { put(it.toJson()) } })
+        put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): WallpaperPreset {
+            val pages = mutableListOf<PageItem>()
+            json.optJSONArray("pages")?.let { values ->
+                for (i in 0 until values.length()) {
+                    values.optJSONObject(i)?.let { pages.add(PageItem.fromJson(it)) }
+                }
+            }
+            val transitions = mutableListOf<PageTransitionSetting>()
+            json.optJSONArray("transitions")?.let { values ->
+                for (i in 0 until values.length()) {
+                    values.optJSONObject(i)?.let { transitions.add(PageTransitionSetting.fromJson(it)) }
+                }
+            }
+            return WallpaperPreset(
+                id = json.optString("id", "preset"),
+                name = json.optString("name", "Preset"),
+                pages = pages,
+                transitions = transitions
             )
         }
     }
@@ -159,14 +243,7 @@ data class OriginalMedia(
     val width: Int,
     val height: Int,
     val averageLuminance: Float,
-    val isDarkDetected: Boolean,
-    val isAlreadyDark: Boolean = isDarkDetected,
-    val cropFillMode: CropFillMode = CropFillMode.BLUR,
-    val blurAmount: Float = 0.65f,
-    val cropPanX: Float = 0f,
-    val cropPanY: Float = 0f,
-    val cropScale: Float = 1f,
-    val parallaxAmount: Float = 0f
+    val isDarkDetected: Boolean
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -176,13 +253,6 @@ data class OriginalMedia(
         put("height", height)
         put("averageLuminance", averageLuminance.toDouble())
         put("isDarkDetected", isDarkDetected)
-        put("isAlreadyDark", isAlreadyDark)
-        put("cropFillMode", cropFillMode.name)
-        put("blurAmount", blurAmount.toDouble())
-        put("cropPanX", cropPanX.toDouble())
-        put("cropPanY", cropPanY.toDouble())
-        put("cropScale", cropScale.toDouble())
-        put("parallaxAmount", parallaxAmount.toDouble())
     }
 
     companion object {
@@ -195,14 +265,7 @@ data class OriginalMedia(
                 width = json.optInt("width", 1080),
                 height = json.optInt("height", 2400),
                 averageLuminance = json.optDouble("averageLuminance", 0.5).toFloat(),
-                isDarkDetected = isDarkDetected,
-                isAlreadyDark = json.optBoolean("isAlreadyDark", isDarkDetected),
-                cropFillMode = CropFillMode.fromName(json.optString("cropFillMode", CropFillMode.BLUR.name)),
-                blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f),
-                cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
-                cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
-                cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
-                parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f)
+                isDarkDetected = isDarkDetected
             )
         }
     }
@@ -216,7 +279,16 @@ data class WallpaperAppState(
     val darken: DarkenConfig = DarkenConfig(),
     val backupFolderPath: String? = null,
     val autoBackupEnabled: Boolean = false,
-    val showOffsetDebugOverlay: Boolean = false
+    val showOffsetDebugOverlay: Boolean = false,
+    val presets: List<WallpaperPreset> = listOf(
+        WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
+    ),
+    val activePresetId: String = presets.firstOrNull()?.id ?: "default",
+    val transitions: List<PageTransitionSetting> = List(
+        (pages.size - 1).coerceAtLeast(0)
+    ) { PageTransitionSetting(transitionType, transitionType) },
+    val presetNeedsSave: Boolean = false,
+    val schemaVersion: Int = 2
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -229,6 +301,11 @@ data class WallpaperAppState(
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
+        put("schemaVersion", 2)
+        put("activePresetId", activePresetId)
+        put("presetNeedsSave", presetNeedsSave)
+        put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })
+        put("presets", JSONArray().apply { presets.forEach { put(it.toJson()) } })
     }
 
     companion object {
@@ -253,16 +330,43 @@ data class WallpaperAppState(
                 pagesList
             }
 
+            val transitionType = json.optString("transitionType", "scroll")
+            val transitions = mutableListOf<PageTransitionSetting>()
+            json.optJSONArray("transitions")?.let { values ->
+                for (i in 0 until values.length()) {
+                    values.optJSONObject(i)?.let { transitions.add(PageTransitionSetting.fromJson(it)) }
+                }
+            }
+            val presetValues = mutableListOf<WallpaperPreset>()
+            json.optJSONArray("presets")?.let { values ->
+                for (i in 0 until values.length()) {
+                    values.optJSONObject(i)?.let { presetValues.add(WallpaperPreset.fromJson(it)) }
+                }
+            }
+            val defaultTransitions = List((finalPages.size - 1).coerceAtLeast(0)) {
+                PageTransitionSetting(transitionType, transitionType)
+            }
+            val activeId = json.optString("activePresetId", "default")
+            val presets = if (presetValues.isEmpty()) {
+                listOf(WallpaperPreset("default", "Default", finalPages, defaultTransitions))
+            } else {
+                presetValues
+            }
             return WallpaperAppState(
                 pages = finalPages,
                 calibration = calib,
-                transitionType = json.optString("transitionType", "scroll"),
+                transitionType = transitionType,
                 resumeFadeEnabled = json.optBoolean("resumeFadeEnabled", false),
                 darken = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
                     ?: DarkenConfig(),
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
-                showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false)
+                showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
+                presets = presets,
+                activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
+                transitions = transitions.ifEmpty { defaultTransitions },
+                presetNeedsSave = json.optBoolean("presetNeedsSave", false),
+                schemaVersion = json.optInt("schemaVersion", 1)
             )
         }
     }

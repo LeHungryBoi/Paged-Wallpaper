@@ -10,7 +10,11 @@ import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTrigger
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
+import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperAppState
+import com.example.data.model.WallpaperPreset
+import com.example.data.migration.PresetDataMigration
+import org.json.JSONObject
 import com.example.transition.TransitionRegistry
 import com.example.transition.ParallaxScrollTransition
 import org.junit.Assert.assertEquals
@@ -79,7 +83,24 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testOriginalMediaParallaxSerialization() {
+    fun testPageAppearanceSettingsSerialization() {
+        val page = PageItem(
+            pageIndex = 0,
+            originalId = "media",
+            cropFillMode = CropFillMode.CROP,
+            parallaxAmount = 0.7f
+        )
+        val restored = PageItem.fromJson(page.toJson())
+        assertEquals(CropFillMode.CROP, restored.cropFillMode)
+        assertEquals(0.7f, restored.parallaxAmount, 0.001f)
+
+        val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
+        assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
+        assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
+    }
+
+    @Test
+    fun testOriginalMediaSerializationKeepsOnlySourceMetadata() {
         val media = OriginalMedia(
             id = "media",
             fileName = "media.jpg",
@@ -87,15 +108,16 @@ class ExampleUnitTest {
             width = 1080,
             height = 2400,
             averageLuminance = 0.5f,
-            isDarkDetected = false,
-            cropFillMode = CropFillMode.CROP,
-            parallaxAmount = 0.7f
+            isDarkDetected = false
         )
 
-        assertEquals(0.7f, OriginalMedia.fromJson(media.toJson()).parallaxAmount, 0.001f)
-        assertEquals(0f, OriginalMedia.fromJson(media.toJson().apply {
-            remove("parallaxAmount")
-        }).parallaxAmount, 0.001f)
+        val legacyJson = media.toJson()
+            .put("cropFillMode", "CROP")
+            .put("parallaxAmount", 0.7)
+        val restored = OriginalMedia.fromJson(legacyJson)
+        assertEquals(media.id, restored.id)
+        assertFalse(restored.toJson().has("cropFillMode"))
+        assertFalse(restored.toJson().has("parallaxAmount"))
     }
 
     @Test
@@ -207,5 +229,73 @@ class ExampleUnitTest {
 
         assertFalse(restored.resumeFadeEnabled)
         assertFalse(restored.showOffsetDebugOverlay)
+    }
+
+    @Test
+    fun testLegacyWallpaperConfigIsMarkedForMigration() {
+        val legacy = WallpaperAppState(
+            pages = listOf(PageItem(pageIndex = 0, originalId = "media")),
+            calibration = CalibrationConfig(pageCount = 2)
+        ).toJson().apply {
+            remove("schemaVersion")
+            remove("presets")
+        }
+
+        val restored = WallpaperAppState.fromJson(legacy)
+        assertEquals(1, restored.schemaVersion)
+        assertEquals("media", restored.pages.single().originalId)
+    }
+
+    @Test
+    fun testLegacyMigrationMovesMediaSettingsIntoMigratedPreset() {
+        val legacyConfig = WallpaperAppState(
+            pages = listOf(
+                PageItem(pageIndex = 0, originalId = "media"),
+                PageItem(pageIndex = 1)
+            ),
+            calibration = CalibrationConfig(pageCount = 2),
+            transitionType = "parallax"
+        ).toJson().apply {
+            remove("schemaVersion")
+            remove("presets")
+        }
+        val legacyState = WallpaperAppState.fromJson(legacyConfig)
+        val legacyMedia = JSONObject()
+            .put("id", "media")
+            .put("cropFillMode", "CROP")
+            .put("parallaxAmount", 0.65)
+            .put("cropPanX", 0.25)
+        val migrated = PresetDataMigration.migrateLegacy(
+            legacyState,
+            mapOf("media" to legacyMedia)
+        )
+
+        assertEquals(2, migrated.schemaVersion)
+        assertEquals(CropFillMode.CROP, migrated.pages[0].cropFillMode)
+        assertEquals(0.65f, migrated.pages[0].parallaxAmount, 0.001f)
+        assertEquals(0.25f, migrated.pages[0].cropPanX, 0.001f)
+        assertEquals(migrated.pages, migrated.presets.single().pages)
+        assertEquals("parallax", migrated.transitions.first().forwardTransitionId)
+    }
+
+    @Test
+    fun testPresetStoresPageAppearanceAndBidirectionalEffects() {
+        val preset = WallpaperPreset(
+            id = "preset-a",
+            name = "Portrait",
+            pages = listOf(
+                PageItem(pageIndex = 0, originalId = "media", parallaxAmount = 0.4f),
+                PageItem(pageIndex = 1, originalId = "media", cropPanX = 0.3f)
+            ),
+            transitions = listOf(
+                PageTransitionSetting("parallax", "fade", separateDirections = true)
+            )
+        )
+        val restored = WallpaperPreset.fromJson(preset.toJson())
+
+        assertEquals(0.4f, restored.pages[0].parallaxAmount, 0.001f)
+        assertEquals(0.3f, restored.pages[1].cropPanX, 0.001f)
+        assertEquals("parallax", restored.transitions[0].transitionId(forward = true))
+        assertEquals("fade", restored.transitions[0].transitionId(forward = false))
     }
 }

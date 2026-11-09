@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -29,6 +29,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -48,11 +50,14 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -71,12 +76,12 @@ import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 
 @Composable
 fun StudioScreen(
     viewModel: WallpaperViewModel,
     onChooseMediaForPage: (Int) -> Unit,
+    onEditPage: (Int) -> Unit,
     onNavigateToCalibration: () -> Unit
 ) {
     val context = LocalContext.current
@@ -85,35 +90,21 @@ fun StudioScreen(
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
 
     var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
+    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var presetName by remember { mutableStateOf("") }
+    var pendingPresetId by remember { mutableStateOf<String?>(null) }
     val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
 
     // Reload page thumbnails
-    LaunchedEffect(appState.pages) {
+    LaunchedEffect(appState.pages, appState.activePresetId) {
         val loadedBitmaps = withContext(Dispatchers.IO) {
-            val croppedDir = File(context.filesDir, "cropped")
             appState.pages.mapNotNull { page ->
-                val fileName = page.croppedFileName ?: "starter_page_${page.pageIndex}.jpg"
-                val file = File(croppedDir, fileName)
-                if (!file.exists()) {
-                    return@mapNotNull null
-                }
-
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.absolutePath, options)
-                var sampleSize = 1
-                while (
-                    options.outWidth / sampleSize > 540 ||
-                    options.outHeight / sampleSize > 960
-                ) {
-                    sampleSize *= 2
-                }
-                options.inJustDecodeBounds = false
-                options.inSampleSize = sampleSize
-                BitmapFactory.decodeFile(file.absolutePath, options)?.let {
+                viewModel.loadPagePreviewBitmap(page.pageIndex, 540, 960)?.let {
                     page.pageIndex to it
                 }
             }
         }
+        pageBitmaps.clear()
         loadedBitmaps.forEach { (pageIndex, bitmap) ->
             pageBitmaps[pageIndex] = bitmap
         }
@@ -126,6 +117,50 @@ fun StudioScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("Presets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    appState.presets.forEach { preset ->
+                        androidx.compose.material3.FilterChip(
+                            selected = preset.id == appState.activePresetId,
+                            onClick = {
+                                if (preset.id != appState.activePresetId && appState.presetNeedsSave) {
+                                    pendingPresetId = preset.id
+                                } else {
+                                    viewModel.selectPreset(preset.id)
+                                }
+                            },
+                            label = { Text(preset.name) },
+                            modifier = Modifier.testTag("preset_${preset.id}")
+                        )
+                    }
+                }
+                if (appState.presetNeedsSave) {
+                    Text(
+                        "This setup differs from its saved preset (page count or page settings changed). Save it as a new preset to keep both versions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        presetName = ""
+                        showSavePresetDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("save_preset_button")
+                ) {
+                    Text("Save current setup as a new preset")
+                }
+            }
+        }
+
         // Hero Card: Live Wallpaper System Status & 1-Click Set
         Card(
             modifier = Modifier
@@ -290,7 +325,13 @@ fun StudioScreen(
                                     )
                                 } else {
                                     Text(
-                                        text = "Starter\nPage ${index + 1}",
+                                        text = if (page.isBlank) {
+                                            "Empty page"
+                                        } else if (page.originalId != null) {
+                                            "Preview unavailable"
+                                        } else {
+                                            "Built-in wallpaper"
+                                        },
                                         color = Color.White.copy(alpha = 0.6f),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -342,10 +383,23 @@ fun StudioScreen(
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold
                             )
+                            if (page.originalId != null) {
+                                TextButton(
+                                    onClick = { onEditPage(index) },
+                                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                                    modifier = Modifier.testTag("edit_page_${index}_button")
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Edit page settings", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
 
                             Text(
                                 text = if (originals.any { it.id == page.originalId }) {
                                     "Assigned from media library"
+                                } else if (page.isBlank) {
+                                    "Empty page"
                                 } else {
                                     "Built-in wallpaper"
                                 },
@@ -387,9 +441,11 @@ fun StudioScreen(
                                     ) {
                                         Icon(Icons.Outlined.Home, contentDescription = "Set as Home", modifier = Modifier.size(14.dp))
                                     }
+
                                 }
                             }
                         }
+
                     }
                 }
             }
@@ -466,6 +522,56 @@ fun StudioScreen(
                     }
                 }
             }
+        }
+
+        if (showSavePresetDialog) {
+            AlertDialog(
+                onDismissRequest = { showSavePresetDialog = false },
+                title = { Text("Save as new preset") },
+                text = {
+                    OutlinedTextField(
+                        value = presetName,
+                        onValueChange = { presetName = it.take(40) },
+                        label = { Text("Preset name") },
+                        singleLine = true,
+                        modifier = Modifier.testTag("preset_name_field")
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            if (viewModel.saveCurrentPreset(presetName) != null) {
+                                showSavePresetDialog = false
+                            }
+                        },
+                        enabled = presetName.isNotBlank(),
+                        modifier = Modifier.testTag("confirm_save_preset")
+                    ) { Text("Save") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSavePresetDialog = false }) { Text("Cancel") }
+                }
+            )
+        }
+        if (pendingPresetId != null) {
+            AlertDialog(
+                onDismissRequest = { pendingPresetId = null },
+                title = { Text("Discard unsaved setup?") },
+                text = {
+                    Text("Switching presets will discard the current unsaved page setup. You can save it as a new preset first.")
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingPresetId?.let(viewModel::selectPreset)
+                            pendingPresetId = null
+                        }
+                    ) { Text("Switch preset") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingPresetId = null }) { Text("Keep editing") }
+                }
+            )
         }
     }
 }

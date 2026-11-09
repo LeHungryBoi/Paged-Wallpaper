@@ -81,6 +81,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
+import com.example.data.model.PageItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -141,20 +142,21 @@ private fun calculatePreviewTravel(
 @Composable
 fun MediaEditorScreen(
     media: OriginalMedia,
+    page: PageItem,
     isSaving: Boolean,
     onDismiss: () -> Unit,
-    onSave: (OriginalMedia) -> Unit
+    onSave: (PageItem) -> Unit
 ) {
     val context = LocalContext.current
     var bitmap by remember(media.id) { mutableStateOf<Bitmap?>(null) }
     var blurredBitmap by remember(media.id) { mutableStateOf<Bitmap?>(null) }
-    var panX by remember(media.id) { mutableFloatStateOf(media.cropPanX) }
-    var panY by remember(media.id) { mutableFloatStateOf(media.cropPanY) }
-    var zoom by remember(media.id) { mutableFloatStateOf(media.cropScale) }
-    var isAlreadyDark by remember(media.id) { mutableStateOf(media.isAlreadyDark) }
-    var cropFillMode by remember(media.id) { mutableStateOf(media.cropFillMode) }
-    var blurAmount by remember(media.id) { mutableFloatStateOf(media.blurAmount) }
-    var parallaxAmount by remember(media.id) { mutableFloatStateOf(media.parallaxAmount) }
+    var panX by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.cropPanX) }
+    var panY by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.cropPanY) }
+    var zoom by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.cropScale) }
+    var isAlreadyDark by remember(media.id, page.pageIndex) { mutableStateOf(page.isAlreadyDark) }
+    var cropFillMode by remember(media.id, page.pageIndex) { mutableStateOf(page.cropFillMode) }
+    var blurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurAmount) }
+    var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
     var expandedPreview by remember(media.id) { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = !isSaving) { onDismiss() }
@@ -162,7 +164,20 @@ fun MediaEditorScreen(
     LaunchedEffect(media.id) {
         val loaded = withContext(Dispatchers.IO) {
             val file = File(File(context.filesDir, "originals"), media.fileName)
-            if (file.exists()) BitmapFactory.decodeFile(file.absolutePath) else null
+            if (file.exists()) {
+                val sampleSize = (
+                    maxOf(media.width, media.height) / 2048
+                ).coerceAtLeast(1)
+                BitmapFactory.decodeFile(
+                    file.absolutePath,
+                    BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                    }
+                )
+            } else {
+                null
+            }
         }
         bitmap = loaded
     }
@@ -190,9 +205,9 @@ fun MediaEditorScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Edit media", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text("Edit page", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            "${media.width} × ${media.height}",
+                            "Settings are saved with this preset · ${media.width} × ${media.height}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -231,7 +246,7 @@ fun MediaEditorScreen(
                     Button(
                         onClick = {
                             onSave(
-                                media.copy(
+                                page.copy(
                                     isAlreadyDark = isAlreadyDark,
                                     cropFillMode = cropFillMode,
                                     blurAmount = blurAmount,
@@ -248,7 +263,7 @@ fun MediaEditorScreen(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isSaving) "Saving…" else "Save media")
+                        Text(if (isSaving) "Saving…" else "Save page settings")
                     }
                 }
             }
