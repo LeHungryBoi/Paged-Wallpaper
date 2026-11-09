@@ -15,7 +15,6 @@ import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
 import android.view.animation.LinearInterpolator
-import java.util.Locale
 import com.example.darken.ExtraDimDetector
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
@@ -36,15 +35,17 @@ class MultiPageWallpaperService : WallpaperService() {
         }
         private val offsetOverlayLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.LTGRAY
-            textAlign = Paint.Align.CENTER
         }
-        private val offsetOverlayValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textAlign = Paint.Align.CENTER
-            typeface = android.graphics.Typeface.create(
-                android.graphics.Typeface.MONOSPACE,
-                android.graphics.Typeface.BOLD
-            )
+        private val offsetOverlayTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(150, 210, 220, 235)
+            strokeCap = Paint.Cap.ROUND
+            style = Paint.Style.STROKE
+        }
+        private val offsetOverlayXDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(80, 220, 255)
+        }
+        private val offsetOverlayYDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 180, 0)
         }
 
         private var surfaceWidth = 1080
@@ -410,29 +411,50 @@ class MultiPageWallpaperService : WallpaperService() {
 
         private fun drawOffsetDebugOverlay(canvas: android.graphics.Canvas) {
             val density = resources.displayMetrics.density
-            val cardWidth = 224f * density
-            val cardHeight = 58f * density
+            val cardWidth = 240f * density
+            val cardHeight = 82f * density
             val left = (surfaceWidth - cardWidth) / 2f
             val top = 20f * density
             val bounds = RectF(left, top, left + cardWidth, top + cardHeight)
 
             offsetOverlayLabelPaint.textSize = 11f * density
-            offsetOverlayValuePaint.textSize = 13f * density
+            offsetOverlayLabelPaint.textAlign = Paint.Align.CENTER
+            offsetOverlayTrackPaint.strokeWidth = 3f * density
             canvas.drawRoundRect(bounds, 12f * density, 12f * density, offsetOverlayBackgroundPaint)
             canvas.drawText(
                 "Launcher offset received",
                 surfaceWidth / 2f,
-                top + 21f * density,
+                top + 19f * density,
                 offsetOverlayLabelPaint
             )
-            val xText = receivedXOffset?.let { String.format(Locale.US, "%.4f", it) } ?: "--"
-            val yText = receivedYOffset?.let { String.format(Locale.US, "%.4f", it) } ?: "--"
-            canvas.drawText(
-                "X $xText    Y $yText",
-                surfaceWidth / 2f,
-                top + 43f * density,
-                offsetOverlayValuePaint
-            )
+
+            val trackStart = left + 42f * density
+            val trackEnd = left + cardWidth - 16f * density
+            val trackRadius = 5f * density
+            val xY = top + 41f * density
+            val yY = top + 64f * density
+            offsetOverlayLabelPaint.textAlign = Paint.Align.LEFT
+            canvas.drawText("X", left + 16f * density, xY + 4f * density, offsetOverlayLabelPaint)
+            canvas.drawText("Y", left + 16f * density, yY + 4f * density, offsetOverlayLabelPaint)
+
+            canvas.drawLine(trackStart, xY, trackEnd, xY, offsetOverlayTrackPaint)
+            canvas.drawLine(trackStart, yY, trackEnd, yY, offsetOverlayTrackPaint)
+            receivedXOffset?.let { offset ->
+                canvas.drawCircle(
+                    trackStart + (trackEnd - trackStart) * offset.coerceIn(0f, 1f),
+                    xY,
+                    trackRadius,
+                    offsetOverlayXDotPaint
+                )
+            }
+            receivedYOffset?.let { offset ->
+                canvas.drawCircle(
+                    trackStart + (trackEnd - trackStart) * offset.coerceIn(0f, 1f),
+                    yY,
+                    trackRadius,
+                    offsetOverlayYDotPaint
+                )
+            }
         }
 
         /**
