@@ -446,10 +446,6 @@ fun MediaEditorScreen(
                         mapX(cropLeft + cropWidth),
                         mapY(cropTop + cropHeight)
                     )
-                    val reachFill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.argb(80, 255, 180, 0)
-                        style = Paint.Style.FILL
-                    }
                     val reachStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.rgb(255, 180, 0)
                         style = Paint.Style.STROKE
@@ -460,7 +456,6 @@ fun MediaEditorScreen(
                         style = Paint.Style.STROKE
                         strokeWidth = 2.dp.toPx()
                     }
-                    nativeCanvas.drawRect(reachBounds, reachFill)
                     nativeCanvas.drawRect(reachBounds, reachStroke)
                     nativeCanvas.drawRect(staticBounds, staticStroke)
                 }
