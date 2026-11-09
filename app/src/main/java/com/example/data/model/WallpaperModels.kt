@@ -174,7 +174,10 @@ data class OriginalMedia(
     val isDarkDetected: Boolean,
     val isAlreadyDark: Boolean = isDarkDetected,
     val cropFillMode: CropFillMode = CropFillMode.BLUR,
-    val blurAmount: Float = 0.65f
+    val blurAmount: Float = 0.65f,
+    val cropPanX: Float = 0f,
+    val cropPanY: Float = 0f,
+    val cropScale: Float = 1f
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -187,6 +190,9 @@ data class OriginalMedia(
         put("isAlreadyDark", isAlreadyDark)
         put("cropFillMode", cropFillMode.name)
         put("blurAmount", blurAmount.toDouble())
+        put("cropPanX", cropPanX.toDouble())
+        put("cropPanY", cropPanY.toDouble())
+        put("cropScale", cropScale.toDouble())
     }
 
     companion object {
@@ -202,7 +208,10 @@ data class OriginalMedia(
                 isDarkDetected = isDarkDetected,
                 isAlreadyDark = json.optBoolean("isAlreadyDark", isDarkDetected),
                 cropFillMode = CropFillMode.fromName(json.optString("cropFillMode", CropFillMode.BLUR.name)),
-                blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f)
+                blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f),
+                cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
+                cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
+                cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f)
             )
         }
     }

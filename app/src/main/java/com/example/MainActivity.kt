@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -52,9 +53,10 @@ import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.CalibrationScreen
-import com.example.ui.screens.CropScreen
 import com.example.ui.screens.EffectsScreen
 import com.example.ui.screens.MediaLibraryScreen
+import com.example.ui.screens.MediaEditorScreen
+import com.example.ui.screens.MediaPickerScreen
 import com.example.ui.screens.StudioScreen
 import com.example.ui.theme.MyApplicationTheme
 
@@ -97,39 +99,55 @@ class MainActivity : ComponentActivity() {
 fun MainAppScaffold(viewModel: WallpaperViewModel) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(AppTab.STUDIO) }
-    var targetCropPageIndex by remember { mutableStateOf<Int?>(null) }
-    var croppingMedia by remember { mutableStateOf<OriginalMedia?>(null) }
+    var selectingMediaForPage by remember { mutableStateOf<Int?>(null) }
+    var editingMedia by remember { mutableStateOf<OriginalMedia?>(null) }
+    var isSavingMedia by remember { mutableStateOf(false) }
+    var isAssigningMedia by remember { mutableStateOf(false) }
 
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
-    val appState by viewModel.appState.collectAsState()
-    // Dedicated Full-Screen Cropper (No dialogs, no black borders, strictly bounded viewport)
-    if (croppingMedia != null) {
-        CropScreen(
-            media = croppingMedia!!,
-            initialPageIndex = targetCropPageIndex ?: 0,
-            pageCount = appState.calibration.pageCount,
-            onDismiss = {
-                croppingMedia = null
-            },
-            onConfirm = { pageIndex, panX, panY, scale, isAlreadyDark, cropFillMode, blurAmount ->
-                val screenW = context.resources.displayMetrics.widthPixels
-                val screenH = context.resources.displayMetrics.heightPixels
-                viewModel.cropAndAssign(
-                    originalId = croppingMedia!!.id,
-                    pageIndex = pageIndex,
-                    panX = panX,
-                    panY = panY,
-                    scale = scale,
-                    targetWidth = screenW,
-                    targetHeight = screenH,
-                    isDark = isAlreadyDark,
-                    cropFillMode = cropFillMode,
-                    blurAmount = blurAmount
-                ) {
-                    croppingMedia = null
-                    targetCropPageIndex = null
-                    selectedTab = AppTab.STUDIO
+    if (editingMedia != null) {
+        MediaEditorScreen(
+            media = editingMedia!!,
+            isSaving = isSavingMedia,
+            onDismiss = { if (!isSavingMedia) editingMedia = null },
+            onSave = { updatedMedia ->
+                val screenWidth = context.resources.displayMetrics.widthPixels
+                val screenHeight = context.resources.displayMetrics.heightPixels
+                isSavingMedia = true
+                viewModel.updateOriginalMedia(updatedMedia, screenWidth, screenHeight) { success ->
+                    isSavingMedia = false
+                    if (success) {
+                        editingMedia = null
+                    } else {
+                        Toast.makeText(context, "Could not save media changes.", Toast.LENGTH_SHORT).show()
+                    }
                 }
+            }
+        )
+    } else if (selectingMediaForPage != null) {
+        MediaPickerScreen(
+            pageIndex = selectingMediaForPage!!,
+            viewModel = viewModel,
+            isAssigning = isAssigningMedia,
+            onBack = { if (!isAssigningMedia) selectingMediaForPage = null },
+            onSelectMedia = { media ->
+                selectingMediaForPage?.let { pageIndex ->
+                    val screenWidth = context.resources.displayMetrics.widthPixels
+                    val screenHeight = context.resources.displayMetrics.heightPixels
+                    isAssigningMedia = true
+                    viewModel.assignOriginalToPage(media.id, pageIndex, screenWidth, screenHeight) { success ->
+                        isAssigningMedia = false
+                        if (success) {
+                            selectingMediaForPage = null
+                        } else {
+                            Toast.makeText(context, "Could not assign this media.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            },
+            onOpenLibrary = {
+                selectingMediaForPage = null
+                selectedTab = AppTab.MEDIA
             }
         )
     } else {
@@ -175,9 +193,6 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                             selected = isSelected,
                             onClick = {
                                 selectedTab = tab
-                                if (tab != AppTab.MEDIA) {
-                                    targetCropPageIndex = null
-                                }
                             },
                             icon = {
                                 Icon(
@@ -212,9 +227,8 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                     when (currentTab) {
                         AppTab.STUDIO -> StudioScreen(
                             viewModel = viewModel,
-                            onNavigateToMediaForPage = { pageIdx ->
-                                targetCropPageIndex = pageIdx
-                                selectedTab = AppTab.MEDIA
+                            onChooseMediaForPage = { pageIdx ->
+                                selectingMediaForPage = pageIdx
                             },
                             onNavigateToCalibration = {
                                 selectedTab = AppTab.CALIBRATE
@@ -224,9 +238,8 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                         AppTab.EFFECTS -> EffectsScreen(viewModel = viewModel)
                         AppTab.MEDIA -> MediaLibraryScreen(
                             viewModel = viewModel,
-                            targetPageIndexToCrop = targetCropPageIndex,
-                            onCropMedia = { media ->
-                                croppingMedia = media
+                            onEditMedia = { media ->
+                                editingMedia = media
                             }
                         )
                         AppTab.BACKUP -> BackupScreen(viewModel = viewModel)

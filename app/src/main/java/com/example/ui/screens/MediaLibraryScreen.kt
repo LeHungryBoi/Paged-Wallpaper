@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,22 +21,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,32 +40,23 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
@@ -79,43 +66,35 @@ import java.io.File
 @Composable
 fun MediaLibraryScreen(
     viewModel: WallpaperViewModel,
-    targetPageIndexToCrop: Int? = null,
-    onCropMedia: (OriginalMedia) -> Unit
+    onEditMedia: (OriginalMedia) -> Unit
 ) {
     val context = LocalContext.current
     val originals by viewModel.originals.collectAsState()
     val isImporting by viewModel.isImporting.collectAsState()
-
     val thumbnails = remember { mutableStateMapOf<String, Bitmap>() }
-    var editingMedia by remember { mutableStateOf<OriginalMedia?>(null) }
 
-    // Android Standard PhotoPicker supporting both device storage and Cloud Media Apps (Google Photos, etc.)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            viewModel.importMedia(uri) { importedMedia ->
-                if (importedMedia != null) {
-                    onCropMedia(importedMedia)
-                }
+            viewModel.importMedia(uri) { media ->
+                if (media != null) onEditMedia(media)
             }
         }
     }
 
-    // Load thumbnails
     LaunchedEffect(originals) {
         withContext(Dispatchers.IO) {
-            val dir = File(context.filesDir, "originals")
+            val directory = File(context.filesDir, "originals")
             originals.forEach { media ->
                 if (!thumbnails.containsKey(media.id)) {
-                    val file = File(dir, media.fileName)
+                    val file = File(directory, media.fileName)
                     if (file.exists()) {
-                        val opts = BitmapFactory.Options().apply {
-                            inSampleSize = (Math.max(media.width, media.height) / 200).coerceAtLeast(1)
+                        val options = BitmapFactory.Options().apply {
+                            inSampleSize = (maxOf(media.width, media.height) / 200).coerceAtLeast(1)
                         }
-                        val bmp = BitmapFactory.decodeFile(file.absolutePath, opts)
-                        if (bmp != null) {
-                            thumbnails[media.id] = bmp
+                        BitmapFactory.decodeFile(file.absolutePath, options)?.let {
+                            thumbnails[media.id] = it
                         }
                     }
                 }
@@ -125,113 +104,42 @@ fun MediaLibraryScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Header Card
-            Card(
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                )
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Text(
-                                text = "Media Library",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (targetPageIndexToCrop != null) {
-                                "Select an image to crop for Screen ${targetPageIndexToCrop + 1}"
-                            } else {
-                                "Select a screen, then choose its image. Each image keeps its own crop and dimming defaults."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // Cloud badge
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-                            Text("Cloud Picker", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                        }
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Media Library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 }
+                Text("${originals.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             if (isImporting) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("Importing and analyzing image luminance...", style = MaterialTheme.typography.bodySmall)
+                    Text("Importing…", modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
 
             if (originals.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Icon(
                             Icons.Default.AddPhotoAlternate,
                             contentDescription = null,
                             modifier = Modifier.size(48.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            text = "Your library is empty",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Import photos from your device or Cloud Media Apps (like Google Photos) to assign custom wallpapers to each screen.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                        Text("Media Library is empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Button(
                             onClick = {
                                 photoPickerLauncher.launch(
@@ -240,9 +148,7 @@ fun MediaLibraryScreen(
                             },
                             modifier = Modifier.testTag("empty_state_import_button")
                         ) {
-                            Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Pick Photos / Cloud Media")
+                            Text("Import media")
                         }
                     }
                 }
@@ -255,133 +161,80 @@ fun MediaLibraryScreen(
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     items(originals, key = { it.id }) { media ->
-                        val thumb = thumbnails[media.id]
-
+                        val thumbnail = thumbnails[media.id]
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    onCropMedia(media)
-                                }
+                                .clickable { onEditMedia(media) }
                                 .testTag("media_card_${media.id}"),
                             shape = RoundedCornerShape(16.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            ),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             elevation = CardDefaults.cardElevation(2.dp)
                         ) {
                             Column {
                                 Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .background(Color.DarkGray),
+                                    modifier = Modifier.fillMaxWidth().aspectRatio(1f).background(Color.DarkGray),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (thumb != null) {
+                                    if (thumbnail != null) {
                                         Image(
-                                            bitmap = thumb.asImageBitmap(),
-                                            contentDescription = "Original Photo",
+                                            bitmap = thumbnail.asImageBitmap(),
+                                            contentDescription = "Media preview",
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     } else {
                                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                                     }
-
-                                    // Luminance Pill
                                     Surface(
                                         shape = RoundedCornerShape(bottomEnd = 10.dp),
                                         color = Color.Black.copy(alpha = 0.65f),
                                         modifier = Modifier.align(Alignment.TopStart)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Icon(
-                                                if (media.isAlreadyDark) Icons.Default.DarkMode else Icons.Default.LightMode,
-                                                contentDescription = null,
-                                                tint = if (media.isAlreadyDark) Color.Yellow else Color.White,
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                            Text(
-                                                text = "${(media.averageLuminance * 100).toInt()}% lum",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = Color.White
-                                            )
-                                        }
-                                    }
-
-                                    // Quick Crop action icon
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier
-                                            .align(Alignment.BottomEnd)
-                                            .padding(8.dp)
-                                    ) {
                                         Icon(
-                                            Icons.Default.Crop,
-                                            contentDescription = "Crop",
-                                            tint = MaterialTheme.colorScheme.onPrimary,
-                                            modifier = Modifier
-                                                .padding(6.dp)
-                                                .size(16.dp)
+                                            if (media.isAlreadyDark) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                            contentDescription = if (media.isAlreadyDark) "Already dark" else "Automatically dim",
+                                            tint = if (media.isAlreadyDark) Color.Yellow else Color.White,
+                                            modifier = Modifier.padding(6.dp).size(16.dp)
                                         )
                                     }
                                 }
-
                                 Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    modifier = Modifier.fillMaxWidth().padding(start = 10.dp, end = 4.dp, top = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "${media.width} × ${media.height}",
+                                            "${media.width} × ${media.height}",
                                             style = MaterialTheme.typography.labelMedium,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = "${media.cropFillMode.displayName} · ${if (media.isAlreadyDark) "Already dark" else "Auto dim"}",
+                                            media.cropFillMode.displayName,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-
                                     IconButton(
-                                        onClick = { editingMedia = media },
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .testTag("media_settings_${media.id}")
+                                        onClick = {
+                                            viewModel.duplicateOriginal(media.id) { success ->
+                                                if (!success) {
+                                                    Toast.makeText(context, "Could not duplicate media.", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.size(36.dp).testTag("duplicate_media_${media.id}")
                                     ) {
-                                        Icon(
-                                            Icons.Default.Tune,
-                                            contentDescription = "Edit image settings",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate media", modifier = Modifier.size(18.dp))
                                     }
-
                                     IconButton(
                                         onClick = { viewModel.deleteOriginal(media.id) },
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .testTag("delete_media_${media.id}")
+                                        modifier = Modifier.size(36.dp).testTag("delete_media_${media.id}")
                                     ) {
-                                        Icon(
-                                            Icons.Default.Delete,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(16.dp)
-                                        )
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete media", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                                     }
                                 }
+                                Spacer(Modifier.height(4.dp))
                             }
                         }
                     }
@@ -389,105 +242,18 @@ fun MediaLibraryScreen(
             }
         }
 
-        // Floating Action Button to pick photo (Device or Cloud)
-        FloatingActionButton(
-            onClick = {
-                photoPickerLauncher.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-            },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp)
-                .testTag("import_fab"),
-            containerColor = MaterialTheme.colorScheme.primary
-        ) {
-            Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Import Photos")
-        }
-
-        editingMedia?.let { media ->
-            AlertDialog(
-                onDismissRequest = { editingMedia = null },
-                title = { Text("Image defaults for assignments") },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "These settings are saved with this image and applied when you assign it to a screen.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        CropFillMode.values().forEach { mode ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        editingMedia = media.copy(cropFillMode = mode)
-                                    },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(
-                                    selected = media.cropFillMode == mode,
-                                    onClick = { editingMedia = media.copy(cropFillMode = mode) }
-                                )
-                                Column {
-                                    Text(mode.displayName, style = MaterialTheme.typography.bodyMedium)
-                                    Text(
-                                        mode.description,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                        if (media.cropFillMode != CropFillMode.CROP) {
-                            Text(
-                                text = "Background blur: ${(media.blurAmount * 100).toInt()}%",
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                            Slider(
-                                value = media.blurAmount,
-                                onValueChange = { editingMedia = media.copy(blurAmount = it) },
-                                valueRange = 0f..1f,
-                                modifier = Modifier.testTag("media_blur_slider")
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Already dark", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "Skip automatic dimming for this image",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = media.isAlreadyDark,
-                                onCheckedChange = { editingMedia = media.copy(isAlreadyDark = it) },
-                                modifier = Modifier.testTag("media_already_dark_switch")
-                            )
-                        }
-                    }
+        if (originals.isNotEmpty()) {
+            FloatingActionButton(
+                onClick = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
                 },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            viewModel.updateOriginalMedia(media)
-                            editingMedia = null
-                        }
-                    ) {
-                        Text("Save")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { editingMedia = null }) {
-                        Text("Cancel")
-                    }
-                }
-            )
+                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).testTag("import_fab"),
+                containerColor = MaterialTheme.colorScheme.primary
+            ) {
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Import media")
+            }
         }
     }
 }

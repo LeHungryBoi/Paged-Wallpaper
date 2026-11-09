@@ -6,11 +6,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
-import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -75,8 +75,55 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun updateOriginalMedia(media: OriginalMedia) {
-        repository.updateOriginalMedia(media)
+    fun updateOriginalMedia(
+        media: OriginalMedia,
+        targetWidth: Int,
+        targetHeight: Int,
+        onDone: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                onDone(repository.updateOriginalMedia(media, targetWidth, targetHeight))
+            } catch (e: Exception) {
+                Log.e("WallpaperViewModel", "Failed to update media ${media.id}", e)
+                onDone(false)
+            }
+        }
+    }
+
+    fun duplicateOriginal(id: String, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                onDone(repository.duplicateOriginal(id) != null)
+            } catch (e: Exception) {
+                Log.e("WallpaperViewModel", "Failed to duplicate media $id", e)
+                onDone(false)
+            }
+        }
+    }
+
+    fun assignOriginalToPage(
+        originalId: String,
+        pageIndex: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+        onDone: (Boolean) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                onDone(
+                    repository.assignOriginalToPage(
+                        originalId = originalId,
+                        pageIndex = pageIndex,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight
+                    )
+                )
+            } catch (e: Exception) {
+                Log.e("WallpaperViewModel", "Failed to assign media $originalId", e)
+                onDone(false)
+            }
+        }
     }
 
     fun setPageCount(count: Int) {
@@ -167,36 +214,6 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
             if (it.pageIndex == pageIndex) it.copy(isAlreadyDark = isDark) else it
         }
         repository.updateState { it.copy(pages = updated) }
-    }
-
-    fun cropAndAssign(
-        originalId: String,
-        pageIndex: Int,
-        panX: Float,
-        panY: Float,
-        scale: Float,
-        targetWidth: Int,
-        targetHeight: Int,
-        isDark: Boolean?,
-        cropFillMode: CropFillMode,
-        blurAmount: Float,
-        onDone: (Boolean) -> Unit
-    ) {
-        viewModelScope.launch {
-            val success = repository.cropAndAssignToPage(
-                originalId = originalId,
-                pageIndex = pageIndex,
-                panXNormalized = panX,
-                panYNormalized = panY,
-                scale = scale,
-                targetWidth = targetWidth,
-                targetHeight = targetHeight,
-                isAlreadyDarkManual = isDark,
-                cropFillMode = cropFillMode,
-                blurAmount = blurAmount
-            )
-            onDone(success)
-        }
     }
 
     fun exportBackup(out: OutputStream, onResult: (Boolean) -> Unit) {

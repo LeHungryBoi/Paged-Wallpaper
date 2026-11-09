@@ -28,9 +28,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Wallpaper
@@ -76,7 +76,7 @@ import java.io.File
 @Composable
 fun StudioScreen(
     viewModel: WallpaperViewModel,
-    onNavigateToMediaForPage: (Int) -> Unit,
+    onChooseMediaForPage: (Int) -> Unit,
     onNavigateToCalibration: () -> Unit
 ) {
     val context = LocalContext.current
@@ -218,7 +218,7 @@ fun StudioScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Custom wallpaper per screen • Tap page to crop / replace",
+                        text = "Tap a screen to choose its wallpaper",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -246,7 +246,7 @@ fun StudioScreen(
                     Card(
                         modifier = Modifier
                             .width(180.dp)
-                            .clickable { onNavigateToMediaForPage(index) }
+                            .clickable { onChooseMediaForPage(index) }
                             .testTag("page_card_$index"),
                         shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
@@ -351,14 +351,14 @@ fun StudioScreen(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Button(
-                                    onClick = { onNavigateToMediaForPage(index) },
+                                    onClick = { onChooseMediaForPage(index) },
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("replace_page_${index}_button"),
                                     contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                                     shape = RoundedCornerShape(10.dp)
                                 ) {
-                                    Icon(Icons.Default.Crop, contentDescription = null, modifier = Modifier.size(14.dp))
+                                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(14.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text("Choose image", style = MaterialTheme.typography.labelSmall)
                                 }
