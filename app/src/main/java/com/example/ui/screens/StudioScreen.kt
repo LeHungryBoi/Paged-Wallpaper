@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -47,7 +46,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -308,6 +306,34 @@ fun StudioScreen(
                                             Text("HOME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
                                         }
                                     }
+                                } else {
+                                    Surface(
+                                        onClick = { viewModel.setHomePage(index) },
+                                        shape = RoundedCornerShape(bottomEnd = 10.dp),
+                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .testTag("set_home_${index}_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Home,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Text(
+                                                "MAKE HOME",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
 
                                 // Dark icon badge
@@ -414,16 +440,6 @@ fun StudioScreen(
                                 Text("Choose image", style = MaterialTheme.typography.labelLarge)
                             }
 
-                            if (!isHome) {
-                                OutlinedButton(
-                                    onClick = { viewModel.setHomePage(index) },
-                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.align(Alignment.End).testTag("set_home_${index}_button")
-                                ) {
-                                    Icon(Icons.Outlined.Home, contentDescription = "Set as Home", modifier = Modifier.size(14.dp))
-                                }
-                            }
                         }
 
                     }
