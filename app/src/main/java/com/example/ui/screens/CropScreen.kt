@@ -438,25 +438,50 @@ fun MediaEditorScreen(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                Canvas(
+                val isFullPreviewExpanded = expandedPreview == "full"
+                val fullPreviewBorder = if (isFullPreviewExpanded) 3.dp else 1.dp
+                val fullPreviewShape = RoundedCornerShape(14.dp)
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .animateContentSize()
-                        .height(fullImageHeight)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.Black)
-                        .border(
-                            if (expandedPreview == "full") 3.dp else 1.dp,
-                            if (expandedPreview == "full") MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(14.dp)
+                        .height(fullImageHeight + if (isFullPreviewExpanded) fullPreviewBorder * 2 else 0.dp)
+                        .clip(fullPreviewShape)
+                        .then(
+                            if (isFullPreviewExpanded) {
+                                Modifier.border(
+                                    fullPreviewBorder,
+                                    MaterialTheme.colorScheme.primary,
+                                    fullPreviewShape
+                                )
+                            } else {
+                                Modifier
+                            }
                         )
                         .clickable(
                             onClick = {
-                                expandedPreview = if (expandedPreview == "full") null else "full"
+                                expandedPreview = if (isFullPreviewExpanded) null else "full"
                             }
                         )
                         .testTag("crop_parallax_bounds_preview")
+                ) {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(if (isFullPreviewExpanded) fullPreviewBorder else 0.dp)
+                        .clip(RoundedCornerShape(if (isFullPreviewExpanded) 11.dp else 14.dp))
+                        .background(Color.Black)
+                        .then(
+                            if (isFullPreviewExpanded) {
+                                Modifier
+                            } else {
+                                Modifier.border(
+                                    fullPreviewBorder,
+                                    MaterialTheme.colorScheme.outlineVariant,
+                                    fullPreviewShape
+                                )
+                            }
+                        )
                 ) {
                     val source = bitmap ?: return@Canvas
                     val imageScale = minOf(size.width / source.width, size.height / source.height)
@@ -558,6 +583,7 @@ fun MediaEditorScreen(
                     }
                     nativeCanvas.drawRect(reachBounds, reachStroke)
                     nativeCanvas.drawRect(staticBounds, staticStroke)
+                }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
