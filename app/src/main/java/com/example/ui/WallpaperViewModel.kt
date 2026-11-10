@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.InputStream
-import java.io.OutputStream
 
 class WallpaperViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -258,17 +257,21 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(pages = updated) }
     }
 
-    fun exportBackup(out: OutputStream, onResult: (Boolean) -> Unit) {
+    fun exportBackupToFolder(folderUri: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val success = repository.exportToZip(out)
-            onResult(success)
+            onResult(repository.exportToFolder(folderUri))
         }
     }
 
     fun importBackup(input: InputStream, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val success = repository.importFromZip(input)
-            checkStatus()
+            val success = try {
+                input.use { repository.importFromZip(it) }
+            } catch (e: Exception) {
+                Log.e("WallpaperViewModel", "Failed to restore backup", e)
+                false
+            }
+            if (success) checkStatus()
             onResult(success)
         }
     }

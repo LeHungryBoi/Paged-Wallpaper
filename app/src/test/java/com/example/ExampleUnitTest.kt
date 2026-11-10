@@ -1,9 +1,11 @@
 package com.example
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
@@ -14,6 +16,7 @@ import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperAppState
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
+import com.example.data.repository.WallpaperRepository
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
 import com.example.transition.ParallaxScrollTransition
@@ -25,6 +28,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -297,5 +306,39 @@ class ExampleUnitTest {
         assertEquals(0.3f, restored.pages[1].cropPanX, 0.001f)
         assertEquals("parallax", restored.transitions[0].transitionId(forward = true))
         assertEquals("fade", restored.transitions[0].transitionId(forward = false))
+    }
+
+    @Test
+    fun testBackupRestoreCopiesEachZipEntryAndReplacesOldFiles() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = WallpaperRepository.getInstance(context)
+        val restoredImage = "restored image data".toByteArray()
+        val staleImage = File(context.filesDir, "cropped/stale.jpg")
+        staleImage.parentFile?.mkdirs()
+        staleImage.writeText("stale data")
+        val state = WallpaperAppState(
+            pages = listOf(PageItem(pageIndex = 0), PageItem(pageIndex = 1)),
+            calibration = CalibrationConfig(pageCount = 2)
+        )
+        val zipBytes = ByteArrayOutputStream().use { output ->
+            ZipOutputStream(output).use { zip ->
+                val entries = listOf(
+                    "config.json" to state.toJson().toString().toByteArray(),
+                    "originals_meta.json" to "[]".toByteArray(),
+                    "cropped/restored.jpg" to restoredImage
+                )
+                entries.forEach { (name, bytes) ->
+                    zip.putNextEntry(ZipEntry(name))
+                    zip.write(bytes)
+                    zip.closeEntry()
+                }
+            }
+            output.toByteArray()
+        }
+
+        assertTrue(repository.importFromZip(ByteArrayInputStream(zipBytes)))
+        assertEquals(2, repository.appState.value.pages.size)
+        assertTrue(File(context.filesDir, "cropped/restored.jpg").readBytes().contentEquals(restoredImage))
+        assertFalse(staleImage.exists())
     }
 }

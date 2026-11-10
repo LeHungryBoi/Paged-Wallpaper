@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import android.util.AtomicFile
 import android.util.Log
 import com.example.darken.ExtraDimDetector
@@ -31,6 +32,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,6 +43,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.OutputStream
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -78,6 +82,7 @@ class WallpaperRepository private constructor(private val context: Context) {
     private val prefs by lazy {
         context.getSharedPreferences("wallpaper_state", Context.MODE_PRIVATE)
     }
+    private val backupMutex = Mutex()
 
     fun saveLastKnownOffset(offset: Float) {
         val clamped = offset.coerceIn(0f, 1f)
@@ -994,22 +999,25 @@ class WallpaperRepository private constructor(private val context: Context) {
      * Single-file export: creates paperpages_backup.zip containing config.json,
      * originals, and cropped images without any timestamp in the filename.
      */
-    suspend fun exportToZip(outputStream: java.io.OutputStream): Boolean = withContext(Dispatchers.IO) {
+    suspend fun exportToZip(outputStream: OutputStream): Boolean = withContext(Dispatchers.IO) {
         try {
             ZipOutputStream(BufferedOutputStream(outputStream)).use { zipOut ->
                 // Write config.json
-                if (configFile.exists()) {
-                    zipOut.putNextEntry(ZipEntry("config.json"))
-                    FileInputStream(configFile).use { it.copyTo(zipOut) }
-                    zipOut.closeEntry()
+                if (!configFile.exists()) {
+                    throw IllegalStateException("Configuration file does not exist")
                 }
+                zipOut.putNextEntry(ZipEntry("config.json"))
+                FileInputStream(configFile).use { it.copyTo(zipOut) }
+                zipOut.closeEntry()
 
                 // Write originals_meta.json
+                zipOut.putNextEntry(ZipEntry("originals_meta.json"))
                 if (originalsMetaFile.exists()) {
-                    zipOut.putNextEntry(ZipEntry("originals_meta.json"))
                     FileInputStream(originalsMetaFile).use { it.copyTo(zipOut) }
-                    zipOut.closeEntry()
+                } else {
+                    zipOut.write(JSONArray().toString().toByteArray(Charsets.UTF_8))
                 }
+                zipOut.closeEntry()
 
                 // Write originals
                 originalsDir.listFiles()?.forEach { file ->
@@ -1037,46 +1045,225 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     suspend fun importFromZip(inputStream: InputStream): Boolean = withContext(Dispatchers.IO) {
+        val stagingDir = File(context.filesDir, ".backup_restore_${UUID.randomUUID()}")
+        var keepStaging = false
         try {
+            val stagedOriginals = File(stagingDir, "originals").apply { mkdirs() }
+            val stagedCropped = File(stagingDir, "cropped").apply { mkdirs() }
+            var hasConfig = false
+            var hasOriginalsMetadata = false
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var totalBytes = 0L
+
             ZipInputStream(BufferedInputStream(inputStream)).use { zipIn ->
-                var entry: ZipEntry? = zipIn.nextEntry
-                while (entry != null) {
-                    val entryName = entry.name
-                    when {
-                        entryName == "config.json" -> {
-                            FileOutputStream(configFile).use { zipIn.copyTo(it) }
+                while (true) {
+                    val entry = zipIn.nextEntry ?: break
+                    if (entry.isDirectory) {
+                        zipIn.closeEntry()
+                        continue
+                    }
+                    val target = when {
+                        entry.name == "config.json" -> {
+                            if (hasConfig) throw IllegalArgumentException("Duplicate config.json")
+                            hasConfig = true
+                            File(stagingDir, "config.json")
                         }
-                        entryName == "originals_meta.json" -> {
-                            FileOutputStream(originalsMetaFile).use { zipIn.copyTo(it) }
-                        }
-                        entryName.startsWith("originals/") -> {
-                            val fileName = entryName.removePrefix("originals/")
-                            if (fileName.isNotEmpty()) {
-                                val dest = File(originalsDir, fileName)
-                                FileOutputStream(dest).use { zipIn.copyTo(it) }
+                        entry.name == "originals_meta.json" -> {
+                            if (hasOriginalsMetadata) {
+                                throw IllegalArgumentException("Duplicate originals_meta.json")
                             }
+                            hasOriginalsMetadata = true
+                            File(stagingDir, "originals_meta.json")
                         }
-                        entryName.startsWith("cropped/") -> {
-                            val fileName = entryName.removePrefix("cropped/")
-                            if (fileName.isNotEmpty()) {
-                                val dest = File(croppedDir, fileName)
-                                FileOutputStream(dest).use { zipIn.copyTo(it) }
+                        entry.name.startsWith("originals/") ->
+                            File(stagedOriginals, requireBackupFileName(entry.name, "originals/"))
+                        entry.name.startsWith("cropped/") ->
+                            File(stagedCropped, requireBackupFileName(entry.name, "cropped/"))
+                        else -> throw IllegalArgumentException("Unsupported backup entry: ${entry.name}")
+                    }
+                    target.parentFile?.let { parent ->
+                        if (!parent.exists() && !parent.mkdirs()) {
+                            throw IllegalStateException("Could not create restore staging directory")
+                        }
+                    }
+                    FileOutputStream(target).use { output ->
+                        while (true) {
+                            val bytesRead = zipIn.read(buffer)
+                            if (bytesRead < 0) break
+                            totalBytes += bytesRead
+                            if (totalBytes > MAX_BACKUP_UNCOMPRESSED_BYTES) {
+                                throw IllegalArgumentException("Backup is too large to restore")
                             }
+                            output.write(buffer, 0, bytesRead)
                         }
                     }
                     zipIn.closeEntry()
-                    entry = zipIn.nextEntry
                 }
             }
 
-            // Reload state
+            if (!hasConfig) {
+                throw IllegalArgumentException("Backup is missing config.json")
+            }
+            if (!hasOriginalsMetadata) {
+                File(stagingDir, "originals_meta.json").writeText("[]")
+            }
+            val backupState = WallpaperAppState.fromJson(
+                JSONObject(File(stagingDir, "config.json").readText())
+            )
+            val metadata = JSONArray(File(stagingDir, "originals_meta.json").readText())
+            val legacyMetadata = mutableMapOf<String, JSONObject>()
+            for (index in 0 until metadata.length()) {
+                val item = metadata.optJSONObject(index)
+                    ?: throw IllegalArgumentException("Invalid media metadata in backup")
+                val original = OriginalMedia.fromJson(item)
+                legacyMetadata[original.id] = item
+            }
+            PresetDataMigration.migrateLegacy(backupState, legacyMetadata)
+
+            installRestoredFiles(stagingDir)
             loadInitialData()
             invalidateCache()
             notifyListeners()
             true
         } catch (e: Exception) {
             Log.e("WallpaperRepo", "Failed to import ZIP", e)
+            keepStaging = File(stagingDir, "rollback").listFiles()?.isNotEmpty() == true
             false
+        } finally {
+            if (!keepStaging) stagingDir.deleteRecursively()
+        }
+    }
+
+    private fun requireBackupFileName(entryName: String, prefix: String): String {
+        val fileName = entryName.removePrefix(prefix)
+        if (fileName.isBlank() || fileName == "." || fileName == ".." ||
+            fileName.contains('/') || fileName.contains('\\')
+        ) {
+            throw IllegalArgumentException("Invalid backup file path: $entryName")
+        }
+        return fileName
+    }
+
+    private fun installRestoredFiles(stagingDir: File) {
+        val stagedFiles = listOf(
+            File(stagingDir, "config.json") to configFile,
+            File(stagingDir, "originals_meta.json") to originalsMetaFile,
+            File(stagingDir, "originals") to originalsDir,
+            File(stagingDir, "cropped") to croppedDir
+        )
+        val rollbackDir = File(stagingDir, "rollback").apply { mkdirs() }
+        val movedExisting = mutableListOf<Pair<File, File>>()
+        val installed = mutableListOf<File>()
+        try {
+            stagedFiles.forEachIndexed { index, (_, target) ->
+                if (target.exists()) {
+                    val backup = File(rollbackDir, "item_$index")
+                    if (!target.renameTo(backup)) {
+                        throw IllegalStateException("Could not stage existing ${target.name}")
+                    }
+                    movedExisting.add(target to backup)
+                }
+            }
+            stagedFiles.forEach { (source, target) ->
+                if (!source.renameTo(target)) {
+                    throw IllegalStateException("Could not install restored ${target.name}")
+                }
+                installed.add(target)
+            }
+        } catch (e: Exception) {
+            installed.asReversed().forEach { it.deleteRecursively() }
+            movedExisting.asReversed().forEach { (target, backup) ->
+                if (!backup.renameTo(target)) {
+                    Log.e("WallpaperRepo", "Failed to roll back ${target.name}")
+                }
+            }
+            throw e
+        }
+    }
+
+    private fun findOrCreateBackupDocument(treeUri: Uri): Uri {
+        val treeDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, treeDocumentId)
+        val projection = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME)
+        val cursor = context.contentResolver.query(
+            childrenUri,
+            projection,
+            null,
+            null,
+            null
+        ) ?: throw IllegalStateException("Could not list files in selected backup folder")
+        val existingDocumentId = cursor.use {
+            val idColumn = cursor.getColumnIndexOrThrow(Document.COLUMN_DOCUMENT_ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(Document.COLUMN_DISPLAY_NAME)
+            var found: String? = null
+            while (cursor.moveToNext()) {
+                if (cursor.getString(nameColumn) == BACKUP_FILE_NAME) {
+                    found = cursor.getString(idColumn)
+                    break
+                }
+            }
+            found
+        }
+        if (existingDocumentId != null) {
+            return DocumentsContract.buildDocumentUriUsingTree(treeUri, existingDocumentId)
+        }
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, treeDocumentId)
+        return DocumentsContract.createDocument(
+            context.contentResolver,
+            parentUri,
+            "application/zip",
+            BACKUP_FILE_NAME
+        ) ?: throw IllegalStateException("Could not create backup file in selected folder")
+    }
+
+    suspend fun exportToFolder(treeUriString: String): Boolean = withContext(Dispatchers.IO) {
+        backupMutex.withLock {
+            try {
+                val treeUri = Uri.parse(treeUriString)
+                val targetUri = findOrCreateBackupDocument(treeUri)
+                val output = context.contentResolver.openOutputStream(targetUri, "rwt")
+                    ?: throw IllegalStateException("Could not open backup file for writing")
+                val exported = exportToZip(output)
+                if (exported) {
+                    try {
+                        deleteNumberedBackupCopies(treeUri)
+                    } catch (e: Exception) {
+                        Log.w("WallpaperRepo", "Backup saved, but old numbered copies could not be cleaned", e)
+                    }
+                }
+                exported
+            } catch (e: Exception) {
+                Log.e("WallpaperRepo", "Failed to export backup to folder", e)
+                false
+            }
+        }
+    }
+
+    private fun deleteNumberedBackupCopies(treeUri: Uri) {
+        val treeDocumentId = DocumentsContract.getTreeDocumentId(treeUri)
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, treeDocumentId)
+        val cursor = context.contentResolver.query(
+            childrenUri,
+            arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME),
+            null,
+            null,
+            null
+        ) ?: throw IllegalStateException("Could not list old backup copies")
+        cursor.use {
+            val idColumn = cursor.getColumnIndexOrThrow(Document.COLUMN_DOCUMENT_ID)
+            val nameColumn = cursor.getColumnIndexOrThrow(Document.COLUMN_DISPLAY_NAME)
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameColumn)
+                if (name.matches(Regex("""paperpages_backup \(\d+\)\.zip"""))) {
+                    val documentUri = DocumentsContract.buildDocumentUriUsingTree(
+                        treeUri,
+                        cursor.getString(idColumn)
+                    )
+                    if (!DocumentsContract.deleteDocument(context.contentResolver, documentUri)) {
+                        Log.w("WallpaperRepo", "Could not delete old generated backup: $name")
+                    }
+                }
+            }
         }
     }
 
@@ -1086,21 +1273,8 @@ class WallpaperRepository private constructor(private val context: Context) {
      */
     private suspend fun autoBackup(treeUriString: String) = withContext(Dispatchers.IO) {
         try {
-            val treeUri = Uri.parse(treeUriString)
-            val parentDocUri = DocumentsContract.buildDocumentUriUsingTree(
-                treeUri,
-                DocumentsContract.getTreeDocumentId(treeUri)
-            )
-            val targetDocUri = DocumentsContract.createDocument(
-                context.contentResolver,
-                parentDocUri,
-                "application/zip",
-                "paperpages_backup.zip"
-            )
-            if (targetDocUri != null) {
-                context.contentResolver.openOutputStream(targetDocUri, "rwt")?.use { out ->
-                    exportToZip(out)
-                }
+            if (!exportToFolder(treeUriString)) {
+                Log.e("WallpaperRepo", "Automatic backup failed")
             }
         } catch (e: Exception) {
             Log.e("WallpaperRepo", "Auto backup error", e)
@@ -1108,6 +1282,9 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        private const val BACKUP_FILE_NAME = "paperpages_backup.zip"
+        private const val MAX_BACKUP_UNCOMPRESSED_BYTES = 1024L * 1024L * 1024L
+
         @Volatile
         private var instance: WallpaperRepository? = null
 

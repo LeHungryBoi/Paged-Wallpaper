@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -53,16 +54,18 @@ fun BackupScreen(
     val context = LocalContext.current
     val appState by viewModel.appState.collectAsState()
 
-    // SAF Create Document for single-version ZIP export (always overwrites latest file)
-    val exportFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/zip")
+    // Choose a folder so exports can find and overwrite the same named backup.
+    val exportFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
-            context.contentResolver.openOutputStream(uri, "rwt")?.use { out ->
-                viewModel.exportBackup(out) { success ->
-                    val msg = if (success) "Backup exported to single file paperpages_backup.zip" else "Export failed"
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            viewModel.exportBackupToFolder(uri.toString()) { success ->
+                val msg = if (success) {
+                    "Backup saved as paperpages_backup.zip in the selected folder."
+                } else {
+                    "Export failed. Check that the selected folder is writable."
                 }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -72,11 +75,18 @@ fun BackupScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            context.contentResolver.openInputStream(uri)?.use { input ->
+            val input = try {
+                context.contentResolver.openInputStream(uri)
+            } catch (_: Exception) {
+                null
+            }
+            if (input != null) {
                 viewModel.importBackup(input) { success ->
                     val msg = if (success) "Configuration & wallpapers successfully restored!" else "Restore failed"
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
+            } else {
+                Toast.makeText(context, "Could not open the selected backup.", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -86,8 +96,16 @@ fun BackupScreen(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { treeUri ->
         if (treeUri != null) {
-            viewModel.setAutoBackupFolder(treeUri.toString(), true)
-            Toast.makeText(context, "Auto-backup folder linked!", Toast.LENGTH_SHORT).show()
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                viewModel.setAutoBackupFolder(treeUri.toString(), true)
+                Toast.makeText(context, "Auto-backup folder linked!", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, "Could not access the selected folder.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -126,7 +144,7 @@ fun BackupScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "PaperPages exports to a single standalone package (paperpages_backup.zip) containing your settings, offsets, master photos, and cropped pages.\n\nNo timestamp clutter or duplicate versions are created. Each backup atomically overwrites the latest copy to keep your storage clean.",
+                        text = "PaperPages stores your settings, offsets, original photos, and page images in paperpages_backup.zip. Choose a destination folder and later exports reuse that same file instead of creating numbered copies.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -169,7 +187,7 @@ fun BackupScreen(
                 ) {
                     Button(
                         onClick = {
-                            exportFileLauncher.launch("paperpages_backup.zip")
+                            exportFolderLauncher.launch(null)
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -238,7 +256,7 @@ fun BackupScreen(
                 }
 
                 Text(
-                    text = "Pick a local folder once. Whenever you adjust wallpapers or change offsets, PaperPages automatically syncs and overwrites paperpages_backup.zip in that folder.",
+                    text = "Pick a local folder once. Whenever you adjust wallpapers or change offsets, PaperPages updates the same paperpages_backup.zip file in that folder.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
