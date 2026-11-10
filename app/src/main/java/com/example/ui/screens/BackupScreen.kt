@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +51,31 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.ui.WallpaperViewModel
+
+private fun getBackupFolderDisplayPath(folderUri: String): String {
+    val uri = Uri.parse(folderUri)
+    val documentId = try {
+        DocumentsContract.getTreeDocumentId(uri)
+    } catch (_: IllegalArgumentException) {
+        return folderUri
+    }
+
+    if (uri.authority == "com.android.externalstorage.documents") {
+        val separator = documentId.indexOf(':')
+        if (separator >= 0) {
+            val volume = documentId.substring(0, separator)
+            val relativePath = documentId.substring(separator + 1).trim('/')
+            val storageRoot = if (volume == "primary") {
+                "/storage/emulated/0"
+            } else {
+                "/storage/$volume"
+            }
+            return if (relativePath.isEmpty()) storageRoot else "$storageRoot/$relativePath"
+        }
+    }
+
+    return "${uri.authority}/$documentId"
+}
 
 @Composable
 fun BackupScreen(
@@ -284,16 +311,19 @@ fun BackupScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = if (!appState.backupFolderPath.isNullOrEmpty()) "Backup folder" else "No folder selected",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (!appState.backupFolderPath.isNullOrEmpty()) "Destination: paperpages_backup.zip" else "Tap Select Folder to link SAF storage",
+                                    text = appState.backupFolderPath?.takeIf { it.isNotEmpty() }?.let {
+                                        "Path: ${getBackupFolderDisplayPath(it).trimEnd('/')}/"
+                                    } ?: "Tap Select Folder to link SAF storage",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    softWrap = true
                                 )
                             }
                         }
