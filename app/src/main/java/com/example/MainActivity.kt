@@ -10,6 +10,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -179,10 +181,22 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                         Surface(
                             shape = androidx.compose.foundation.shape.CircleShape,
                             color = if (isWallpaperActive) androidx.compose.ui.graphics.Color(0xFF10B981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.padding(end = 12.dp)
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .clickable(
+                                    onClickLabel = if (isWallpaperActive) {
+                                        "Preview wallpaper settings"
+                                    } else {
+                                        "Apply live wallpaper"
+                                    },
+                                    role = Role.Button
+                                ) {
+                                    viewModel.applyWallpaperIntent(context)
+                                }
+                                .testTag("apply_wallpaper_button")
                         ) {
                             Text(
-                                text = if (isWallpaperActive) "Active" else "Live",
+                                text = if (isWallpaperActive) "Active" else "Apply",
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,

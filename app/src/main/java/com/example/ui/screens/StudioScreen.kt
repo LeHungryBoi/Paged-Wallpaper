@@ -27,7 +27,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -35,11 +34,9 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -66,11 +63,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -86,10 +81,8 @@ fun StudioScreen(
     onEditPage: (Int) -> Unit,
     onNavigateToCalibration: () -> Unit
 ) {
-    val context = LocalContext.current
     val appState by viewModel.appState.collectAsState()
     val originals by viewModel.originals.collectAsState()
-    val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
 
     var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
@@ -171,99 +164,6 @@ fun StudioScreen(
                     modifier = Modifier.fillMaxWidth().testTag("save_preset_button")
                 ) {
                     Text("Save a copy as a new preset")
-                }
-            }
-        }
-
-        // Hero Card: Live Wallpaper System Status & 1-Click Set
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("wallpaper_status_card"),
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
-            )
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        )
-                    )
-                    .padding(20.dp)
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                if (isWallpaperActive) Icons.Filled.CheckCircle else Icons.Filled.Wallpaper,
-                                contentDescription = null,
-                                tint = if (isWallpaperActive) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Text(
-                                text = if (isWallpaperActive) "Active Live Wallpaper" else "Wallpaper Not Applied",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-
-                        // Status pill
-                        Surface(
-                            shape = CircleShape,
-                            color = if (isWallpaperActive) Color(0xFF10B981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = if (isWallpaperActive) "RUNNING" else "STANDBY",
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isWallpaperActive) Color(0xFF047857) else MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = if (isWallpaperActive) {
-                            "PaperPages is rendering your multi-page wallpapers seamlessly in the background as you swipe."
-                        } else {
-                            "Tap below to apply PaperPages as your Android dynamic wallpaper."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
-                    )
-
-                    Button(
-                        onClick = { viewModel.applyWallpaperIntent(context) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("apply_wallpaper_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        )
-                    ) {
-                        Icon(Icons.Filled.Wallpaper, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (isWallpaperActive) "Re-Apply / Preview Settings" else "Apply as Live Wallpaper",
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
                 }
             }
         }
