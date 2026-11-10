@@ -72,25 +72,33 @@ data class PageItem(
 }
 
 data class PageTransitionSetting(
-    val forwardTransitionId: String = "scroll",
-    val reverseTransitionId: String = "scroll",
+    val universalTransitionId: String = "scroll",
+    val leftTransitionId: String = universalTransitionId,
+    val rightTransitionId: String = universalTransitionId,
     val separateDirections: Boolean = false
 ) {
     fun transitionId(forward: Boolean): String =
-        if (separateDirections && !forward) reverseTransitionId else forwardTransitionId
+        if (!separateDirections) universalTransitionId
+        else if (forward) rightTransitionId else leftTransitionId
 
     fun toJson(): JSONObject = JSONObject().apply {
-        put("forwardTransitionId", forwardTransitionId)
-        put("reverseTransitionId", reverseTransitionId)
+        put("universalTransitionId", universalTransitionId)
+        put("leftTransitionId", leftTransitionId)
+        put("rightTransitionId", rightTransitionId)
         put("separateDirections", separateDirections)
     }
 
     companion object {
         fun fromJson(json: JSONObject): PageTransitionSetting {
-            val forward = json.optString("forwardTransitionId", json.optString("transitionId", "scroll"))
+            val legacyForward = json.optString(
+                "forwardTransitionId",
+                json.optString("transitionId", "scroll")
+            )
+            val legacyReverse = json.optString("reverseTransitionId", legacyForward)
             return PageTransitionSetting(
-                forwardTransitionId = forward,
-                reverseTransitionId = json.optString("reverseTransitionId", forward),
+                universalTransitionId = json.optString("universalTransitionId", legacyForward),
+                leftTransitionId = json.optString("leftTransitionId", legacyReverse),
+                rightTransitionId = json.optString("rightTransitionId", legacyForward),
                 separateDirections = json.optBoolean("separateDirections", false)
             )
         }
@@ -288,7 +296,7 @@ data class WallpaperAppState(
         (pages.size - 1).coerceAtLeast(0)
     ) { PageTransitionSetting(transitionType, transitionType) },
     val presetNeedsSave: Boolean = false,
-    val schemaVersion: Int = 2
+    val schemaVersion: Int = 3
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -301,7 +309,7 @@ data class WallpaperAppState(
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
-        put("schemaVersion", 2)
+        put("schemaVersion", 3)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
         put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })

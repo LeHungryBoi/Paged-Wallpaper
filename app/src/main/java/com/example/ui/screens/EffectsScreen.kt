@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Brightness4
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewCarousel
@@ -40,64 +40,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.DarkenTrigger
-import com.example.data.model.PageTransitionSetting
-import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
-
-@Composable
-private fun TransitionChoiceList(
-    title: String,
-    selectedId: String,
-    onSelect: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        TransitionRegistry.transitions.forEach { renderer ->
-            val isSelected = selectedId.equals(renderer.id, ignoreCase = true)
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable { onSelect(renderer.id) }
-                    .testTag("transition_option_${renderer.id}"),
-                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = renderer.displayName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = renderer.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    RadioButton(selected = isSelected, onClick = { onSelect(renderer.id) })
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun EffectsScreen(
@@ -106,7 +56,6 @@ fun EffectsScreen(
     val appState by viewModel.appState.collectAsState()
     val isExtraDimHardwareActive by viewModel.isExtraDimDetected.collectAsState()
     val darken = appState.darken
-    var selectedBoundary by remember { mutableIntStateOf(0) }
 
     Column(
         modifier = Modifier
@@ -115,102 +64,6 @@ fun EffectsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        // Section: Transition Strategy
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(Icons.Default.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(
-                        text = "Page Transition Effects",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Text(
-                    text = "Transitions are configured per adjacent page pair and saved in the current preset.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val edgeCount = appState.pages.size - 1
-                if (edgeCount > 0) {
-                    val boundaryIndex = selectedBoundary.coerceIn(0, edgeCount - 1)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        repeat(edgeCount) { index ->
-                            FilterChip(
-                                selected = boundaryIndex == index,
-                                onClick = { selectedBoundary = index },
-                                label = { Text("${index + 1} ↔ ${index + 2}") },
-                                modifier = Modifier.testTag("transition_boundary_$index")
-                            )
-                        }
-                    }
-                    val setting = appState.transitions.getOrNull(boundaryIndex)
-                        ?: PageTransitionSetting(appState.transitionType, appState.transitionType)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Different animation per direction", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "Off uses the same effect both ways.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = setting.separateDirections,
-                            onCheckedChange = {
-                                viewModel.updatePageTransition(
-                                    boundaryIndex,
-                                    setting.copy(separateDirections = it)
-                                )
-                            },
-                            modifier = Modifier.testTag("separate_transition_directions")
-                        )
-                    }
-                    TransitionChoiceList(
-                        title = if (setting.separateDirections) "Forward: ${boundaryIndex + 1} → ${boundaryIndex + 2}" else "Animation",
-                        selectedId = setting.forwardTransitionId,
-                        onSelect = { id ->
-                            val updated = setting.copy(
-                                forwardTransitionId = id,
-                                reverseTransitionId = if (setting.separateDirections) {
-                                    setting.reverseTransitionId
-                                } else {
-                                    id
-                                }
-                            )
-                            viewModel.updatePageTransition(boundaryIndex, updated)
-                        }
-                    )
-                    if (setting.separateDirections) {
-                        TransitionChoiceList(
-                            title = "Reverse: ${boundaryIndex + 2} → ${boundaryIndex + 1}",
-                            selectedId = setting.reverseTransitionId,
-                            onSelect = { id ->
-                                viewModel.updatePageTransition(
-                                    boundaryIndex,
-                                    setting.copy(reverseTransitionId = id)
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
         // Section: Resume Animation Stability
         Card(
             modifier = Modifier

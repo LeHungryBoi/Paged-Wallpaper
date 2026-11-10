@@ -9,13 +9,14 @@ import org.json.JSONObject
 import java.util.UUID
 
 object PresetDataMigration {
-    const val CURRENT_SCHEMA_VERSION = 2
+    const val LEGACY_PRESET_SCHEMA_VERSION = 2
+    const val CURRENT_SCHEMA_VERSION = 3
 
     fun migrateLegacy(
         state: WallpaperAppState,
         legacyMediaMetadata: Map<String, JSONObject>
     ): WallpaperAppState {
-        if (state.schemaVersion >= CURRENT_SCHEMA_VERSION) return state
+        if (state.schemaVersion >= LEGACY_PRESET_SCHEMA_VERSION) return state
         val migratedPages = state.pages.map { page ->
             val legacy = page.originalId?.let(legacyMediaMetadata::get) ?: return@map page
             page.copy(
@@ -45,7 +46,12 @@ object PresetDataMigration {
             activePresetId = initialPreset.id,
             transitions = transitionSettings,
             presetNeedsSave = false,
-            schemaVersion = CURRENT_SCHEMA_VERSION
+            schemaVersion = LEGACY_PRESET_SCHEMA_VERSION
         )
+    }
+
+    fun migrateTransitionStorage(state: WallpaperAppState): WallpaperAppState {
+        if (state.schemaVersion >= CURRENT_SCHEMA_VERSION) return state
+        return state.copy(schemaVersion = CURRENT_SCHEMA_VERSION)
     }
 }

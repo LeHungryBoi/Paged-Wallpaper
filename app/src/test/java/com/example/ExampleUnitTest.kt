@@ -284,7 +284,7 @@ class ExampleUnitTest {
         assertEquals(0.65f, migrated.pages[0].parallaxAmount, 0.001f)
         assertEquals(0.25f, migrated.pages[0].cropPanX, 0.001f)
         assertEquals(migrated.pages, migrated.presets.single().pages)
-        assertEquals("parallax", migrated.transitions.first().forwardTransitionId)
+        assertEquals("parallax", migrated.transitions.first().universalTransitionId)
     }
 
     @Test
@@ -297,7 +297,12 @@ class ExampleUnitTest {
                 PageItem(pageIndex = 1, originalId = "media", cropPanX = 0.3f)
             ),
             transitions = listOf(
-                PageTransitionSetting("parallax", "fade", separateDirections = true)
+                PageTransitionSetting(
+                    universalTransitionId = "cube",
+                    leftTransitionId = "fade",
+                    rightTransitionId = "parallax",
+                    separateDirections = true
+                )
             )
         )
         val restored = WallpaperPreset.fromJson(preset.toJson())
@@ -306,6 +311,36 @@ class ExampleUnitTest {
         assertEquals(0.3f, restored.pages[1].cropPanX, 0.001f)
         assertEquals("parallax", restored.transitions[0].transitionId(forward = true))
         assertEquals("fade", restored.transitions[0].transitionId(forward = false))
+        assertEquals("cube", restored.transitions[0].universalTransitionId)
+        assertEquals("fade", restored.toJson().getJSONArray("transitions")
+            .getJSONObject(0).getString("leftTransitionId"))
+        val universalSetting = restored.transitions[0].copy(separateDirections = false)
+        assertEquals("cube", universalSetting.transitionId(forward = true))
+        assertEquals("cube", universalSetting.transitionId(forward = false))
+    }
+
+    @Test
+    fun testLegacyTransitionSettingsMigrateToDistinctAnimationItems() {
+        val legacy = PageTransitionSetting.fromJson(
+            JSONObject()
+                .put("forwardTransitionId", "parallax")
+                .put("reverseTransitionId", "fade")
+                .put("separateDirections", true)
+        )
+        val migrated = PresetDataMigration.migrateTransitionStorage(
+            WallpaperAppState(
+                pages = listOf(PageItem(pageIndex = 0), PageItem(pageIndex = 1)),
+                calibration = CalibrationConfig(pageCount = 2),
+                transitions = listOf(legacy),
+                schemaVersion = 2
+            )
+        )
+
+        assertEquals(3, migrated.schemaVersion)
+        assertEquals("parallax", migrated.transitions.single().universalTransitionId)
+        assertEquals("parallax", migrated.transitions.single().rightTransitionId)
+        assertEquals("fade", migrated.transitions.single().leftTransitionId)
+        assertEquals("fade", migrated.transitions.single().transitionId(forward = false))
     }
 
     @Test

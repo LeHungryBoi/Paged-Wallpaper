@@ -164,7 +164,7 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
                 calibration = newCalib,
                 pages = trimmedPages,
                 transitions = transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: it.transitionType
+                transitionType = transitions.firstOrNull()?.universalTransitionId ?: it.transitionType
             )
         }
     }

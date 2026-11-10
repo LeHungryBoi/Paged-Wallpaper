@@ -149,9 +149,10 @@ class WallpaperRepository private constructor(private val context: Context) {
                 } else {
                     loaded
                 }
-                val synchronized = synchronizeActivePreset(migrated)
+                val migratedTransitions = PresetDataMigration.migrateTransitionStorage(migrated)
+                val synchronized = synchronizeActivePreset(migratedTransitions)
                 _appState.value = synchronized
-                if (loaded.schemaVersion < 2 || synchronized != loaded) {
+                if (loaded.schemaVersion < PresetDataMigration.CURRENT_SCHEMA_VERSION || synchronized != loaded) {
                     if (saveConfigInternal(synchronized) && loaded.schemaVersion < 2) {
                         saveOriginalsMeta(_originals.value)
                     }
@@ -260,7 +261,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 }
             },
             presetNeedsSave = false,
-            schemaVersion = 2
+            schemaVersion = PresetDataMigration.CURRENT_SCHEMA_VERSION
         )
 
     fun updateState(transform: (WallpaperAppState) -> WallpaperAppState) {
@@ -273,7 +274,10 @@ class WallpaperRepository private constructor(private val context: Context) {
         val newState = if (shouldUpdateActivePreset) {
             synchronizeActivePreset(transformed)
         } else {
-            transformed.copy(presetNeedsSave = false, schemaVersion = 2)
+            transformed.copy(
+                presetNeedsSave = false,
+                schemaVersion = PresetDataMigration.CURRENT_SCHEMA_VERSION
+            )
         }
         _appState.value = newState
         saveConfigInternal(newState)
@@ -309,7 +313,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         while (transitions.size < count - 1) {
             transitions.add(transitions.lastOrNull() ?: PageTransitionSetting())
         }
-        val firstTransition = transitions.firstOrNull()?.forwardTransitionId ?: "scroll"
+        val firstTransition = transitions.firstOrNull()?.universalTransitionId ?: "scroll"
         updateState {
             it.copy(
                 pages = pages,
@@ -353,7 +357,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 presets = it.presets + preset,
                 pages = preset.pages,
                 transitions = preset.transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
+                transitionType = transitions.firstOrNull()?.universalTransitionId ?: "scroll",
                 activePresetId = id
             )
         }
@@ -407,7 +411,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 presets = remainingPresets,
                 pages = pages.mapIndexed { index, page -> page.copy(pageIndex = index) },
                 transitions = transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
+                transitionType = transitions.firstOrNull()?.universalTransitionId ?: "scroll",
                 activePresetId = fallback.id
             )
         }
@@ -422,7 +426,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         updateState {
             it.copy(
                 transitions = transitions,
-                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll"
+                transitionType = transitions.firstOrNull()?.universalTransitionId ?: "scroll"
             )
         }
     }
@@ -1118,7 +1122,8 @@ class WallpaperRepository private constructor(private val context: Context) {
                 val original = OriginalMedia.fromJson(item)
                 legacyMetadata[original.id] = item
             }
-            PresetDataMigration.migrateLegacy(backupState, legacyMetadata)
+            val migratedLegacy = PresetDataMigration.migrateLegacy(backupState, legacyMetadata)
+            PresetDataMigration.migrateTransitionStorage(migratedLegacy)
 
             installRestoredFiles(stagingDir)
             loadInitialData()
