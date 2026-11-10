@@ -315,24 +315,59 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
     }
 
-    fun saveCurrentPreset(name: String): String? {
+    fun duplicatePreset(presetId: String, name: String, pageCount: Int): String? {
         val cleanName = name.trim().take(40)
         if (cleanName.isEmpty()) return null
         val state = _appState.value
+        val source = state.presets.firstOrNull { it.id == presetId } ?: return null
+        val count = pageCount.coerceIn(2, 7)
+        val pages = source.pages.take(count).toMutableList()
+        while (pages.size < count) {
+            val index = pages.size
+            pages.add(
+                PageItem(
+                    pageIndex = index,
+                    customLabel = "Page ${index + 1}",
+                    isBlank = true
+                )
+            )
+        }
+        val transitions = source.transitions.take(count - 1).toMutableList()
+        while (transitions.size < count - 1) {
+            transitions.add(transitions.lastOrNull() ?: PageTransitionSetting())
+        }
         val id = UUID.randomUUID().toString()
         val preset = WallpaperPreset(
             id = id,
             name = cleanName,
-            pages = state.pages,
-            transitions = state.transitions
+            pages = pages.mapIndexed { index, page -> page.copy(pageIndex = index) },
+            transitions = transitions
         )
         updateState {
             it.copy(
                 presets = it.presets + preset,
+                pages = preset.pages,
+                transitions = preset.transitions,
+                transitionType = transitions.firstOrNull()?.forwardTransitionId ?: "scroll",
                 activePresetId = id
             )
         }
         return id
+    }
+
+    fun renamePreset(presetId: String, name: String): Boolean {
+        val cleanName = name.trim().take(40)
+        if (cleanName.isEmpty()) return false
+        val state = _appState.value
+        if (state.presets.none { it.id == presetId }) return false
+        updateState {
+            it.copy(
+                presets = it.presets.map { preset ->
+                    if (preset.id == presetId) preset.copy(name = cleanName) else preset
+                }
+            )
+        }
+        return true
     }
 
     fun deletePreset(presetId: String, pageCount: Int): Boolean {

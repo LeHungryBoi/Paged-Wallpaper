@@ -28,9 +28,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -40,6 +42,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -74,6 +78,11 @@ import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+private enum class PresetAction {
+    DUPLICATE,
+    RENAME
+}
+
 @Composable
 fun StudioScreen(
     viewModel: WallpaperViewModel,
@@ -85,7 +94,8 @@ fun StudioScreen(
     val originals by viewModel.originals.collectAsState()
 
     var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
-    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var presetAction by remember { mutableStateOf<PresetAction?>(null) }
+    var presetActionId by remember { mutableStateOf<String?>(null) }
     var presetName by remember { mutableStateOf("") }
     var presetToDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
     val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
@@ -123,6 +133,7 @@ fun StudioScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     appState.presets.forEach { preset ->
+                        var menuExpanded by remember(preset.id) { mutableStateOf(false) }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             androidx.compose.material3.FilterChip(
                                 selected = preset.id == appState.activePresetId,
@@ -134,18 +145,58 @@ fun StudioScreen(
                                 label = { Text(preset.name) },
                                 modifier = Modifier.testTag("preset_${preset.id}")
                             )
-                            if (appState.presets.size > 1) {
+                            Box {
                                 IconButton(
-                                    onClick = { presetToDelete = preset.id to preset.name },
+                                    onClick = { menuExpanded = true },
                                     modifier = Modifier
                                         .size(40.dp)
-                                        .testTag("delete_preset_${preset.id}")
+                                        .testTag("preset_menu_${preset.id}")
                                 ) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        contentDescription = "Delete ${preset.name} preset",
-                                        tint = MaterialTheme.colorScheme.error
+                                    Icon(Icons.Default.MoreVert, contentDescription = "${preset.name} actions")
+                                }
+                                DropdownMenu(
+                                    expanded = menuExpanded,
+                                    onDismissRequest = { menuExpanded = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Duplicate") },
+                                        leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                                        onClick = {
+                                            presetActionId = preset.id
+                                            presetAction = PresetAction.DUPLICATE
+                                            presetName = "${preset.name} copy".take(40)
+                                            menuExpanded = false
+                                        },
+                                        modifier = Modifier.testTag("duplicate_preset_${preset.id}")
                                     )
+                                    DropdownMenuItem(
+                                        text = { Text("Rename") },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                        onClick = {
+                                            presetActionId = preset.id
+                                            presetAction = PresetAction.RENAME
+                                            presetName = preset.name
+                                            menuExpanded = false
+                                        },
+                                        modifier = Modifier.testTag("rename_preset_${preset.id}")
+                                    )
+                                    if (appState.presets.size > 1) {
+                                        DropdownMenuItem(
+                                            text = { Text("Delete") },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.Delete,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            },
+                                            onClick = {
+                                                presetToDelete = preset.id to preset.name
+                                                menuExpanded = false
+                                            },
+                                            modifier = Modifier.testTag("delete_preset_${preset.id}")
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -156,15 +207,6 @@ fun StudioScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedButton(
-                    onClick = {
-                        presetName = ""
-                        showSavePresetDialog = true
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("save_preset_button")
-                ) {
-                    Text("Save a copy as a new preset")
-                }
             }
         }
 
@@ -468,15 +510,23 @@ fun StudioScreen(
             }
         }
 
-        if (showSavePresetDialog) {
+        if (presetAction != null && presetActionId != null) {
             AlertDialog(
-                onDismissRequest = { showSavePresetDialog = false },
-                title = { Text("Create a new preset") },
+                onDismissRequest = { presetAction = null },
+                title = {
+                    Text(
+                        if (presetAction == PresetAction.DUPLICATE) {
+                            "Duplicate preset"
+                        } else {
+                            "Rename preset"
+                        }
+                    )
+                },
                 text = {
                     OutlinedTextField(
                         value = presetName,
                         onValueChange = { presetName = it.take(40) },
-                        label = { Text("Preset name") },
+                        label = { Text("Name") },
                         singleLine = true,
                         modifier = Modifier.testTag("preset_name_field")
                     )
@@ -484,16 +534,24 @@ fun StudioScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            if (viewModel.saveCurrentPreset(presetName) != null) {
-                                showSavePresetDialog = false
-                            }
+                            val succeeded = presetActionId?.let { id ->
+                                when (presetAction) {
+                                    PresetAction.DUPLICATE ->
+                                        viewModel.duplicatePreset(id, presetName) != null
+                                    PresetAction.RENAME -> viewModel.renamePreset(id, presetName)
+                                    null -> false
+                                }
+                            } ?: false
+                            if (succeeded) presetAction = null
                         },
                         enabled = presetName.isNotBlank(),
-                        modifier = Modifier.testTag("confirm_save_preset")
-                    ) { Text("Create") }
+                        modifier = Modifier.testTag("confirm_preset_action")
+                    ) {
+                        Text(if (presetAction == PresetAction.DUPLICATE) "Duplicate" else "Rename")
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showSavePresetDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { presetAction = null }) { Text("Cancel") }
                 }
             )
         }

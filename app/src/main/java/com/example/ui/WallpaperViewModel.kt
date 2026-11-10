@@ -213,10 +213,14 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.selectPreset(presetId, appState.value.calibration.pageCount)
     }
 
-    fun saveCurrentPreset(name: String): String? = repository.saveCurrentPreset(name)
+    fun duplicatePreset(presetId: String, name: String): String? =
+        repository.duplicatePreset(presetId, name, appState.value.calibration.pageCount)
 
     fun deletePreset(presetId: String): Boolean =
         repository.deletePreset(presetId, appState.value.calibration.pageCount)
+
+    fun renamePreset(presetId: String, name: String): Boolean =
+        repository.renamePreset(presetId, name)
 
     fun updatePageSettings(
         pageIndex: Int,
