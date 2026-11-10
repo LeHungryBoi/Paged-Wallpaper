@@ -276,9 +276,15 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun setAutoBackupFolder(folderUri: String?, enabled: Boolean) {
+    fun setBackupFolder(folderUri: String?) {
         repository.updateState {
-            it.copy(backupFolderPath = folderUri, autoBackupEnabled = enabled)
+            it.copy(backupFolderPath = folderUri)
+        }
+    }
+
+    fun setAutoBackupEnabled(enabled: Boolean) {
+        repository.updateState {
+            it.copy(autoBackupEnabled = enabled)
         }
     }
 

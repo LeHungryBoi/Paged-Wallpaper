@@ -39,6 +39,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -53,22 +56,8 @@ fun BackupScreen(
 ) {
     val context = LocalContext.current
     val appState by viewModel.appState.collectAsState()
-
-    // Choose a folder so exports can find and overwrite the same named backup.
-    val exportFolderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            viewModel.exportBackupToFolder(uri.toString()) { success ->
-                val msg = if (success) {
-                    "Backup saved as paperpages_backup.zip in the selected folder."
-                } else {
-                    "Export failed. Check that the selected folder is writable."
-                }
-                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-            }
-        }
-    }
+    var pendingManualExport by remember { mutableStateOf(false) }
+    var pendingAutoSyncEnable by remember { mutableStateOf(false) }
 
     // SAF Open Document to import and restore
     val importFileLauncher = rememberLauncherForActivityResult(
@@ -91,7 +80,7 @@ fun BackupScreen(
         }
     }
 
-    // SAF Open Document Tree to choose auto-backup folder
+    // Choose one destination reused by manual export and optional automatic sync.
     val openFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { treeUri ->
@@ -101,11 +90,46 @@ fun BackupScreen(
                     treeUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                viewModel.setAutoBackupFolder(treeUri.toString(), true)
-                Toast.makeText(context, "Auto-backup folder linked!", Toast.LENGTH_SHORT).show()
+                viewModel.setBackupFolder(treeUri.toString())
+                if (pendingAutoSyncEnable) viewModel.setAutoBackupEnabled(true)
+                if (pendingManualExport) {
+                    viewModel.exportBackupToFolder(treeUri.toString()) { success ->
+                        val msg = if (success) {
+                            "Backup saved as paperpages_backup.zip in the selected folder."
+                        } else {
+                            "Export failed. Check that the selected folder is writable."
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                } else {
+                    Toast.makeText(context, "Backup folder selected.", Toast.LENGTH_SHORT).show()
+                }
             } catch (_: Exception) {
                 Toast.makeText(context, "Could not access the selected folder.", Toast.LENGTH_LONG).show()
+            } finally {
+                pendingAutoSyncEnable = false
+                pendingManualExport = false
             }
+        } else {
+            pendingAutoSyncEnable = false
+            pendingManualExport = false
+        }
+    }
+
+    fun exportToSelectedFolder() {
+        val folderUri = appState.backupFolderPath
+        if (folderUri.isNullOrEmpty()) {
+            pendingManualExport = true
+            openFolderLauncher.launch(null)
+            return
+        }
+        viewModel.exportBackupToFolder(folderUri) { success ->
+            val msg = if (success) {
+                "Backup saved as paperpages_backup.zip in the selected folder."
+            } else {
+                "Export failed. Check that the selected folder is writable."
+            }
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -187,7 +211,7 @@ fun BackupScreen(
                 ) {
                     Button(
                         onClick = {
-                            exportFolderLauncher.launch(null)
+                            exportToSelectedFolder()
                         },
                         modifier = Modifier
                             .weight(1f)
@@ -214,11 +238,11 @@ fun BackupScreen(
             }
         }
 
-        // Section: Automated Folder Backup (SAF)
+        // Section: Backup Settings
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("auto_backup_card"),
+                .testTag("backup_settings_card"),
             shape = RoundedCornerShape(20.dp)
         ) {
             Column(
@@ -226,37 +250,19 @@ fun BackupScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text(
-                            text = "Automatic Folder Sync",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Switch(
-                        checked = appState.autoBackupEnabled && !appState.backupFolderPath.isNullOrEmpty(),
-                        onCheckedChange = { enabled ->
-                            if (enabled && appState.backupFolderPath.isNullOrEmpty()) {
-                                openFolderLauncher.launch(null)
-                            } else {
-                                viewModel.setAutoBackupFolder(appState.backupFolderPath, enabled)
-                            }
-                        },
-                        modifier = Modifier.testTag("toggle_auto_backup")
+                    Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text(
+                        text = "Backup settings",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
                 Text(
-                    text = "Pick a local folder once. Whenever you adjust wallpapers or change offsets, PaperPages updates the same paperpages_backup.zip file in that folder.",
+                    text = "Choose one folder for manual backups and optional automatic sync.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -280,7 +286,7 @@ fun BackupScreen(
                             Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Column {
                                 Text(
-                                    text = if (!appState.backupFolderPath.isNullOrEmpty()) "Linked Folder" else "No folder selected",
+                                    text = if (!appState.backupFolderPath.isNullOrEmpty()) "Backup folder" else "No folder selected",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -293,7 +299,11 @@ fun BackupScreen(
                         }
 
                         OutlinedButton(
-                            onClick = { openFolderLauncher.launch(null) },
+                            onClick = {
+                                pendingAutoSyncEnable = false
+                                pendingManualExport = false
+                                openFolderLauncher.launch(null)
+                            },
                             modifier = Modifier.testTag("select_folder_button")
                         ) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -301,6 +311,38 @@ fun BackupScreen(
                             Text("Select")
                         }
                     }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Automatic sync",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Update the backup when your setup changes.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = appState.autoBackupEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && appState.backupFolderPath.isNullOrEmpty()) {
+                                pendingAutoSyncEnable = true
+                                pendingManualExport = false
+                                openFolderLauncher.launch(null)
+                            } else {
+                                viewModel.setAutoBackupEnabled(enabled)
+                            }
+                        },
+                        modifier = Modifier.testTag("toggle_auto_backup")
+                    )
                 }
             }
         }
