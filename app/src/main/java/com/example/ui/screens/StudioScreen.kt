@@ -306,6 +306,7 @@ fun StudioScreen(
                 itemsIndexed(appState.pages) { index, page ->
                     val isHome = index == appState.calibration.homePageIndex
                     val bmp = pageBitmaps[index]
+                    val hasEditableOriginal = originals.any { it.id == page.originalId }
 
                     Card(
                         modifier = Modifier
@@ -327,8 +328,11 @@ fun StudioScreen(
                                     .aspectRatio(9f / 17f)
                                     .clip(RoundedCornerShape(14.dp))
                                     .background(Color.Black)
-                                    .clickable { onChooseMediaForPage(index) }
-                                    .testTag("choose_page_preview_$index"),
+                                    .clickable {
+                                        if (hasEditableOriginal) onEditPage(index)
+                                        else onChooseMediaForPage(index)
+                                    }
+                                    .testTag("page_preview_$index"),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (bmp != null) {
@@ -389,6 +393,43 @@ fun StudioScreen(
                                         )
                                     }
                                 }
+
+                                if (hasEditableOriginal) {
+                                    Surface(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .clickable { onEditPage(index) }
+                                            .testTag("edit_page_${index}_preview_action"),
+                                        color = Color.Black.copy(alpha = 0.72f),
+                                        shape = RoundedCornerShape(
+                                            bottomStart = 14.dp,
+                                            bottomEnd = 14.dp
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = Color.White
+                                            )
+                                            Spacer(Modifier.width(5.dp))
+                                            Text(
+                                                "Edit page settings",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(10.dp))
@@ -403,13 +444,6 @@ fun StudioScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold
                                 )
-                                TextButton(
-                                    onClick = { onChooseMediaForPage(index) },
-                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                                    modifier = Modifier.testTag("replace_page_${index}_button")
-                                ) {
-                                    Text("Choose image", style = MaterialTheme.typography.labelSmall)
-                                }
                             }
 
                             Text(
@@ -430,20 +464,18 @@ fun StudioScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
-                            if (page.originalId != null) {
-                                Button(
-                                    onClick = { onEditPage(index) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .testTag("edit_page_${index}_button"),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Edit page settings", style = MaterialTheme.typography.labelLarge)
-                                }
+                            Button(
+                                onClick = { onChooseMediaForPage(index) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("replace_page_${index}_button"),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Choose image", style = MaterialTheme.typography.labelLarge)
                             }
 
                             if (!isHome) {
