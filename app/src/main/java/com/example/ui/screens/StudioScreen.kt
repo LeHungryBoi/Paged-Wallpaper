@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Home
@@ -49,8 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,7 +56,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -73,7 +69,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,7 +88,6 @@ fun StudioScreen(
     val appState by viewModel.appState.collectAsState()
     val originals by viewModel.originals.collectAsState()
 
-    var testSliderOffset by remember { mutableFloatStateOf(0.5f) }
     var presetAction by remember { mutableStateOf<PresetAction?>(null) }
     var presetActionId by remember { mutableStateOf<String?>(null) }
     var presetName by remember { mutableStateOf("") }
@@ -432,79 +426,6 @@ fun StudioScreen(
                             }
                         }
 
-                    }
-                }
-            }
-        }
-
-        // Section: In-App Offset Transition Simulator
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("live_offset_simulator_card"),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
-            ),
-            elevation = CardDefaults.cardElevation(2.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = "Interactive Transition Simulator",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Simulate launcher swipe (${TransitionRegistry.get(appState.transitionType).displayName})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            text = "Offset: ${String.format("%.2f", testSliderOffset)}",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-
-                // Drag slider
-                Slider(
-                    value = testSliderOffset,
-                    onValueChange = { testSliderOffset = it },
-                    valueRange = 0.0f..1.0f,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("offset_simulator_slider")
-                )
-
-                // Quick jump chips
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    for (i in 0 until appState.calibration.pageCount) {
-                        val anchor = appState.calibration.customOffsets.getOrNull(i) ?: 0f
-                        SuggestionChip(
-                            onClick = { testSliderOffset = anchor },
-                            label = { Text("P${i + 1} (${String.format("%.2f", anchor)})", style = MaterialTheme.typography.labelSmall) }
-                        )
                     }
                 }
             }
