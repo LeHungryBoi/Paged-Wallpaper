@@ -144,3 +144,32 @@ jobs:
               });
               core.info(`Deleted old APK artifact: ${artifact.name}`);
             }
+
+      - name: Keep only the latest three workflow runs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runs = await github.paginate(
+              github.rest.actions.listWorkflowRuns,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "build.yml",
+                per_page: 100
+              },
+              (response) => response.data.workflow_runs
+            );
+            const newestRuns = runs.sort((a, b) =>
+              Date.parse(b.created_at) - Date.parse(a.created_at) ||
+              b.run_number - a.run_number ||
+              b.run_attempt - a.run_attempt
+            );
+
+            for (const run of newestRuns.slice(3).filter((run) => run.status === "completed")) {
+              await github.rest.actions.deleteWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id
+              });
+              core.info(`Deleted old workflow run #${run.run_number} (${run.html_url})`);
+            }
