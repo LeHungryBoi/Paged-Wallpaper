@@ -21,11 +21,14 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -39,6 +42,7 @@ import com.example.ui.WallpaperViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(viewModel: WallpaperViewModel) {
@@ -144,6 +148,14 @@ private fun DebugSettings(
             enabled = appState.motionBlurEnabled,
             onEnabledChange = viewModel::toggleMotionBlur
         )
+        OffsetEasingSetting(
+            enabled = appState.offsetEasingEnabled,
+            linearZonePercent = appState.offsetEasingLinearZonePercent,
+            strength = appState.offsetEasingStrength,
+            onEnabledChange = viewModel::toggleOffsetEasing,
+            onLinearZonePercentChange = viewModel::setOffsetEasingLinearZonePercent,
+            onStrengthChange = viewModel::setOffsetEasingStrength
+        )
         OffsetOverlaySetting(
             enabled = appState.showOffsetDebugOverlay,
             onEnabledChange = viewModel::toggleOffsetDebugOverlay
@@ -233,6 +245,88 @@ private fun DebugSettings(
                         RecordingHistoryItem(index, result)
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OffsetEasingSetting(
+    enabled: Boolean,
+    linearZonePercent: Int,
+    strength: Int,
+    onEnabledChange: (Boolean) -> Unit,
+    onLinearZonePercentChange: (Int) -> Unit,
+    onStrengthChange: (Int) -> Unit
+) {
+    val linearZoneSlider = remember(linearZonePercent) {
+        mutableFloatStateOf(linearZonePercent.toFloat())
+    }
+    val strengthSlider = remember(strength) {
+        mutableFloatStateOf(strength.toFloat())
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("offset_easing_setting"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Wallpaper offset easing",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Adjust the wallpaper's linear middle range and edge easing strength. Launcher icons are unaffected.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                    modifier = Modifier.testTag("toggle_offset_easing")
+                )
+            }
+            if (enabled) {
+                Text(
+                    text = "Middle linear zone: ${linearZoneSlider.floatValue.roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Slider(
+                    value = linearZoneSlider.floatValue,
+                    onValueChange = { linearZoneSlider.floatValue = it },
+                    onValueChangeFinished = {
+                        onLinearZonePercentChange(linearZoneSlider.floatValue.roundToInt())
+                    },
+                    valueRange = 0f..100f,
+                    modifier = Modifier.testTag("offset_easing_linear_zone")
+                )
+                Text(
+                    text = "Easing strength: ${strengthSlider.floatValue.roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Slider(
+                    value = strengthSlider.floatValue,
+                    onValueChange = { strengthSlider.floatValue = it },
+                    onValueChangeFinished = {
+                        onStrengthChange(strengthSlider.floatValue.roundToInt())
+                    },
+                    valueRange = 0f..100f,
+                    modifier = Modifier.testTag("offset_easing_strength")
+                )
             }
         }
     }

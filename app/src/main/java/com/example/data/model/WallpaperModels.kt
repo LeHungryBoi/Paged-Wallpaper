@@ -387,6 +387,9 @@ data class WallpaperAppState(
     val showOffsetDebugOverlay: Boolean = false,
     val showFrameDebugIndicator: Boolean = false,
     val motionBlurEnabled: Boolean = true,
+    val offsetEasingEnabled: Boolean = false,
+    val offsetEasingLinearZonePercent: Int = 60,
+    val offsetEasingStrength: Int = 50,
     val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
@@ -411,6 +414,9 @@ data class WallpaperAppState(
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
         put("showFrameDebugIndicator", showFrameDebugIndicator)
         put("motionBlurEnabled", motionBlurEnabled)
+        put("offsetEasingEnabled", offsetEasingEnabled)
+        put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
+        put("offsetEasingStrength", offsetEasingStrength)
         put("animationFrameRate", animationFrameRate)
         put("schemaVersion", 4)
         put("activePresetId", activePresetId)
@@ -481,6 +487,12 @@ data class WallpaperAppState(
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
                 motionBlurEnabled = json.optBoolean("motionBlurEnabled", true),
+                offsetEasingEnabled = json.optBoolean("offsetEasingEnabled", false),
+                offsetEasingLinearZonePercent = json.optInt(
+                    "offsetEasingLinearZonePercent",
+                    60
+                ).coerceIn(0, 100),
+                offsetEasingStrength = json.optInt("offsetEasingStrength", 50).coerceIn(0, 100),
                 animationFrameRate = animationFrameRate,
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,

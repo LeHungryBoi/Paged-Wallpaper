@@ -19,6 +19,7 @@ import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
+import com.example.render.OffsetEasing
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
@@ -271,6 +272,9 @@ class ExampleUnitTest {
             showOffsetDebugOverlay = true,
             showFrameDebugIndicator = true,
             motionBlurEnabled = false,
+            offsetEasingEnabled = true,
+            offsetEasingLinearZonePercent = 65,
+            offsetEasingStrength = 75,
             animationFrameRate = 144
         )
         val json = state.toJson()
@@ -283,11 +287,14 @@ class ExampleUnitTest {
         assertTrue(restored.showOffsetDebugOverlay)
         assertTrue(restored.showFrameDebugIndicator)
         assertFalse(restored.motionBlurEnabled)
+        assertTrue(restored.offsetEasingEnabled)
+        assertEquals(65, restored.offsetEasingLinearZonePercent)
+        assertEquals(75, restored.offsetEasingStrength)
         assertEquals(144, restored.animationFrameRate)
     }
 
     @Test
-    fun testWallpaperAppStateDefaultsResumeFadeOffForExistingConfigs() {
+    fun testWallpaperAppStateDefaultsForMissingSettings() {
         val restored = WallpaperAppState.fromJson(
             WallpaperAppState(
                 pages = emptyList(),
@@ -296,6 +303,9 @@ class ExampleUnitTest {
                 remove("resumeFadeEnabled")
                 remove("showFrameDebugIndicator")
                 remove("motionBlurEnabled")
+                remove("offsetEasingEnabled")
+                remove("offsetEasingLinearZonePercent")
+                remove("offsetEasingStrength")
                 remove("animationFrameRate")
             }
         )
@@ -304,42 +314,89 @@ class ExampleUnitTest {
         assertFalse(restored.showOffsetDebugOverlay)
         assertFalse(restored.showFrameDebugIndicator)
         assertTrue(restored.motionBlurEnabled)
+        assertFalse(restored.offsetEasingEnabled)
+        assertEquals(60, restored.offsetEasingLinearZonePercent)
+        assertEquals(50, restored.offsetEasingStrength)
         assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, restored.animationFrameRate)
 
         val invalidFrameRate = WallpaperAppState.fromJson(
             restored.toJson().put("animationFrameRate", 75)
         )
         assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, invalidFrameRate.animationFrameRate)
+
+        val clampedEasing = WallpaperAppState.fromJson(
+            restored.toJson()
+                .put("offsetEasingLinearZonePercent", -1)
+                .put("offsetEasingStrength", 101)
+        )
+        assertEquals(0, clampedEasing.offsetEasingLinearZonePercent)
+        assertEquals(100, clampedEasing.offsetEasingStrength)
     }
 
     @Test
-    fun testHorizontalMotionBlurSmearsPixelsAlongMotionDirection() {
+    fun testHorizontalMotionBlurSmearsPixelsOnOnlyOneSide() {
         val bitmap = Bitmap.createBitmap(5, 1, Bitmap.Config.ARGB_8888)
         val source = intArrayOf(
             Color.BLACK,
             Color.BLACK,
             Color.WHITE,
-            Color.WHITE,
-            Color.WHITE
+            Color.BLACK,
+            Color.BLACK
         )
         bitmap.setPixels(source, 0, 5, 0, 0, 5, 1)
 
-        HorizontalMotionBlur().apply(bitmap, radius = 1, motionDirection = 1)
+        HorizontalMotionBlur().apply(bitmap, radius = 1, smearDirection = 1)
         val movingRight = IntArray(5)
         bitmap.getPixels(movingRight, 0, 5, 0, 0, 5, 1)
 
-        assertEquals(0, Color.red(movingRight[1]))
         assertEquals(127, Color.red(movingRight[2]))
-        assertEquals(255, Color.red(movingRight[3]))
+        assertEquals(127, Color.red(movingRight[3]))
+        assertEquals(0, Color.red(movingRight[1]))
+        assertEquals(0, Color.red(movingRight[4]))
 
         bitmap.setPixels(source, 0, 5, 0, 0, 5, 1)
-        HorizontalMotionBlur().apply(bitmap, radius = 1, motionDirection = -1)
+        HorizontalMotionBlur().apply(bitmap, radius = 1, smearDirection = -1)
         val movingLeft = IntArray(5)
         bitmap.getPixels(movingLeft, 0, 5, 0, 0, 5, 1)
 
         assertEquals(127, Color.red(movingLeft[1]))
-        assertEquals(255, Color.red(movingLeft[2]))
+        assertEquals(127, Color.red(movingLeft[2]))
+        assertEquals(0, Color.red(movingLeft[0]))
+        assertEquals(0, Color.red(movingLeft[3]))
         bitmap.recycle()
+    }
+
+    @Test
+    fun testOffsetEasingKeepsCenterLinearAndSlowsSymmetricEdges() {
+        val start = OffsetEasing.map(0.1f, linearZonePercent = 60, strengthPercent = 100)
+        val end = OffsetEasing.map(0.9f, linearZonePercent = 60, strengthPercent = 100)
+
+        assertTrue(start > 0f)
+        assertTrue(start < 0.1f)
+        assertEquals(0.5f, OffsetEasing.map(0.5f, 60, 100), 0.0001f)
+        assertEquals(0.2f, OffsetEasing.map(0.2f, 60, 100), 0.0001f)
+        assertEquals(0.8f, OffsetEasing.map(0.8f, 60, 100), 0.0001f)
+        assertEquals(1f - start, end, 0.0001f)
+        assertEquals(0f, OffsetEasing.map(0f, 60, 100), 0f)
+        assertEquals(1f, OffsetEasing.map(1f, 60, 100), 0f)
+        assertEquals(0f, OffsetEasing.map(-0.1f, 60, 100), 0f)
+        assertEquals(1f, OffsetEasing.map(1.1f, 60, 100), 0f)
+
+        var previous = 0f
+        for (index in 0..100) {
+            val mapped = OffsetEasing.map(index / 100f, 60, 100)
+            assertTrue(mapped >= previous)
+            previous = mapped
+        }
+    }
+
+    @Test
+    fun testOffsetEasingCanResolveToLinearMapping() {
+        for (index in 0..10) {
+            val progress = index / 10f
+            assertEquals(progress, OffsetEasing.map(progress, 60, 0), 0.0001f)
+            assertEquals(progress, OffsetEasing.map(progress, 100, 100), 0.0001f)
+        }
     }
 
     @Test

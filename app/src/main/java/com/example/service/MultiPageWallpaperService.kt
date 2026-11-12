@@ -26,6 +26,7 @@ import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
+import com.example.render.OffsetEasing
 import com.example.transition.TransitionRegistry
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -507,7 +508,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val holder = surfaceHolder ?: return
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
-            val pagePosition = getPagePosition(renderedXOffset, state.calibration)
+            val pagePosition = getPagePosition(renderedXOffset, state)
             val pageDelta = if (
                 state.motionBlurEnabled &&
                 isVisible &&
@@ -524,12 +525,12 @@ class MultiPageWallpaperService : WallpaperService() {
                     surfaceWidth *
                     MOTION_BLUR_SHUTTER_FRACTION
                 ).toInt().coerceAtMost(surfaceWidth / 4)
-            val motionDirection = when {
-                pageDelta > 0f -> -1
-                pageDelta < 0f -> 1
+            val smearDirection = when {
+                pageDelta > 0f -> 1
+                pageDelta < 0f -> -1
                 else -> 0
             }
-            val shouldBlur = physicalBlurRadius > 0 && motionDirection != 0 &&
+            val shouldBlur = physicalBlurRadius > 0 && smearDirection != 0 &&
                 state.motionBlurEnabled && isVisible && resumeFadeProgress >= 1f
             var canvas: Canvas? = null
             var framePosted = false
@@ -553,7 +554,7 @@ class MultiPageWallpaperService : WallpaperService() {
                             canvas = canvas,
                             state = state,
                             physicalBlurRadius = physicalBlurRadius,
-                            motionDirection = motionDirection
+                            smearDirection = smearDirection
                         )
                     } else {
                         renderWallpaper(canvas, state)
@@ -589,7 +590,7 @@ class MultiPageWallpaperService : WallpaperService() {
             canvas: Canvas,
             state: WallpaperAppState,
             physicalBlurRadius: Int,
-            motionDirection: Int
+            smearDirection: Int
         ) {
             val bufferWidth = (surfaceWidth / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
             val bufferHeight = (surfaceHeight / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
@@ -611,7 +612,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val scaledRadius = ceil(
                 physicalBlurRadius.toFloat() * bufferWidth / surfaceWidth
             ).toInt().coerceAtLeast(1)
-            motionBlur.apply(bitmap, scaledRadius, motionDirection)
+            motionBlur.apply(bitmap, scaledRadius, smearDirection)
             motionBlurDestination.set(0, 0, surfaceWidth, surfaceHeight)
             canvas.drawBitmap(bitmap, null, motionBlurDestination, paint)
             drawDebugIndicators(canvas, state)
@@ -633,7 +634,8 @@ class MultiPageWallpaperService : WallpaperService() {
             lastMotionBlurFrameTimeNanos = 0L
         }
 
-        private fun getPagePosition(offset: Float, calibration: CalibrationConfig): Float {
+        private fun getPagePosition(offset: Float, state: WallpaperAppState): Float {
+            val calibration = state.calibration
             val pageCount = calibration.pageCount.coerceAtLeast(1)
             if (pageCount <= 1) return 0f
 
@@ -650,11 +652,22 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (offset <= end) {
                     val progress = ((offset - start) / (end - start).coerceAtLeast(0.0001f))
                         .coerceIn(0f, 1f)
-                    return index + progress
+                    return index + mapOffsetProgress(progress, state)
                 }
             }
             return (pageCount - 1).toFloat()
         }
+
+        private fun mapOffsetProgress(progress: Float, state: WallpaperAppState): Float =
+            if (state.offsetEasingEnabled) {
+                OffsetEasing.map(
+                    progress,
+                    state.offsetEasingLinearZonePercent,
+                    state.offsetEasingStrength
+                )
+            } else {
+                progress
+            }
 
         private fun renderWallpaper(
             canvas: Canvas,
@@ -668,7 +681,7 @@ class MultiPageWallpaperService : WallpaperService() {
             computePageTransition(renderedXOffset, calib)
             val pageA = transitionPageA
             val pageB = transitionPageB
-            val progress = transitionProgress
+            val progress = mapOffsetProgress(transitionProgress, state)
 
             val transitionSetting = state.transitions.getOrNull(pageA)
             val transitionId = transitionSetting?.transitionId(offsetDirection >= 0)

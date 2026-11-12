@@ -254,6 +254,22 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(motionBlurEnabled = enabled) }
     }
 
+    fun toggleOffsetEasing(enabled: Boolean) {
+        repository.updateState { it.copy(offsetEasingEnabled = enabled) }
+    }
+
+    fun setOffsetEasingLinearZonePercent(percent: Int) {
+        repository.updateState {
+            it.copy(offsetEasingLinearZonePercent = percent.coerceIn(0, 100))
+        }
+    }
+
+    fun setOffsetEasingStrength(strength: Int) {
+        repository.updateState {
+            it.copy(offsetEasingStrength = strength.coerceIn(0, 100))
+        }
+    }
+
     fun setAnimationFrameRate(frameRate: Int) {
         require(frameRate in WallpaperAppState.supportedAnimationFrameRates) {
             "Unsupported animation frame rate: $frameRate"

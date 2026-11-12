@@ -10,8 +10,8 @@ class HorizontalMotionBlur {
     private var greenPrefix = IntArray(0)
     private var bluePrefix = IntArray(0)
 
-    fun apply(bitmap: Bitmap, radius: Int, motionDirection: Int) {
-        if (radius <= 0 || motionDirection == 0) return
+    fun apply(bitmap: Bitmap, radius: Int, smearDirection: Int) {
+        if (radius <= 0 || smearDirection == 0) return
 
         val width = bitmap.width
         val height = bitmap.height
@@ -32,7 +32,7 @@ class HorizontalMotionBlur {
                 val prefixStart: Int
                 val prefixEndExclusive: Int
 
-                if (motionDirection > 0) {
+                if (smearDirection > 0) {
                     val wantedStart = x - radius
                     prefixStart = wantedStart.coerceAtLeast(0)
                     prefixEndExclusive = x + 1
