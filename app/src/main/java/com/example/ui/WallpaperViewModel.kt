@@ -246,6 +246,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(showOffsetDebugOverlay = enabled) }
     }
 
+    fun toggleFrameDebugIndicator(enabled: Boolean) {
+        repository.updateState { it.copy(showFrameDebugIndicator = enabled) }
+    }
+
     fun updateDarkenConfig(darkenConfig: DarkenConfig) {
         repository.updateState { it.copy(darken = darkenConfig) }
     }

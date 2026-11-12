@@ -385,6 +385,7 @@ data class WallpaperAppState(
     val backupFolderPath: String? = null,
     val autoBackupEnabled: Boolean = false,
     val showOffsetDebugOverlay: Boolean = false,
+    val showFrameDebugIndicator: Boolean = false,
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
     ),
@@ -406,6 +407,7 @@ data class WallpaperAppState(
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
+        put("showFrameDebugIndicator", showFrameDebugIndicator)
         put("schemaVersion", 4)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
@@ -466,6 +468,7 @@ data class WallpaperAppState(
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
+                showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
                 transitions = migratedTransitions,

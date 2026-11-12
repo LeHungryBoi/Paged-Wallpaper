@@ -267,7 +267,8 @@ class ExampleUnitTest {
             calibration = CalibrationConfig(pageCount = 3, homePageIndex = 1),
             transitionType = "cube",
             resumeFadeEnabled = true,
-            showOffsetDebugOverlay = true
+            showOffsetDebugOverlay = true,
+            showFrameDebugIndicator = true
         )
         val json = state.toJson()
         val restored = WallpaperAppState.fromJson(json)
@@ -277,6 +278,7 @@ class ExampleUnitTest {
         assertEquals("cube", restored.transitionType)
         assertTrue(restored.resumeFadeEnabled)
         assertTrue(restored.showOffsetDebugOverlay)
+        assertTrue(restored.showFrameDebugIndicator)
     }
 
     @Test
@@ -287,11 +289,13 @@ class ExampleUnitTest {
                 calibration = CalibrationConfig()
             ).toJson().apply {
                 remove("resumeFadeEnabled")
+                remove("showFrameDebugIndicator")
             }
         )
 
         assertFalse(restored.resumeFadeEnabled)
         assertFalse(restored.showOffsetDebugOverlay)
+        assertFalse(restored.showFrameDebugIndicator)
     }
 
     @Test

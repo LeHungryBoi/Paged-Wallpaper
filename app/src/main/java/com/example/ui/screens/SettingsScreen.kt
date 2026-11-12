@@ -95,6 +95,10 @@ private fun DebugSettings(
             enabled = appState.showOffsetDebugOverlay,
             onEnabledChange = viewModel::toggleOffsetDebugOverlay
         )
+        FrameSequenceIndicatorSetting(
+            enabled = appState.showFrameDebugIndicator,
+            onEnabledChange = viewModel::toggleFrameDebugIndicator
+        )
 
         Card(
             modifier = Modifier.fillMaxWidth().testTag("wallpaper_diagnostics_card"),
@@ -211,6 +215,41 @@ private fun OffsetOverlaySetting(
                 checked = enabled,
                 onCheckedChange = onEnabledChange,
                 modifier = Modifier.testTag("toggle_offset_debug_overlay")
+            )
+        }
+    }
+}
+
+@Composable
+private fun FrameSequenceIndicatorSetting(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("frame_debug_indicator_card"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Show frame sequence indicator",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Draw a small block that cycles red, green, blue, yellow after each successfully submitted visible frame. A skipped color in a recording can mean a frame was not captured or presented.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.testTag("toggle_frame_debug_indicator")
             )
         }
     }

@@ -31,6 +31,12 @@ class MultiPageWallpaperService : WallpaperService() {
         private val repository by lazy { WallpaperRepository.getInstance(applicationContext) }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val dimPaint = Paint()
+        private val frameDebugColors = intArrayOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
+        private val frameDebugPaint = Paint()
+        private val frameDebugBorderPaint = Paint().apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+        }
         private val offsetOverlayBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.argb(220, 22, 28, 40)
         }
@@ -59,6 +65,9 @@ class MultiPageWallpaperService : WallpaperService() {
         private var transitionPageA = 0
         private var transitionPageB = 0
         private var transitionProgress = 0f
+        private var frameDebugSequenceIndex = 0
+        private var frameDebugIndicatorEnabled = false
+        private var frameDebugIndicatorDrawnForFrame = false
         private val offsetOverlayBounds = RectF()
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
@@ -327,6 +336,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val holder = surfaceHolder ?: return
             var canvas: android.graphics.Canvas? = null
             var framePosted = false
+            frameDebugIndicatorDrawnForFrame = false
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
@@ -357,6 +367,10 @@ class MultiPageWallpaperService : WallpaperService() {
                     }
                 }
                 if (framePosted) {
+                    if (frameDebugIndicatorDrawnForFrame) {
+                        frameDebugSequenceIndex =
+                            (frameDebugSequenceIndex + 1) % frameDebugColors.size
+                    }
                     WallpaperDiagnosticsRecorder.recordFrameSubmitted(
                         fromOffsetUpdate = fromOffsetUpdate,
                         isVisible = isVisible
@@ -470,6 +484,36 @@ class MultiPageWallpaperService : WallpaperService() {
             if (state.showOffsetDebugOverlay) {
                 drawOffsetDebugOverlay(canvas)
             }
+
+            if (state.showFrameDebugIndicator) {
+                if (!frameDebugIndicatorEnabled) {
+                    frameDebugSequenceIndex = 0
+                }
+                if (isVisible) {
+                    drawFrameSequenceIndicator(canvas, frameDebugSequenceIndex)
+                    frameDebugIndicatorDrawnForFrame = true
+                }
+            }
+            frameDebugIndicatorEnabled = state.showFrameDebugIndicator
+        }
+
+        private fun drawFrameSequenceIndicator(canvas: android.graphics.Canvas, sequenceIndex: Int) {
+            val density = resources.displayMetrics.density
+            val size = 28f * density
+            val margin = 20f * density
+            val left = surfaceWidth - size - margin
+            val top = margin
+            val borderWidth = 2f * density
+            frameDebugBorderPaint.strokeWidth = borderWidth
+            canvas.drawRect(left, top, left + size, top + size, frameDebugBorderPaint)
+            frameDebugPaint.color = frameDebugColors[sequenceIndex]
+            canvas.drawRect(
+                left + borderWidth,
+                top + borderWidth,
+                left + size - borderWidth,
+                top + size - borderWidth,
+                frameDebugPaint
+            )
         }
 
         private fun drawOffsetDebugOverlay(canvas: android.graphics.Canvas) {
