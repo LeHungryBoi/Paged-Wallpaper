@@ -55,6 +55,10 @@ class MultiPageWallpaperService : WallpaperService() {
         private var currentYOffset = 0.0f
         private var receivedXOffset: Float? = null
         private var receivedYOffset: Float? = null
+        private var transitionPageA = 0
+        private var transitionPageB = 0
+        private var transitionProgress = 0f
+        private val offsetOverlayBounds = RectF()
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
         private var awaitingResumeOffset = false
@@ -355,7 +359,10 @@ class MultiPageWallpaperService : WallpaperService() {
             val pageCount = calib.pageCount.coerceAtLeast(1)
 
             // Calculate page indices and transition progress based on calibrated anchors
-            val (pageA, pageB, progress) = computePageTransition(currentXOffset, calib)
+            computePageTransition(currentXOffset, calib)
+            val pageA = transitionPageA
+            val pageB = transitionPageB
+            val progress = transitionProgress
 
             val transitionSetting = state.transitions.getOrNull(pageA)
             val transitionId = transitionSetting?.transitionId(offsetDirection >= 0)
@@ -459,12 +466,17 @@ class MultiPageWallpaperService : WallpaperService() {
             val cardHeight = 82f * density
             val left = (surfaceWidth - cardWidth) / 2f
             val top = 20f * density
-            val bounds = RectF(left, top, left + cardWidth, top + cardHeight)
+            offsetOverlayBounds.set(left, top, left + cardWidth, top + cardHeight)
 
             offsetOverlayLabelPaint.textSize = 11f * density
             offsetOverlayLabelPaint.textAlign = Paint.Align.CENTER
             offsetOverlayTrackPaint.strokeWidth = 3f * density
-            canvas.drawRoundRect(bounds, 12f * density, 12f * density, offsetOverlayBackgroundPaint)
+            canvas.drawRoundRect(
+                offsetOverlayBounds,
+                12f * density,
+                12f * density,
+                offsetOverlayBackgroundPaint
+            )
             canvas.drawText(
                 "Launcher offset received",
                 surfaceWidth / 2f,
@@ -508,10 +520,11 @@ class MultiPageWallpaperService : WallpaperService() {
         private fun computePageTransition(
             xOffset: Float,
             calib: com.example.data.model.CalibrationConfig
-        ): Triple<Int, Int, Float> {
+        ) {
             val count = calib.pageCount
             if (count <= 1) {
-                return Triple(0, 0, 0f)
+                setPageTransition(0, 0, 0f)
+                return
             }
 
             val anchors = calib.customOffsets
@@ -520,15 +533,18 @@ class MultiPageWallpaperService : WallpaperService() {
                 val step = 1.0f / (count - 1).toFloat()
                 val pageIndex = (xOffset / step).toInt().coerceIn(0, count - 2)
                 val p = ((xOffset - pageIndex * step) / step).coerceIn(0f, 1f)
-                return Triple(pageIndex, pageIndex + 1, p)
+                setPageTransition(pageIndex, pageIndex + 1, p)
+                return
             }
 
             // Find segment
             if (xOffset <= anchors.first()) {
-                return Triple(0, 0, 0f)
+                setPageTransition(0, 0, 0f)
+                return
             }
             if (xOffset >= anchors.last()) {
-                return Triple(count - 1, count - 1, 0f)
+                setPageTransition(count - 1, count - 1, 0f)
+                return
             }
 
             for (i in 0 until count - 1) {
@@ -537,11 +553,18 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (xOffset in a0..a1) {
                     val span = (a1 - a0).coerceAtLeast(0.0001f)
                     val progress = ((xOffset - a0) / span).coerceIn(0f, 1f)
-                    return Triple(i, i + 1, progress)
+                    setPageTransition(i, i + 1, progress)
+                    return
                 }
             }
 
-            return Triple(0, 0, 0f)
+            setPageTransition(0, 0, 0f)
+        }
+
+        private fun setPageTransition(pageA: Int, pageB: Int, progress: Float) {
+            transitionPageA = pageA
+            transitionPageB = pageB
+            transitionProgress = progress
         }
     }
 }

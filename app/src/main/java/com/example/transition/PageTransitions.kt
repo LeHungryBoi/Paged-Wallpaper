@@ -51,6 +51,8 @@ class ClassicScrollTransition : PageTransitionRenderer {
     override val id: String = "scroll"
     override val displayName: String = "Classic Scroll"
     override val description: String = "Standard horizontal parallax sliding between screens"
+    private val dstRectA = Rect()
+    private val dstRectB = Rect()
 
     override fun draw(
         canvas: Canvas,
@@ -62,8 +64,6 @@ class ClassicScrollTransition : PageTransitionRenderer {
         paint: Paint
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val dstRectA = Rect()
-        val dstRectB = Rect()
 
         // Page A moves from 0 to -screenWidth
         if (pageABitmap != null && p < 1f) {
@@ -89,6 +89,9 @@ class ClassicScrollTransition : PageTransitionRenderer {
 open class ParallaxScrollTransition(
     private val useClassicIncomingTravel: Boolean = false
 ) : PageTransitionRenderer {
+    private val destination = Rect()
+    private val source = Rect()
+
     override val supportsParallax: Boolean = true
     override val id: String = if (useClassicIncomingTravel) "parallax_classic" else "parallax"
     override val displayName: String =
@@ -140,8 +143,6 @@ open class ParallaxScrollTransition(
         pageBSlowImageSpeed: Float?
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val destination = Rect()
-        val source = Rect()
 
         fun drawPage(
             bitmap: Bitmap?,
@@ -205,6 +206,7 @@ class CrossFadeTransition : PageTransitionRenderer {
     override val id: String = "fade"
     override val displayName: String = "Cross Fade"
     override val description: String = "Subtle dissolve blending between pages without motion jerk"
+    private val fullRect = Rect()
 
     override fun draw(
         canvas: Canvas,
@@ -216,7 +218,7 @@ class CrossFadeTransition : PageTransitionRenderer {
         paint: Paint
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        fullRect.set(0, 0, screenWidth, screenHeight)
         val originalAlpha = paint.alpha
 
         if (pageABitmap != null) {
@@ -242,6 +244,7 @@ class SoftBlurTransition : PageTransitionRenderer {
     private var blurredA: Bitmap? = null
     private var sourceB: Bitmap? = null
     private var blurredB: Bitmap? = null
+    private val fullRect = Rect()
 
     override fun draw(
         canvas: Canvas,
@@ -254,7 +257,7 @@ class SoftBlurTransition : PageTransitionRenderer {
     ) {
         val p = progress.coerceIn(0f, 1f)
         val eased = p * p * (3f - 2f * p)
-        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        fullRect.set(0, 0, screenWidth, screenHeight)
         val originalAlpha = paint.alpha
         canvas.drawColor(Color.rgb(18, 22, 34))
 
@@ -313,6 +316,7 @@ class DepthZoomTransition : PageTransitionRenderer {
     override val id: String = "depth"
     override val displayName: String = "Depth & Scale"
     override val description: String = "Current page scales out into the background while next page scales in"
+    private val fullRect = Rect()
 
     override fun draw(
         canvas: Canvas,
@@ -324,7 +328,7 @@ class DepthZoomTransition : PageTransitionRenderer {
         paint: Paint
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        fullRect.set(0, 0, screenWidth, screenHeight)
         val originalAlpha = paint.alpha
 
         // Page A zooms out and fades
@@ -360,6 +364,11 @@ class SlideOverTransition : PageTransitionRenderer {
     override val id: String = "slide_over"
     override val displayName: String = "Slide Over & Shadow"
     override val description: String = "Incoming page slides directly over the base page with depth shadow"
+    private val fullRect = Rect()
+    private val dstRectB = Rect()
+    private val shadowStripe = Rect()
+    private val shadowPaint = Paint().apply { color = Color.BLACK }
+    private val edgeShadowPaint = Paint().apply { color = Color.argb(120, 0, 0, 0) }
 
     override fun draw(
         canvas: Canvas,
@@ -371,17 +380,13 @@ class SlideOverTransition : PageTransitionRenderer {
         paint: Paint
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        fullRect.set(0, 0, screenWidth, screenHeight)
 
         // Page A stays stationary underneath with a gentle darken as B covers it
         if (pageABitmap != null) {
             canvas.drawBitmap(pageABitmap, null, fullRect, paint)
             if (p > 0f) {
-                val shadowAlpha = (p * 110).toInt().coerceIn(0, 255)
-                val shadowPaint = Paint().apply {
-                    color = Color.BLACK
-                    alpha = shadowAlpha
-                }
+                shadowPaint.alpha = (p * 110).toInt().coerceIn(0, 255)
                 canvas.drawRect(0f, 0f, screenWidth.toFloat(), screenHeight.toFloat(), shadowPaint)
             }
         }
@@ -389,16 +394,18 @@ class SlideOverTransition : PageTransitionRenderer {
         // Page B slides in from right
         if (pageBBitmap != null && p > 0f) {
             val leftB = ((1f - p) * screenWidth).toInt()
-            val dstB = Rect(leftB, 0, leftB + screenWidth, screenHeight)
-            canvas.drawBitmap(pageBBitmap, null, dstB, paint)
+            dstRectB.set(leftB, 0, leftB + screenWidth, screenHeight)
+            canvas.drawBitmap(pageBBitmap, null, dstRectB, paint)
 
             // Draw a vertical soft shadow stripe to the left edge of incoming Page B
             if (leftB > 0) {
                 val stripeWidth = (screenWidth * 0.05f).toInt()
-                val shadowStripe = Rect((leftB - stripeWidth).coerceAtLeast(0), 0, leftB, screenHeight)
-                val edgeShadowPaint = Paint().apply {
-                    color = Color.argb(120, 0, 0, 0)
-                }
+                shadowStripe.set(
+                    (leftB - stripeWidth).coerceAtLeast(0),
+                    0,
+                    leftB,
+                    screenHeight
+                )
                 canvas.drawRect(shadowStripe, edgeShadowPaint)
             }
         }
@@ -415,6 +422,7 @@ class CubeTransition : PageTransitionRenderer {
 
     private val camera = Camera()
     private val matrix = Matrix()
+    private val fullRect = Rect()
 
     override fun draw(
         canvas: Canvas,
@@ -426,7 +434,7 @@ class CubeTransition : PageTransitionRenderer {
         paint: Paint
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val fullRect = Rect(0, 0, screenWidth, screenHeight)
+        fullRect.set(0, 0, screenWidth, screenHeight)
 
         // Page A rotates out: 0 deg to -90 deg around right pivot
         if (pageABitmap != null && p < 1f) {
