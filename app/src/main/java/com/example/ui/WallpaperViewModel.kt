@@ -254,6 +254,17 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(motionBlurEnabled = enabled) }
     }
 
+    fun setMotionBlurStrengthPercent(percent: Int) {
+        repository.updateState {
+            it.copy(
+                motionBlurStrengthPercent = percent.coerceIn(
+                    0,
+                    WallpaperAppState.MAX_MOTION_BLUR_STRENGTH_PERCENT
+                )
+            )
+        }
+    }
+
     fun toggleOffsetEasing(enabled: Boolean) {
         repository.updateState { it.copy(offsetEasingEnabled = enabled) }
     }

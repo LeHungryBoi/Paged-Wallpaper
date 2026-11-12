@@ -272,6 +272,7 @@ class ExampleUnitTest {
             showOffsetDebugOverlay = true,
             showFrameDebugIndicator = true,
             motionBlurEnabled = false,
+            motionBlurStrengthPercent = 150,
             offsetEasingEnabled = true,
             offsetEasingLinearZonePercent = 65,
             offsetEasingStrength = 75,
@@ -287,6 +288,7 @@ class ExampleUnitTest {
         assertTrue(restored.showOffsetDebugOverlay)
         assertTrue(restored.showFrameDebugIndicator)
         assertFalse(restored.motionBlurEnabled)
+        assertEquals(150, restored.motionBlurStrengthPercent)
         assertTrue(restored.offsetEasingEnabled)
         assertEquals(65, restored.offsetEasingLinearZonePercent)
         assertEquals(75, restored.offsetEasingStrength)
@@ -303,6 +305,7 @@ class ExampleUnitTest {
                 remove("resumeFadeEnabled")
                 remove("showFrameDebugIndicator")
                 remove("motionBlurEnabled")
+                remove("motionBlurStrengthPercent")
                 remove("offsetEasingEnabled")
                 remove("offsetEasingLinearZonePercent")
                 remove("offsetEasingStrength")
@@ -314,6 +317,10 @@ class ExampleUnitTest {
         assertFalse(restored.showOffsetDebugOverlay)
         assertFalse(restored.showFrameDebugIndicator)
         assertTrue(restored.motionBlurEnabled)
+        assertEquals(
+            WallpaperAppState.DEFAULT_MOTION_BLUR_STRENGTH_PERCENT,
+            restored.motionBlurStrengthPercent
+        )
         assertFalse(restored.offsetEasingEnabled)
         assertEquals(60, restored.offsetEasingLinearZonePercent)
         assertEquals(50, restored.offsetEasingStrength)
@@ -326,8 +333,13 @@ class ExampleUnitTest {
 
         val clampedEasing = WallpaperAppState.fromJson(
             restored.toJson()
+                .put("motionBlurStrengthPercent", 250)
                 .put("offsetEasingLinearZonePercent", -1)
                 .put("offsetEasingStrength", 101)
+        )
+        assertEquals(
+            WallpaperAppState.MAX_MOTION_BLUR_STRENGTH_PERCENT,
+            clampedEasing.motionBlurStrengthPercent
         )
         assertEquals(0, clampedEasing.offsetEasingLinearZonePercent)
         assertEquals(100, clampedEasing.offsetEasingStrength)

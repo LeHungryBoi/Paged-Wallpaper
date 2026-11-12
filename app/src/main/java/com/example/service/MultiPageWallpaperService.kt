@@ -523,7 +523,11 @@ class MultiPageWallpaperService : WallpaperService() {
             val physicalBlurRadius = (
                 abs(pageDelta) *
                     surfaceWidth *
-                    MOTION_BLUR_SHUTTER_FRACTION
+                    MOTION_BLUR_SHUTTER_FRACTION *
+                    state.motionBlurStrengthPercent.coerceIn(
+                        0,
+                        WallpaperAppState.MAX_MOTION_BLUR_STRENGTH_PERCENT
+                    ) / 100f
                 ).toInt().coerceAtMost(surfaceWidth / 4)
             val smearDirection = when {
                 pageDelta > 0f -> 1

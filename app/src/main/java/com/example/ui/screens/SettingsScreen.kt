@@ -146,7 +146,9 @@ private fun DebugSettings(
         )
         MotionBlurSetting(
             enabled = appState.motionBlurEnabled,
-            onEnabledChange = viewModel::toggleMotionBlur
+            strengthPercent = appState.motionBlurStrengthPercent,
+            onEnabledChange = viewModel::toggleMotionBlur,
+            onStrengthChange = viewModel::setMotionBlurStrengthPercent
         )
         OffsetEasingSetting(
             enabled = appState.offsetEasingEnabled,
@@ -335,33 +337,60 @@ private fun OffsetEasingSetting(
 @Composable
 private fun MotionBlurSetting(
     enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
+    strengthPercent: Int,
+    onEnabledChange: (Boolean) -> Unit,
+    onStrengthChange: (Int) -> Unit
 ) {
+    val strengthSlider = remember(strengthPercent) {
+        mutableFloatStateOf(strengthPercent.toFloat())
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().testTag("motion_blur_setting"),
         shape = RoundedCornerShape(20.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Motion blur",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Smear the wallpaper in the direction of scrolling. Blur length adapts to movement and only runs while the wallpaper is moving.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Motion blur",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Smear the wallpaper in the direction of scrolling. Blur only runs while the wallpaper is moving.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                    modifier = Modifier.testTag("toggle_motion_blur")
                 )
             }
-            Switch(
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                modifier = Modifier.testTag("toggle_motion_blur")
+            Text(
+                text = "Strength: ${strengthSlider.floatValue.roundToInt()}%",
+                style = MaterialTheme.typography.labelMedium
+            )
+            Slider(
+                value = strengthSlider.floatValue,
+                onValueChange = { strengthSlider.floatValue = it },
+                onValueChangeFinished = {
+                    onStrengthChange(strengthSlider.floatValue.roundToInt())
+                },
+                valueRange = 0f..WallpaperAppState.MAX_MOTION_BLUR_STRENGTH_PERCENT.toFloat(),
+                modifier = Modifier.testTag("motion_blur_strength")
             )
         }
     }

@@ -387,6 +387,7 @@ data class WallpaperAppState(
     val showOffsetDebugOverlay: Boolean = false,
     val showFrameDebugIndicator: Boolean = false,
     val motionBlurEnabled: Boolean = true,
+    val motionBlurStrengthPercent: Int = DEFAULT_MOTION_BLUR_STRENGTH_PERCENT,
     val offsetEasingEnabled: Boolean = false,
     val offsetEasingLinearZonePercent: Int = 60,
     val offsetEasingStrength: Int = 50,
@@ -414,6 +415,7 @@ data class WallpaperAppState(
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
         put("showFrameDebugIndicator", showFrameDebugIndicator)
         put("motionBlurEnabled", motionBlurEnabled)
+        put("motionBlurStrengthPercent", motionBlurStrengthPercent)
         put("offsetEasingEnabled", offsetEasingEnabled)
         put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
         put("offsetEasingStrength", offsetEasingStrength)
@@ -427,6 +429,8 @@ data class WallpaperAppState(
 
     companion object {
         const val DEFAULT_ANIMATION_FRAME_RATE = 60
+        const val DEFAULT_MOTION_BLUR_STRENGTH_PERCENT = 100
+        const val MAX_MOTION_BLUR_STRENGTH_PERCENT = 200
         val supportedAnimationFrameRates = listOf(60, 90, 120, 144, 165)
 
         fun fromJson(json: JSONObject): WallpaperAppState {
@@ -487,6 +491,10 @@ data class WallpaperAppState(
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
                 motionBlurEnabled = json.optBoolean("motionBlurEnabled", true),
+                motionBlurStrengthPercent = json.optInt(
+                    "motionBlurStrengthPercent",
+                    DEFAULT_MOTION_BLUR_STRENGTH_PERCENT
+                ).coerceIn(0, MAX_MOTION_BLUR_STRENGTH_PERCENT),
                 offsetEasingEnabled = json.optBoolean("offsetEasingEnabled", false),
                 offsetEasingLinearZonePercent = json.optInt(
                     "offsetEasingLinearZonePercent",
