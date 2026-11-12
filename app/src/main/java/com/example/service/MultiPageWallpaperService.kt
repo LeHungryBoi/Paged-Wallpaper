@@ -361,22 +361,28 @@ class MultiPageWallpaperService : WallpaperService() {
             val transitionId = transitionSetting?.transitionId(offsetDirection >= 0)
                 ?: state.transitionType
             val renderer = TransitionRegistry.get(transitionId)
-            val pageAParallax = if (renderer.id == "parallax") {
+            val usesParallax = renderer.supportsParallax
+            val slowImageSpeed = transitionSetting
+                ?.parallaxMotion(offsetDirection >= 0)
+                ?.takeIf { it.slowImageMotionEnabled }
+                ?.imageSpeed
+                ?.coerceIn(0f, 1f)
+            val pageAParallax = if (usesParallax) {
                 repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
             } else {
                 null
             }
-            val pageBParallax = if (renderer.id == "parallax" && pageA != pageB) {
+            val pageBParallax = if (usesParallax && pageA != pageB) {
                 repository.getParallaxBitmap(pageB, surfaceWidth, surfaceHeight)
             } else {
                 null
             }
             val pageABitmap = pageAParallax?.bitmap
-                ?: if (renderer.id == "parallax") null
+                ?: if (usesParallax) null
                 else repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
             val pageBBitmap = if (pageA != pageB) {
                 pageBParallax?.bitmap
-                    ?: if (renderer.id == "parallax") null
+                    ?: if (usesParallax) null
                     else repository.getCroppedBitmap(pageB, surfaceWidth, surfaceHeight)
             } else {
                 null
@@ -384,7 +390,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
             // Draw transition
             canvas.drawColor(android.graphics.Color.rgb(18, 22, 34))
-            if (renderer.id == "parallax") {
+            if (usesParallax) {
                 renderer.drawWithParallax(
                     canvas = canvas,
                     pageABitmap = pageABitmap,
@@ -397,8 +403,8 @@ class MultiPageWallpaperService : WallpaperService() {
                     pageARightTravelPx = pageAParallax?.rightTravelPx ?: 0,
                     pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
                     pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
-                    pageASlowImageSpeed = pageAParallax?.slowImageSpeed,
-                    pageBSlowImageSpeed = pageBParallax?.slowImageSpeed
+                    pageASlowImageSpeed = slowImageSpeed,
+                    pageBSlowImageSpeed = slowImageSpeed
                 )
             } else {
                 renderer.draw(

@@ -10,7 +10,7 @@ import java.util.UUID
 
 object PresetDataMigration {
     const val LEGACY_PRESET_SCHEMA_VERSION = 2
-    const val CURRENT_SCHEMA_VERSION = 3
+    const val CURRENT_SCHEMA_VERSION = 4
 
     fun migrateLegacy(
         state: WallpaperAppState,

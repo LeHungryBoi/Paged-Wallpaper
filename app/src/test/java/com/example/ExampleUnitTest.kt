@@ -13,10 +13,12 @@ import com.example.data.model.DarkenTrigger
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
+import com.example.data.model.ParallaxMotionSettings
 import com.example.data.model.WallpaperAppState
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
+import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
 import com.example.transition.ClassicParallaxScrollTransition
@@ -98,20 +100,15 @@ class ExampleUnitTest {
             pageIndex = 0,
             originalId = "media",
             cropFillMode = CropFillMode.CROP,
-            parallaxAmount = 0.7f,
-            slowParallax = true,
-            parallaxImageSpeed = 0.35f
+            parallaxAmount = 0.7f
         )
         val restored = PageItem.fromJson(page.toJson())
         assertEquals(CropFillMode.CROP, restored.cropFillMode)
         assertEquals(0.7f, restored.parallaxAmount, 0.001f)
-        assertTrue(restored.slowParallax)
-        assertEquals(0.35f, restored.parallaxImageSpeed, 0.001f)
 
         val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
         assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
         assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
-        assertFalse(legacyPage.slowParallax)
     }
 
     @Test
@@ -202,7 +199,7 @@ class ExampleUnitTest {
             pageALeftTravelPx = 0,
             pageARightTravelPx = 0
         )
-        assertEquals(75, Color.red(output.getPixel(50, 0)))
+        assertEquals(25, Color.red(output.getPixel(50, 0)))
 
         val slowSource = Bitmap.createBitmap(240, 1, Bitmap.Config.ARGB_8888)
         val slowColumns = IntArray(240) { Color.rgb(it, 0, 0) }
@@ -358,7 +355,9 @@ class ExampleUnitTest {
                     universalTransitionId = "cube",
                     leftTransitionId = "fade",
                     rightTransitionId = "parallax",
-                    separateDirections = true
+                    separateDirections = true,
+                    leftParallaxMotion = ParallaxMotionSettings(true, 0.3f),
+                    rightParallaxMotion = ParallaxMotionSettings(true, 0.7f)
                 )
             )
         )
@@ -368,12 +367,70 @@ class ExampleUnitTest {
         assertEquals(0.3f, restored.pages[1].cropPanX, 0.001f)
         assertEquals("parallax", restored.transitions[0].transitionId(forward = true))
         assertEquals("fade", restored.transitions[0].transitionId(forward = false))
+        assertTrue(restored.transitions[0].parallaxMotion(forward = true).slowImageMotionEnabled)
+        assertTrue(restored.transitions[0].parallaxMotion(forward = false).slowImageMotionEnabled)
+        assertEquals(
+            0.7f,
+            restored.transitions[0].parallaxMotion(forward = true).imageSpeed,
+            0.001f
+        )
+        assertEquals(
+            0.3f,
+            restored.transitions[0].parallaxMotion(forward = false).imageSpeed,
+            0.001f
+        )
         assertEquals("cube", restored.transitions[0].universalTransitionId)
         assertEquals("fade", restored.toJson().getJSONArray("transitions")
             .getJSONObject(0).getString("leftTransitionId"))
         val universalSetting = restored.transitions[0].copy(separateDirections = false)
         assertEquals("cube", universalSetting.transitionId(forward = true))
         assertEquals("cube", universalSetting.transitionId(forward = false))
+    }
+
+    @Test
+    fun testLegacyPageSlowParallaxSettingsMoveToTransitionSettings() {
+        val legacyPages = JSONArray()
+            .put(JSONObject().put("pageIndex", 0))
+            .put(
+                JSONObject()
+                    .put("pageIndex", 1)
+                    .put("slowParallax", true)
+                    .put("parallaxImageSpeed", 0.35)
+            )
+            .put(JSONObject().put("pageIndex", 2))
+        val legacyTransitions = JSONArray()
+            .put(JSONObject().put("universalTransitionId", "parallax"))
+            .put(JSONObject().put("universalTransitionId", "parallax"))
+        val legacyState = JSONObject()
+            .put("schemaVersion", 3)
+            .put("transitionType", "parallax")
+            .put("calibration", CalibrationConfig(pageCount = 3).toJson())
+            .put("pages", legacyPages)
+            .put("transitions", legacyTransitions)
+            .put(
+                "presets",
+                JSONArray().put(
+                    JSONObject()
+                        .put("id", "default")
+                        .put("name", "Default")
+                        .put("pages", legacyPages)
+                        .put("transitions", legacyTransitions)
+                )
+            )
+        val migrated = WallpaperAppState.fromJson(legacyState)
+
+        assertTrue(migrated.transitions[0].universalParallaxMotion.slowImageMotionEnabled)
+        assertEquals(
+            0.35f,
+            migrated.transitions[0].universalParallaxMotion.imageSpeed,
+            0.001f
+        )
+        assertTrue(migrated.transitions[1].universalParallaxMotion.slowImageMotionEnabled)
+        assertTrue(
+            migrated.presets.single().transitions[0]
+                .universalParallaxMotion.slowImageMotionEnabled
+        )
+        assertFalse(migrated.toJson().getJSONArray("pages").getJSONObject(1).has("slowParallax"))
     }
 
     @Test
@@ -393,7 +450,7 @@ class ExampleUnitTest {
             )
         )
 
-        assertEquals(3, migrated.schemaVersion)
+        assertEquals(4, migrated.schemaVersion)
         assertEquals("parallax", migrated.transitions.single().universalTransitionId)
         assertEquals("parallax", migrated.transitions.single().rightTransitionId)
         assertEquals("fade", migrated.transitions.single().leftTransitionId)

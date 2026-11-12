@@ -48,6 +48,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -72,10 +73,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.PageTransitionSetting
+import com.example.data.model.ParallaxMotionSettings
 import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 private enum class PresetAction {
     DUPLICATE,
@@ -157,6 +160,54 @@ private fun TransitionSelector(
 }
 
 @Composable
+private fun ParallaxMotionControls(
+    boundaryIndex: Int,
+    itemName: String,
+    settings: ParallaxMotionSettings,
+    onUpdate: (ParallaxMotionSettings) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Slow image motion",
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.weight(1f)
+            )
+            Switch(
+                checked = settings.slowImageMotionEnabled,
+                onCheckedChange = {
+                    onUpdate(settings.copy(slowImageMotionEnabled = it))
+                },
+                modifier = Modifier.testTag("slow_image_motion_${boundaryIndex}_$itemName")
+            )
+        }
+        if (settings.slowImageMotionEnabled) {
+            Text(
+                "Image speed: ${(settings.imageSpeed * 100).roundToInt()}% of page speed",
+                style = MaterialTheme.typography.labelSmall
+            )
+            Slider(
+                value = settings.imageSpeed,
+                onValueChange = { onUpdate(settings.copy(imageSpeed = it)) },
+                valueRange = 0f..1f,
+                modifier = Modifier.testTag("parallax_image_speed_${boundaryIndex}_$itemName")
+            )
+            Text(
+                "Limited by available image reach.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun PageTransitionControls(
     boundaryIndex: Int,
     setting: PageTransitionSetting,
@@ -192,7 +243,21 @@ private fun PageTransitionControls(
                 )
                 Switch(
                     checked = setting.separateDirections,
-                    onCheckedChange = { onUpdate(setting.copy(separateDirections = it)) },
+                    onCheckedChange = { separateDirections ->
+                        onUpdate(
+                            if (separateDirections) {
+                                setting.copy(
+                                    separateDirections = true,
+                                    leftTransitionId = setting.universalTransitionId,
+                                    rightTransitionId = setting.universalTransitionId,
+                                    leftParallaxMotion = setting.universalParallaxMotion,
+                                    rightParallaxMotion = setting.universalParallaxMotion
+                                )
+                            } else {
+                                setting.copy(separateDirections = false)
+                            }
+                        )
+                    },
                     modifier = Modifier.testTag("separate_transition_directions_$boundaryIndex")
                 )
             }
@@ -206,6 +271,14 @@ private fun PageTransitionControls(
                     icon = Icons.AutoMirrored.Filled.ArrowForward,
                     onSelect = { onUpdate(setting.copy(rightTransitionId = it)) }
                 )
+                if (TransitionRegistry.get(setting.rightTransitionId).supportsParallax) {
+                    ParallaxMotionControls(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "right",
+                        settings = setting.rightParallaxMotion,
+                        onUpdate = { onUpdate(setting.copy(rightParallaxMotion = it)) }
+                    )
+                }
                 TransitionSelector(
                     boundaryIndex = boundaryIndex,
                     itemName = "left",
@@ -214,6 +287,14 @@ private fun PageTransitionControls(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     onSelect = { onUpdate(setting.copy(leftTransitionId = it)) }
                 )
+                if (TransitionRegistry.get(setting.leftTransitionId).supportsParallax) {
+                    ParallaxMotionControls(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "left",
+                        settings = setting.leftParallaxMotion,
+                        onUpdate = { onUpdate(setting.copy(leftParallaxMotion = it)) }
+                    )
+                }
             } else {
                 TransitionSelector(
                     boundaryIndex = boundaryIndex,
@@ -223,6 +304,14 @@ private fun PageTransitionControls(
                     icon = Icons.Default.SwapHoriz,
                     onSelect = { onUpdate(setting.copy(universalTransitionId = it)) }
                 )
+                if (TransitionRegistry.get(setting.universalTransitionId).supportsParallax) {
+                    ParallaxMotionControls(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "universal",
+                        settings = setting.universalParallaxMotion,
+                        onUpdate = { onUpdate(setting.copy(universalParallaxMotion = it)) }
+                    )
+                }
             }
         }
     }

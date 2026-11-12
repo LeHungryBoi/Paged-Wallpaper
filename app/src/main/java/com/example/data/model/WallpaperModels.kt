@@ -34,8 +34,6 @@ data class PageItem(
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
     val parallaxAmount: Float = 0f,
-    val slowParallax: Boolean = false,
-    val parallaxImageSpeed: Float = 0.5f,
     val isBlank: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -50,8 +48,6 @@ data class PageItem(
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
         put("parallaxAmount", parallaxAmount.toDouble())
-        put("slowParallax", slowParallax)
-        put("parallaxImageSpeed", parallaxImageSpeed.toDouble())
         put("isBlank", isBlank)
     }
 
@@ -69,11 +65,29 @@ data class PageItem(
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
                 parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f),
-                slowParallax = json.optBoolean("slowParallax", false),
-                parallaxImageSpeed = json.optDouble("parallaxImageSpeed", 0.5).toFloat().coerceIn(0f, 1f),
                 isBlank = json.optBoolean("isBlank", false)
             )
         }
+    }
+}
+
+data class ParallaxMotionSettings(
+    val slowImageMotionEnabled: Boolean = false,
+    val imageSpeed: Float = 0.5f
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("slowImageMotionEnabled", slowImageMotionEnabled)
+        put("imageSpeed", imageSpeed.toDouble())
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject?): ParallaxMotionSettings =
+            json?.let {
+                ParallaxMotionSettings(
+                    slowImageMotionEnabled = it.optBoolean("slowImageMotionEnabled", false),
+                    imageSpeed = it.optDouble("imageSpeed", 0.5).toFloat().coerceIn(0f, 1f)
+                )
+            } ?: ParallaxMotionSettings()
     }
 }
 
@@ -81,17 +95,27 @@ data class PageTransitionSetting(
     val universalTransitionId: String = "scroll",
     val leftTransitionId: String = universalTransitionId,
     val rightTransitionId: String = universalTransitionId,
-    val separateDirections: Boolean = false
+    val separateDirections: Boolean = false,
+    val universalParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
+    val leftParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
+    val rightParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings()
 ) {
     fun transitionId(forward: Boolean): String =
         if (!separateDirections) universalTransitionId
         else if (forward) rightTransitionId else leftTransitionId
+
+    fun parallaxMotion(forward: Boolean): ParallaxMotionSettings =
+        if (!separateDirections) universalParallaxMotion
+        else if (forward) rightParallaxMotion else leftParallaxMotion
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("universalTransitionId", universalTransitionId)
         put("leftTransitionId", leftTransitionId)
         put("rightTransitionId", rightTransitionId)
         put("separateDirections", separateDirections)
+        put("universalParallaxMotion", universalParallaxMotion.toJson())
+        put("leftParallaxMotion", leftParallaxMotion.toJson())
+        put("rightParallaxMotion", rightParallaxMotion.toJson())
     }
 
     companion object {
@@ -105,11 +129,70 @@ data class PageTransitionSetting(
                 universalTransitionId = json.optString("universalTransitionId", legacyForward),
                 leftTransitionId = json.optString("leftTransitionId", legacyReverse),
                 rightTransitionId = json.optString("rightTransitionId", legacyForward),
-                separateDirections = json.optBoolean("separateDirections", false)
+                separateDirections = json.optBoolean("separateDirections", false),
+                universalParallaxMotion = ParallaxMotionSettings.fromJson(
+                    json.optJSONObject("universalParallaxMotion")
+                ),
+                leftParallaxMotion = ParallaxMotionSettings.fromJson(
+                    json.optJSONObject("leftParallaxMotion")
+                ),
+                rightParallaxMotion = ParallaxMotionSettings.fromJson(
+                    json.optJSONObject("rightParallaxMotion")
+                )
             )
         }
     }
 }
+
+private fun parsePageItems(
+    jsonPages: JSONArray?
+): Pair<List<PageItem>, List<ParallaxMotionSettings?>> {
+    val pages = mutableListOf<PageItem>()
+    val legacyMotionSettings = mutableListOf<ParallaxMotionSettings?>()
+    jsonPages?.let { values ->
+        for (index in 0 until values.length()) {
+            val pageJson = values.optJSONObject(index) ?: continue
+            pages.add(PageItem.fromJson(pageJson))
+            legacyMotionSettings.add(
+                if (pageJson.optBoolean("slowParallax", false)) {
+                    ParallaxMotionSettings(
+                        slowImageMotionEnabled = true,
+                        imageSpeed = pageJson.optDouble("parallaxImageSpeed", 0.5)
+                            .toFloat()
+                            .coerceIn(0f, 1f)
+                    )
+                } else {
+                    null
+                }
+            )
+        }
+    }
+    return pages to legacyMotionSettings
+}
+
+private fun migrateLegacyParallaxSettings(
+    transitions: List<PageTransitionSetting>,
+    legacyMotionSettings: List<ParallaxMotionSettings?>
+): List<PageTransitionSetting> =
+    transitions.mapIndexed { boundaryIndex, setting ->
+        val configuredLegacyMotions = listOfNotNull(
+            legacyMotionSettings.getOrNull(boundaryIndex),
+            legacyMotionSettings.getOrNull(boundaryIndex + 1)
+        ).filter { it.slowImageMotionEnabled }
+        if (configuredLegacyMotions.isEmpty()) {
+            setting
+        } else {
+            val motion = ParallaxMotionSettings(
+                slowImageMotionEnabled = true,
+                imageSpeed = configuredLegacyMotions.map { it.imageSpeed }.average().toFloat()
+            )
+            setting.copy(
+                universalParallaxMotion = motion,
+                leftParallaxMotion = motion,
+                rightParallaxMotion = motion
+            )
+        }
+    }
 
 data class WallpaperPreset(
     val id: String,
@@ -126,23 +209,31 @@ data class WallpaperPreset(
 
     companion object {
         fun fromJson(json: JSONObject): WallpaperPreset {
-            val pages = mutableListOf<PageItem>()
-            json.optJSONArray("pages")?.let { values ->
-                for (i in 0 until values.length()) {
-                    values.optJSONObject(i)?.let { pages.add(PageItem.fromJson(it)) }
-                }
-            }
+            val (pages, legacyMotionSettings) = parsePageItems(json.optJSONArray("pages"))
             val transitions = mutableListOf<PageTransitionSetting>()
             json.optJSONArray("transitions")?.let { values ->
                 for (i in 0 until values.length()) {
                     values.optJSONObject(i)?.let { transitions.add(PageTransitionSetting.fromJson(it)) }
                 }
             }
+            val defaultTransitions = List((pages.size - 1).coerceAtLeast(0)) {
+                PageTransitionSetting()
+            }
+            val transitionsToMigrate = if (
+                transitions.isEmpty() && legacyMotionSettings.any { it?.slowImageMotionEnabled == true }
+            ) {
+                defaultTransitions
+            } else {
+                transitions
+            }
             return WallpaperPreset(
                 id = json.optString("id", "preset"),
                 name = json.optString("name", "Preset"),
                 pages = pages,
-                transitions = transitions
+                transitions = migrateLegacyParallaxSettings(
+                    transitionsToMigrate,
+                    legacyMotionSettings
+                )
             )
         }
     }
@@ -302,7 +393,7 @@ data class WallpaperAppState(
         (pages.size - 1).coerceAtLeast(0)
     ) { PageTransitionSetting(transitionType, transitionType) },
     val presetNeedsSave: Boolean = false,
-    val schemaVersion: Int = 3
+    val schemaVersion: Int = 4
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -315,7 +406,7 @@ data class WallpaperAppState(
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
-        put("schemaVersion", 3)
+        put("schemaVersion", 4)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
         put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })
@@ -324,12 +415,7 @@ data class WallpaperAppState(
 
     companion object {
         fun fromJson(json: JSONObject): WallpaperAppState {
-            val pagesList = mutableListOf<PageItem>()
-            json.optJSONArray("pages")?.let { arr ->
-                for (i in 0 until arr.length()) {
-                    arr.optJSONObject(i)?.let { pagesList.add(PageItem.fromJson(it)) }
-                }
-            }
+            val (pagesList, legacyMotionSettings) = parsePageItems(json.optJSONArray("pages"))
             val calib = json.optJSONObject("calibration")?.let { CalibrationConfig.fromJson(it) }
                 ?: CalibrationConfig()
             val finalPages = if (pagesList.isEmpty()) {
@@ -360,9 +446,13 @@ data class WallpaperAppState(
             val defaultTransitions = List((finalPages.size - 1).coerceAtLeast(0)) {
                 PageTransitionSetting(transitionType, transitionType)
             }
+            val migratedTransitions = migrateLegacyParallaxSettings(
+                transitions.ifEmpty { defaultTransitions },
+                legacyMotionSettings
+            )
             val activeId = json.optString("activePresetId", "default")
             val presets = if (presetValues.isEmpty()) {
-                listOf(WallpaperPreset("default", "Default", finalPages, defaultTransitions))
+                listOf(WallpaperPreset("default", "Default", finalPages, migratedTransitions))
             } else {
                 presetValues
             }
@@ -378,7 +468,7 @@ data class WallpaperAppState(
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
-                transitions = transitions.ifEmpty { defaultTransitions },
+                transitions = migratedTransitions,
                 presetNeedsSave = json.optBoolean("presetNeedsSave", false),
                 schemaVersion = json.optInt("schemaVersion", 1)
             )

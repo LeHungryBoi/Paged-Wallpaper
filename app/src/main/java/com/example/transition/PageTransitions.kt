@@ -12,6 +12,8 @@ interface PageTransitionRenderer {
     val id: String
     val displayName: String
     val description: String
+    val supportsParallax: Boolean
+        get() = false
 
     fun draw(
         canvas: Canvas,
@@ -87,6 +89,7 @@ class ClassicScrollTransition : PageTransitionRenderer {
 open class ParallaxScrollTransition(
     private val useClassicIncomingTravel: Boolean = false
 ) : PageTransitionRenderer {
+    override val supportsParallax: Boolean = true
     override val id: String = if (useClassicIncomingTravel) "parallax_classic" else "parallax"
     override val displayName: String =
         if (useClassicIncomingTravel) "Classic Parallax" else "Parallax Scroll"

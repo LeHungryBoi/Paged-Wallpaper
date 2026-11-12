@@ -160,10 +160,6 @@ fun MediaEditorScreen(
     var cropFillMode by remember(media.id, page.pageIndex) { mutableStateOf(page.cropFillMode) }
     var blurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurAmount) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
-    var slowParallax by remember(media.id, page.pageIndex) { mutableStateOf(page.slowParallax) }
-    var parallaxImageSpeed by remember(media.id, page.pageIndex) {
-        mutableFloatStateOf(page.parallaxImageSpeed)
-    }
     var expandedPreview by remember(media.id) { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = !isSaving) { onDismiss() }
@@ -260,9 +256,7 @@ fun MediaEditorScreen(
                                     cropPanX = panX,
                                     cropPanY = panY,
                                     cropScale = zoom,
-                                    parallaxAmount = parallaxAmount,
-                                    slowParallax = slowParallax,
-                                    parallaxImageSpeed = parallaxImageSpeed
+                                    parallaxAmount = parallaxAmount
                                 )
                             )
                         },
@@ -580,16 +574,8 @@ fun MediaEditorScreen(
                         mapX(frameRight),
                         mapY(frameBottom)
                     )
-                    val leftReachUnavailable = if (slowParallax) {
-                        page.pageIndex >= pageCount - 1
-                    } else {
-                        page.pageIndex == 0
-                    }
-                    val rightReachUnavailable = if (slowParallax) {
-                        page.pageIndex == 0
-                    } else {
-                        page.pageIndex >= pageCount - 1
-                    }
+                    val leftReachUnavailable = page.pageIndex == 0
+                    val rightReachUnavailable = page.pageIndex >= pageCount - 1
                     val reachStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.rgb(255, 180, 0)
                         style = Paint.Style.STROKE
@@ -702,46 +688,8 @@ fun MediaEditorScreen(
                             valueRange = 0f..1f,
                             modifier = Modifier.testTag("crop_parallax_slider")
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "Slow image movement",
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                                Text(
-                                    "Let the page move faster than its image.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = slowParallax,
-                                onCheckedChange = { slowParallax = it },
-                                modifier = Modifier.testTag("crop_slow_parallax_switch")
-                            )
-                        }
-                        if (slowParallax) {
-                            Text(
-                                "Image speed: ${(parallaxImageSpeed * 100).roundToInt()}% of page speed",
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                            Slider(
-                                value = parallaxImageSpeed,
-                                onValueChange = { parallaxImageSpeed = it },
-                                valueRange = 0f..1f,
-                                modifier = Modifier.testTag("crop_parallax_image_speed_slider")
-                            )
-                            Text(
-                                "Available image reach limits how slowly it can move.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         Text(
-                            "Requires the Parallax Scroll transition to be selected.",
+                            "Requires a parallax transition to be selected.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
