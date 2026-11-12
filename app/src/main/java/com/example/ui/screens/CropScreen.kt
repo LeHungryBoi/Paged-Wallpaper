@@ -87,6 +87,8 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
+private const val UNREACHABLE_PARALLAX_OVERLAY_ALPHA = 0.2f
+
 private fun calculatePreviewTravel(
     sourceWidth: Int,
     sourceHeight: Int,
@@ -143,6 +145,7 @@ private fun calculatePreviewTravel(
 fun MediaEditorScreen(
     media: OriginalMedia,
     page: PageItem,
+    pageCount: Int,
     isSaving: Boolean,
     onDismiss: () -> Unit,
     onSave: (PageItem) -> Unit
@@ -576,12 +579,34 @@ fun MediaEditorScreen(
                         style = Paint.Style.STROKE
                         strokeWidth = 2.dp.toPx()
                     }
+                    val unreachableOverlay = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = android.graphics.Color.BLACK
+                        alpha = (UNREACHABLE_PARALLAX_OVERLAY_ALPHA * 255).roundToInt()
+                    }
                     val staticStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.rgb(80, 220, 255)
                         style = Paint.Style.STROKE
                         strokeWidth = 2.dp.toPx()
                     }
                     nativeCanvas.drawRect(reachBounds, reachStroke)
+                    if (page.pageIndex == 0 && reachLeft < frameLeft) {
+                        nativeCanvas.drawRect(
+                            mapX(reachLeft),
+                            mapY(frameTop),
+                            mapX(frameLeft),
+                            mapY(frameBottom),
+                            unreachableOverlay
+                        )
+                    }
+                    if (page.pageIndex >= pageCount - 1 && reachRight > frameRight) {
+                        nativeCanvas.drawRect(
+                            mapX(frameRight),
+                            mapY(frameTop),
+                            mapX(reachRight),
+                            mapY(frameBottom),
+                            unreachableOverlay
+                        )
+                    }
                     nativeCanvas.drawRect(staticBounds, staticStroke)
                 }
                 }
@@ -601,6 +626,11 @@ fun MediaEditorScreen(
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
+                Text(
+                    "Darkened reach cannot be used from this page.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 Spacer(Modifier.height(16.dp))
                 Card(

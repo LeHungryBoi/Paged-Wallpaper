@@ -119,6 +119,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
         MediaEditorScreen(
             media = media,
             page = page,
+            pageCount = appState.calibration.pageCount,
             isSaving = isSavingMedia,
             onDismiss = { if (!isSavingMedia) editingPageIndex = null },
             onSave = { updatedPage ->
