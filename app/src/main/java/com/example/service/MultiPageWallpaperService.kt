@@ -10,15 +10,23 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import android.os.Build
 import android.os.Bundle
 import android.service.wallpaper.WallpaperService
 import android.util.Log
+import android.view.Choreographer
+import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
+import kotlin.math.abs
+import kotlin.math.exp
+
+private const val OFFSET_EPSILON = 0.00005f
+private const val NANOS_PER_SECOND = 1_000_000_000L
 
 class MultiPageWallpaperService : WallpaperService() {
 
@@ -58,6 +66,7 @@ class MultiPageWallpaperService : WallpaperService() {
         private var surfaceWidth = 1080
         private var surfaceHeight = 2400
         private var currentXOffset = 0.5f
+        private var renderedXOffset = currentXOffset
         private var offsetDirection = 0
         private var currentYOffset = 0.0f
         private var receivedXOffset: Float? = null
@@ -76,18 +85,33 @@ class MultiPageWallpaperService : WallpaperService() {
         private var sawZeroOffsetWhileHidden = false
         private var resumeFadeAnimator: ValueAnimator? = null
         private var resumeFadeProgress = 1f
+        private val choreographer by lazy { Choreographer.getInstance() }
+        private var animationFramePosted = false
+        private var lastAnimationFrameTimeNanos = 0L
+        private var nextAnimationFrameDeadlineNanos = 0L
+        private var preferredSurfaceFrameRate: Int? = null
+        private val animationFrameCallback = Choreographer.FrameCallback { frameTimeNanos ->
+            animationFramePosted = false
+            drawSmoothedOffsetFrame(frameTimeNanos)
+        }
 
         private var extraDimObserver: ContentObserver? = null
         private var systemBroadcastReceiver: BroadcastReceiver? = null
 
         private val repoChangeListener = {
-            val calib = repository.appState.value.calibration
             // If the wallpaper is not currently visible or hasn't received active launcher scroll,
             // make sure we stay synchronized with the user's home page setting.
             if (!isVisible || !hasReceivedLauncherOffset) {
                 currentXOffset = repository.getLastKnownOffsetOrHome()
+                renderedXOffset = currentXOffset
+                stopOffsetAnimation()
             }
-            drawFrame()
+            updateSurfaceFrameRate()
+            if (isVisible && isOffsetAnimationNeeded()) {
+                scheduleOffsetAnimationFrame()
+            } else {
+                drawFrame()
+            }
         }
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
@@ -95,6 +119,7 @@ class MultiPageWallpaperService : WallpaperService() {
             WallpaperDiagnosticsRecorder.initialize(applicationContext)
             val calib = repository.appState.value.calibration
             currentXOffset = repository.getLastKnownOffsetOrHome()
+            renderedXOffset = currentXOffset
             awaitingResumeOffset = calib.homePageIndex != 0
             repository.addChangeListener(repoChangeListener)
             extraDimObserver = ExtraDimDetector.registerObserver(applicationContext) {
@@ -105,6 +130,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             super.onDestroy()
+            stopOffsetAnimation()
             resumeFadeAnimator?.cancel()
             resumeFadeAnimator = null
             repository.removeChangeListener(repoChangeListener)
@@ -132,6 +158,8 @@ class MultiPageWallpaperService : WallpaperService() {
                         currentXOffset = homeOffset
                         repository.saveLastKnownOffset(currentXOffset)
                     }
+                    renderedXOffset = currentXOffset
+                    stopOffsetAnimation()
                     awaitingResumeOffset = calib.homePageIndex != 0
                     recoveringFromZeroOffset = sawZeroOffsetWhileHidden
                     sawZeroOffsetWhileHidden = false
@@ -139,6 +167,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
                 drawFrame()
             } else {
+                stopOffsetAnimation()
                 resumeFadeAnimator?.cancel()
                 resumeFadeAnimator = null
                 resumeFadeProgress = 1f
@@ -167,7 +196,17 @@ class MultiPageWallpaperService : WallpaperService() {
             super.onSurfaceChanged(holder, format, width, height)
             surfaceWidth = width
             surfaceHeight = height
+            preferredSurfaceFrameRate = null
+            updateSurfaceFrameRate()
             drawFrame()
+            if (isVisible && isOffsetAnimationNeeded()) {
+                scheduleOffsetAnimationFrame()
+            }
+        }
+
+        override fun onSurfaceDestroyed(holder: SurfaceHolder) {
+            stopOffsetAnimation()
+            super.onSurfaceDestroyed(holder)
         }
 
         override fun onOffsetsChanged(
@@ -222,7 +261,9 @@ class MultiPageWallpaperService : WallpaperService() {
                 // If the system dispatches dummy 0.0f while returning home, default to home page
                 if (!hasReceivedLauncherOffset || !isVisible) {
                     currentXOffset = homeOffset
+                    renderedXOffset = homeOffset
                     currentYOffset = yOffset
+                    stopOffsetAnimation()
                     recoveringFromZeroOffset = false
                     awaitingResumeOffset = false
                     if (isVisible) {
@@ -234,6 +275,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
             // Real launcher offset from user swiping
             val nextXOffset = xOffset.coerceIn(0f, 1f)
+            val offsetChanged = abs(nextXOffset - currentXOffset) > OFFSET_EPSILON
+            val yOffsetChanged = currentYOffset != yOffset
             if (nextXOffset > currentXOffset + 0.0001f) {
                 offsetDirection = 1
             } else if (nextXOffset < currentXOffset - 0.0001f) {
@@ -247,7 +290,14 @@ class MultiPageWallpaperService : WallpaperService() {
             repository.saveLastKnownOffset(currentXOffset)
 
             if (isVisible) {
-                drawFrame(fromOffsetUpdate = true)
+                if (isOffsetAnimationNeeded()) {
+                    scheduleOffsetAnimationFrame()
+                } else {
+                    stopOffsetAnimation()
+                    if (offsetChanged || yOffsetChanged) {
+                        drawFrame(fromOffsetUpdate = true)
+                    }
+                }
             }
         }
 
@@ -264,6 +314,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (action == "android.home") {
                     // Swiped home or home button pressed
                     currentXOffset = calib.getHomeOffset()
+                    renderedXOffset = currentXOffset
+                    stopOffsetAnimation()
                     awaitingResumeOffset = calib.homePageIndex != 0
                     recoveringFromZeroOffset = false
                     sawZeroOffsetWhileHidden = false
@@ -291,6 +343,8 @@ class MultiPageWallpaperService : WallpaperService() {
                                     // User swiped or tapped home button to return to launcher
                                     val calib = repository.appState.value.calibration
                                     currentXOffset = calib.getHomeOffset()
+                                    renderedXOffset = currentXOffset
+                                    stopOffsetAnimation()
                                     awaitingResumeOffset = calib.homePageIndex != 0
                                     recoveringFromZeroOffset = false
                                     sawZeroOffsetWhileHidden = false
@@ -305,6 +359,8 @@ class MultiPageWallpaperService : WallpaperService() {
                                 val calib = repository.appState.value.calibration
                                 if (!hasReceivedLauncherOffset || (currentXOffset <= 0.001f && calib.homePageIndex != 0)) {
                                     currentXOffset = calib.getHomeOffset()
+                                    renderedXOffset = currentXOffset
+                                    stopOffsetAnimation()
                                     repository.saveLastKnownOffset(currentXOffset)
                                 }
                                 if (isVisible) {
@@ -332,6 +388,100 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
+        private fun scheduleOffsetAnimationFrame() {
+            if (!isVisible || animationFramePosted) return
+            updateSurfaceFrameRate()
+            animationFramePosted = true
+            choreographer.postFrameCallback(animationFrameCallback)
+        }
+
+        private fun stopOffsetAnimation() {
+            if (animationFramePosted) {
+                choreographer.removeFrameCallback(animationFrameCallback)
+            }
+            animationFramePosted = false
+            lastAnimationFrameTimeNanos = 0L
+            nextAnimationFrameDeadlineNanos = 0L
+            applySurfaceFrameRate(null)
+        }
+
+        private fun isOffsetAnimationNeeded(): Boolean =
+            abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON
+
+        private fun drawSmoothedOffsetFrame(frameTimeNanos: Long) {
+            if (!isVisible) {
+                stopOffsetAnimation()
+                return
+            }
+
+            val frameIntervalNanos =
+                NANOS_PER_SECOND / repository.appState.value.animationFrameRate
+            if (nextAnimationFrameDeadlineNanos == 0L) {
+                nextAnimationFrameDeadlineNanos = frameTimeNanos
+            }
+            if (frameTimeNanos < nextAnimationFrameDeadlineNanos) {
+                scheduleOffsetAnimationFrame()
+                return
+            }
+
+            val elapsedNanos = if (lastAnimationFrameTimeNanos == 0L) {
+                frameIntervalNanos
+            } else {
+                (frameTimeNanos - lastAnimationFrameTimeNanos).coerceAtLeast(1L)
+            }
+            val smoothingTimeNanos = maxOf(frameIntervalNanos, elapsedNanos) * 1.5
+            val smoothingFraction = (
+                1.0 - exp(-elapsedNanos.toDouble() / smoothingTimeNanos)
+            ).toFloat()
+            renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
+            if (!isOffsetAnimationNeeded()) {
+                renderedXOffset = currentXOffset
+            }
+
+            drawFrame(fromOffsetUpdate = true)
+            lastAnimationFrameTimeNanos = frameTimeNanos
+            val elapsedIntervals =
+                (frameTimeNanos - nextAnimationFrameDeadlineNanos) / frameIntervalNanos + 1L
+            nextAnimationFrameDeadlineNanos += elapsedIntervals * frameIntervalNanos
+
+            if (isOffsetAnimationNeeded()) {
+                scheduleOffsetAnimationFrame()
+            } else {
+                stopOffsetAnimation()
+            }
+        }
+
+        private fun updateSurfaceFrameRate() {
+            val frameRate = if (isVisible && isOffsetAnimationNeeded()) {
+                repository.appState.value.animationFrameRate
+            } else {
+                null
+            }
+            applySurfaceFrameRate(frameRate)
+        }
+
+        private fun applySurfaceFrameRate(frameRate: Int?) {
+            val surface = surfaceHolder?.surface ?: return
+            if (!surface.isValid) return
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+            val requestedFrameRate = frameRate ?: 0
+            if (preferredSurfaceFrameRate == requestedFrameRate) return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                surface.setFrameRate(
+                    requestedFrameRate.toFloat(),
+                    Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                    Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+                )
+            } else {
+                surface.setFrameRate(
+                    requestedFrameRate.toFloat(),
+                    Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
+                )
+            }
+            preferredSurfaceFrameRate = requestedFrameRate
+        }
+
         fun drawFrame(fromOffsetUpdate: Boolean = false) {
             val holder = surfaceHolder ?: return
             var canvas: android.graphics.Canvas? = null
@@ -351,9 +501,9 @@ class MultiPageWallpaperService : WallpaperService() {
                         )
                         renderWallpaper(canvas)
                         canvas.restoreToCount(layer)
-                        return
+                    } else {
+                        renderWallpaper(canvas)
                     }
-                    renderWallpaper(canvas)
                 }
             } catch (e: Exception) {
                 Log.e("MultiPageWallpaper", "Error drawing wallpaper frame", e)
@@ -385,7 +535,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val pageCount = calib.pageCount.coerceAtLeast(1)
 
             // Calculate page indices and transition progress based on calibrated anchors
-            computePageTransition(currentXOffset, calib)
+            computePageTransition(renderedXOffset, calib)
             val pageA = transitionPageA
             val pageB = transitionPageB
             val progress = transitionProgress

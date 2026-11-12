@@ -268,7 +268,8 @@ class ExampleUnitTest {
             transitionType = "cube",
             resumeFadeEnabled = true,
             showOffsetDebugOverlay = true,
-            showFrameDebugIndicator = true
+            showFrameDebugIndicator = true,
+            animationFrameRate = 144
         )
         val json = state.toJson()
         val restored = WallpaperAppState.fromJson(json)
@@ -279,6 +280,7 @@ class ExampleUnitTest {
         assertTrue(restored.resumeFadeEnabled)
         assertTrue(restored.showOffsetDebugOverlay)
         assertTrue(restored.showFrameDebugIndicator)
+        assertEquals(144, restored.animationFrameRate)
     }
 
     @Test
@@ -290,12 +292,19 @@ class ExampleUnitTest {
             ).toJson().apply {
                 remove("resumeFadeEnabled")
                 remove("showFrameDebugIndicator")
+                remove("animationFrameRate")
             }
         )
 
         assertFalse(restored.resumeFadeEnabled)
         assertFalse(restored.showOffsetDebugOverlay)
         assertFalse(restored.showFrameDebugIndicator)
+        assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, restored.animationFrameRate)
+
+        val invalidFrameRate = WallpaperAppState.fromJson(
+            restored.toJson().put("animationFrameRate", 75)
+        )
+        assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, invalidFrameRate.animationFrameRate)
     }
 
     @Test

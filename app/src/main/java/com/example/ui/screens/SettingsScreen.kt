@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -29,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.diagnostics.WallpaperDiagnosticsResult
 import com.example.diagnostics.WallpaperDiagnosticsState
@@ -63,6 +66,48 @@ fun SettingsScreen(viewModel: WallpaperViewModel) {
 }
 
 @Composable
+private fun AnimationFrameRateSetting(
+    selectedFrameRate: Int,
+    onFrameRateSelected: (Int) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("animation_frame_rate_card"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "Wallpaper animation frame rate",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "The wallpaper smoothly follows launcher offsets at this target rate while moving. Higher rates may use more battery; the display may not support every option.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                WallpaperAppState.supportedAnimationFrameRates.forEach { frameRate ->
+                    FilterChip(
+                        selected = selectedFrameRate == frameRate,
+                        onClick = { onFrameRateSelected(frameRate) },
+                        label = { Text("$frameRate FPS") },
+                        modifier = Modifier.testTag("animation_frame_rate_$frameRate")
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsSection(
     title: String,
     content: @Composable () -> Unit
@@ -91,6 +136,10 @@ private fun DebugSettings(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        AnimationFrameRateSetting(
+            selectedFrameRate = appState.animationFrameRate,
+            onFrameRateSelected = viewModel::setAnimationFrameRate
+        )
         OffsetOverlaySetting(
             enabled = appState.showOffsetDebugOverlay,
             onEnabledChange = viewModel::toggleOffsetDebugOverlay
@@ -119,12 +168,12 @@ private fun DebugSettings(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "This records launcher offset callbacks and successful wallpaper frame submissions. It does not measure frames actually presented by the display. The wallpaper is event-driven and does not continuously redraw while idle.",
+                    text = "This records launcher offset callbacks and successful wallpaper frame submissions. It does not measure frames actually presented by the display. While moving, the wallpaper follows the latest offset at the selected target cadence, then stops drawing when settled.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "There is no app-side FPS cap: launcher offset callbacks drive redraws, while Android controls display presentation.",
+                    text = "The selected rate is a target, not a guarantee. Actual presentation is limited by the display refresh rate and rendering performance.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

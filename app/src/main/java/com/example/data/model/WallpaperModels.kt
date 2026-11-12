@@ -386,6 +386,7 @@ data class WallpaperAppState(
     val autoBackupEnabled: Boolean = false,
     val showOffsetDebugOverlay: Boolean = false,
     val showFrameDebugIndicator: Boolean = false,
+    val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
     ),
@@ -408,6 +409,7 @@ data class WallpaperAppState(
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
         put("showFrameDebugIndicator", showFrameDebugIndicator)
+        put("animationFrameRate", animationFrameRate)
         put("schemaVersion", 4)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
@@ -416,6 +418,9 @@ data class WallpaperAppState(
     }
 
     companion object {
+        const val DEFAULT_ANIMATION_FRAME_RATE = 60
+        val supportedAnimationFrameRates = listOf(60, 90, 120, 144, 165)
+
         fun fromJson(json: JSONObject): WallpaperAppState {
             val (pagesList, legacyMotionSettings) = parsePageItems(json.optJSONArray("pages"))
             val calib = json.optJSONObject("calibration")?.let { CalibrationConfig.fromJson(it) }
@@ -453,6 +458,10 @@ data class WallpaperAppState(
                 legacyMotionSettings
             )
             val activeId = json.optString("activePresetId", "default")
+            val animationFrameRate = json.optInt(
+                "animationFrameRate",
+                DEFAULT_ANIMATION_FRAME_RATE
+            ).takeIf { it in supportedAnimationFrameRates } ?: DEFAULT_ANIMATION_FRAME_RATE
             val presets = if (presetValues.isEmpty()) {
                 listOf(WallpaperPreset("default", "Default", finalPages, migratedTransitions))
             } else {
@@ -469,6 +478,7 @@ data class WallpaperAppState(
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
+                animationFrameRate = animationFrameRate,
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
                 transitions = migratedTransitions,
