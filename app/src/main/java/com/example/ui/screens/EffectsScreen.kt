@@ -47,6 +47,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.DarkenTrigger
+import com.example.data.model.OffsetEasingStyle
+import com.example.data.model.WallpaperAppState
 import com.example.ui.WallpaperViewModel
 
 @Composable
@@ -64,6 +66,27 @@ fun EffectsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        MotionBlurSetting(
+            enabled = appState.motionBlurEnabled,
+            strengthPercent = appState.motionBlurStrengthPercent,
+            onEnabledChange = viewModel::toggleMotionBlur,
+            onStrengthChange = viewModel::setMotionBlurStrengthPercent
+        )
+        OffsetEasingSetting(
+            enabled = appState.offsetEasingEnabled,
+            style = appState.offsetEasingStyle,
+            linearZonePercent = appState.offsetEasingLinearZonePercent,
+            strength = appState.offsetEasingStrength,
+            onEnabledChange = viewModel::toggleOffsetEasing,
+            onStyleChange = viewModel::setOffsetEasingStyle,
+            onLinearZonePercentChange = viewModel::setOffsetEasingLinearZonePercent,
+            onStrengthChange = viewModel::setOffsetEasingStrength
+        )
+        AnimationFrameRateSetting(
+            selectedFrameRate = appState.animationFrameRate,
+            onFrameRateSelected = viewModel::setAnimationFrameRate
+        )
+
         // Section: Resume Animation Stability
         Card(
             modifier = Modifier

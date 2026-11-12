@@ -667,7 +667,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 OffsetEasing.map(
                     progress,
                     state.offsetEasingLinearZonePercent,
-                    state.offsetEasingStrength
+                    state.offsetEasingStrength,
+                    state.offsetEasingStyle
                 )
             } else {
                 progress

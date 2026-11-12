@@ -10,6 +10,7 @@ import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTrigger
+import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
@@ -274,6 +275,7 @@ class ExampleUnitTest {
             motionBlurEnabled = false,
             motionBlurStrengthPercent = 150,
             offsetEasingEnabled = true,
+            offsetEasingStyle = OffsetEasingStyle.FAST_START_SLOW_END,
             offsetEasingLinearZonePercent = 65,
             offsetEasingStrength = 75,
             animationFrameRate = 144
@@ -290,6 +292,7 @@ class ExampleUnitTest {
         assertFalse(restored.motionBlurEnabled)
         assertEquals(150, restored.motionBlurStrengthPercent)
         assertTrue(restored.offsetEasingEnabled)
+        assertEquals(OffsetEasingStyle.FAST_START_SLOW_END, restored.offsetEasingStyle)
         assertEquals(65, restored.offsetEasingLinearZonePercent)
         assertEquals(75, restored.offsetEasingStrength)
         assertEquals(144, restored.animationFrameRate)
@@ -307,6 +310,7 @@ class ExampleUnitTest {
                 remove("motionBlurEnabled")
                 remove("motionBlurStrengthPercent")
                 remove("offsetEasingEnabled")
+                remove("offsetEasingStyle")
                 remove("offsetEasingLinearZonePercent")
                 remove("offsetEasingStrength")
                 remove("animationFrameRate")
@@ -322,6 +326,7 @@ class ExampleUnitTest {
             restored.motionBlurStrengthPercent
         )
         assertFalse(restored.offsetEasingEnabled)
+        assertEquals(OffsetEasingStyle.SYMMETRIC, restored.offsetEasingStyle)
         assertEquals(60, restored.offsetEasingLinearZonePercent)
         assertEquals(50, restored.offsetEasingStrength)
         assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, restored.animationFrameRate)
@@ -408,6 +413,23 @@ class ExampleUnitTest {
             val progress = index / 10f
             assertEquals(progress, OffsetEasing.map(progress, 60, 0), 0.0001f)
             assertEquals(progress, OffsetEasing.map(progress, 100, 100), 0.0001f)
+        }
+    }
+
+    @Test
+    fun testFastStartSlowEndEasingKeepsStartLinearAndSlowsAtEnd() {
+        val style = OffsetEasingStyle.FAST_START_SLOW_END
+        assertEquals(0.4f, OffsetEasing.map(0.4f, 60, 100, style), 0.0001f)
+        assertEquals(0.6f, OffsetEasing.map(0.6f, 60, 100, style), 0.0001f)
+        assertTrue(OffsetEasing.map(0.8f, 60, 100, style) > 0.8f)
+        assertTrue(OffsetEasing.map(0.95f, 60, 100, style) > 0.95f)
+        assertEquals(1f, OffsetEasing.map(1f, 60, 100, style), 0f)
+
+        var previous = 0f
+        for (index in 0..100) {
+            val mapped = OffsetEasing.map(index / 100f, 60, 100, style)
+            assertTrue(mapped >= previous)
+            previous = mapped
         }
     }
 

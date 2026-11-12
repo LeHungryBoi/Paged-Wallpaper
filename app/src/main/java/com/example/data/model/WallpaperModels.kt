@@ -11,6 +11,16 @@ enum class DarkenTrigger(val displayName: String, val description: String) {
     ALWAYS("Always Dim", "Keep dimming filter always active")
 }
 
+enum class OffsetEasingStyle(val displayName: String) {
+    SYMMETRIC("Symmetric ease in/out"),
+    FAST_START_SLOW_END("Fast start, slow end");
+
+    companion object {
+        fun fromName(name: String): OffsetEasingStyle =
+            values().firstOrNull { it.name == name } ?: SYMMETRIC
+    }
+}
+
 enum class CropFillMode(val displayName: String, val description: String) {
     CROP("Crop to fill", "Fill the screen by cropping the image edges"),
     BLUR("Blurred fill", "Keep the whole image over a softly blurred background"),
@@ -389,6 +399,7 @@ data class WallpaperAppState(
     val motionBlurEnabled: Boolean = true,
     val motionBlurStrengthPercent: Int = DEFAULT_MOTION_BLUR_STRENGTH_PERCENT,
     val offsetEasingEnabled: Boolean = false,
+    val offsetEasingStyle: OffsetEasingStyle = OffsetEasingStyle.SYMMETRIC,
     val offsetEasingLinearZonePercent: Int = 60,
     val offsetEasingStrength: Int = 50,
     val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
@@ -417,6 +428,7 @@ data class WallpaperAppState(
         put("motionBlurEnabled", motionBlurEnabled)
         put("motionBlurStrengthPercent", motionBlurStrengthPercent)
         put("offsetEasingEnabled", offsetEasingEnabled)
+        put("offsetEasingStyle", offsetEasingStyle.name)
         put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
         put("offsetEasingStrength", offsetEasingStrength)
         put("animationFrameRate", animationFrameRate)
@@ -496,6 +508,9 @@ data class WallpaperAppState(
                     DEFAULT_MOTION_BLUR_STRENGTH_PERCENT
                 ).coerceIn(0, MAX_MOTION_BLUR_STRENGTH_PERCENT),
                 offsetEasingEnabled = json.optBoolean("offsetEasingEnabled", false),
+                offsetEasingStyle = OffsetEasingStyle.fromName(
+                    json.optString("offsetEasingStyle", OffsetEasingStyle.SYMMETRIC.name)
+                ),
                 offsetEasingLinearZonePercent = json.optInt(
                     "offsetEasingLinearZonePercent",
                     60

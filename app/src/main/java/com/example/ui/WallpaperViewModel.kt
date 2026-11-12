@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.DarkenConfig
+import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
@@ -267,6 +268,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun toggleOffsetEasing(enabled: Boolean) {
         repository.updateState { it.copy(offsetEasingEnabled = enabled) }
+    }
+
+    fun setOffsetEasingStyle(style: OffsetEasingStyle) {
+        repository.updateState { it.copy(offsetEasingStyle = style) }
     }
 
     fun setOffsetEasingLinearZonePercent(percent: Int) {
