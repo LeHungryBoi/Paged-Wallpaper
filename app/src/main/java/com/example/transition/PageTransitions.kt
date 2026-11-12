@@ -131,17 +131,14 @@ class ParallaxScrollTransition : PageTransitionRenderer {
         fun drawPage(
             bitmap: Bitmap?,
             left: Int,
-            leftTravel: Int,
-            rightTravel: Int,
-            progressTravel: Float
+            sourceLeft: Float
         ) {
             if (bitmap == null) return
             destination.set(left, 0, left + screenWidth, screenHeight)
-            if (leftTravel <= 0 && rightTravel <= 0) {
+            if (bitmap.width <= screenWidth) {
                 canvas.drawBitmap(bitmap, null, destination, paint)
                 return
             }
-            val sourceLeft = leftTravel + rightTravel * progressTravel
             val boundedSourceLeft = sourceLeft
                 .toInt()
                 .coerceIn(0, (bitmap.width - screenWidth).coerceAtLeast(0))
@@ -152,16 +149,12 @@ class ParallaxScrollTransition : PageTransitionRenderer {
         drawPage(
             pageABitmap,
             (-p * screenWidth).toInt(),
-            pageALeftTravelPx,
-            pageARightTravelPx,
-            p
+            pageALeftTravelPx + pageARightTravelPx * p
         )
         drawPage(
             pageBBitmap,
             ((1f - p) * screenWidth).toInt(),
-            pageBLeftTravelPx,
-            pageBRightTravelPx,
-            1f - p
+            pageBLeftTravelPx * p
         )
         if (pageABitmap == null && pageBBitmap == null) {
             canvas.drawColor(Color.rgb(18, 22, 34))
