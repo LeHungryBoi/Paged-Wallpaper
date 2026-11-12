@@ -19,6 +19,7 @@ import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
+import com.example.transition.ClassicParallaxScrollTransition
 import com.example.transition.ParallaxScrollTransition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -137,15 +138,17 @@ class ExampleUnitTest {
     @Test
     fun testTransitionRegistry() {
         val registry = TransitionRegistry
-        assertEquals(7, registry.transitions.size)
+        assertEquals(8, registry.transitions.size)
         assertNotNull(registry.get("scroll"))
         assertNotNull(registry.get("parallax"))
+        assertNotNull(registry.get("parallax_classic"))
         assertNotNull(registry.get("fade"))
         assertNotNull(registry.get("depth"))
         assertNotNull(registry.get("slide_over"))
         assertNotNull(registry.get("cube"))
         assertEquals("Classic Scroll", registry.get("scroll").displayName)
         assertEquals("Parallax Scroll", registry.get("parallax").displayName)
+        assertEquals("Classic Parallax", registry.get("parallax_classic").displayName)
     }
 
     @Test
@@ -185,6 +188,21 @@ class ExampleUnitTest {
             pageBRightTravelPx = 30
         )
         assertEquals(5, Color.red(output.getPixel(50, 0)))
+
+        ClassicParallaxScrollTransition().drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = null,
+            pageBBitmap = source,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageBLeftTravelPx = 10,
+            pageBRightTravelPx = 30,
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0
+        )
+        assertEquals(75, Color.red(output.getPixel(50, 0)))
 
         val slowSource = Bitmap.createBitmap(240, 1, Bitmap.Config.ARGB_8888)
         val slowColumns = IntArray(240) { Color.rgb(it, 0, 0) }

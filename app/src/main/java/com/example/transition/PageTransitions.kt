@@ -84,10 +84,18 @@ class ClassicScrollTransition : PageTransitionRenderer {
     }
 }
 
-class ParallaxScrollTransition : PageTransitionRenderer {
-    override val id: String = "parallax"
-    override val displayName: String = "Parallax Scroll"
-    override val description: String = "Scrolls each page while its image pans at a different rate"
+open class ParallaxScrollTransition(
+    private val useClassicIncomingTravel: Boolean = false
+) : PageTransitionRenderer {
+    override val id: String = if (useClassicIncomingTravel) "parallax_classic" else "parallax"
+    override val displayName: String =
+        if (useClassicIncomingTravel) "Classic Parallax" else "Parallax Scroll"
+    override val description: String =
+        if (useClassicIncomingTravel) {
+            "Restored parallax motion that pans incoming pages through the full reach"
+        } else {
+            "Scrolls each page while its image pans at a different rate"
+        }
 
     override fun draw(
         canvas: Canvas,
@@ -163,7 +171,11 @@ class ParallaxScrollTransition : PageTransitionRenderer {
                 pageBRightTravelPx
             )
             pageBLeftTravelPx + counterTravel * (1f - p)
-        } ?: (pageBLeftTravelPx * p)
+        } ?: if (useClassicIncomingTravel) {
+            pageBLeftTravelPx + pageBRightTravelPx * (1f - p)
+        } else {
+            pageBLeftTravelPx * p
+        }
 
         drawPage(
             pageABitmap,
@@ -180,6 +192,8 @@ class ParallaxScrollTransition : PageTransitionRenderer {
         }
     }
 }
+
+class ClassicParallaxScrollTransition : ParallaxScrollTransition(useClassicIncomingTravel = true)
 
 /**
  * Cross Fade Dissolve transition
@@ -460,6 +474,7 @@ object TransitionRegistry {
     val transitions: List<PageTransitionRenderer> = listOf(
         ClassicScrollTransition(),
         ParallaxScrollTransition(),
+        ClassicParallaxScrollTransition(),
         CrossFadeTransition(),
         SoftBlurTransition(),
         DepthZoomTransition(),
