@@ -34,6 +34,8 @@ data class PageItem(
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
     val parallaxAmount: Float = 0f,
+    val slowParallax: Boolean = false,
+    val parallaxImageSpeed: Float = 0.5f,
     val isBlank: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -48,6 +50,8 @@ data class PageItem(
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
         put("parallaxAmount", parallaxAmount.toDouble())
+        put("slowParallax", slowParallax)
+        put("parallaxImageSpeed", parallaxImageSpeed.toDouble())
         put("isBlank", isBlank)
     }
 
@@ -65,6 +69,8 @@ data class PageItem(
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
                 parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f),
+                slowParallax = json.optBoolean("slowParallax", false),
+                parallaxImageSpeed = json.optDouble("parallaxImageSpeed", 0.5).toFloat().coerceIn(0f, 1f),
                 isBlank = json.optBoolean("isBlank", false)
             )
         }

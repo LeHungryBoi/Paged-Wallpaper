@@ -54,7 +54,8 @@ class WallpaperRepository private constructor(private val context: Context) {
     data class ParallaxBitmap(
         val bitmap: Bitmap,
         val leftTravelPx: Int,
-        val rightTravelPx: Int
+        val rightTravelPx: Int,
+        val slowImageSpeed: Float? = null
     )
 
     private val originalsDir: File by lazy {
@@ -493,10 +494,15 @@ class WallpaperRepository private constructor(private val context: Context) {
             targetHeight = reqHeight,
             parallaxAmount = page.parallaxAmount
         ) ?: return getScreenSizedPage()
+        val result = rendered.copy(
+            slowImageSpeed = page.parallaxImageSpeed
+                .coerceIn(0f, 1f)
+                .takeIf { page.slowParallax }
+        )
         synchronized(parallaxBitmapCache) {
-            parallaxBitmapCache[key] = rendered
+            parallaxBitmapCache[key] = result
         }
-        return rendered
+        return result
     }
 
     fun getCroppedBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
@@ -628,7 +634,8 @@ class WallpaperRepository private constructor(private val context: Context) {
             cropPanY = updatedPage.cropPanY.coerceIn(-1f, 1f),
             cropScale = updatedPage.cropScale.coerceIn(1f, 3f),
             blurAmount = updatedPage.blurAmount.coerceIn(0f, 1f),
-            parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f)
+            parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f),
+            parallaxImageSpeed = updatedPage.parallaxImageSpeed.coerceIn(0f, 1f)
         )
         if (!renderMediaForPage(media, normalized, targetWidth, targetHeight)) return@withContext false
         val updatedPages = _appState.value.pages.map {

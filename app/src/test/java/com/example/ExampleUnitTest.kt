@@ -97,15 +97,20 @@ class ExampleUnitTest {
             pageIndex = 0,
             originalId = "media",
             cropFillMode = CropFillMode.CROP,
-            parallaxAmount = 0.7f
+            parallaxAmount = 0.7f,
+            slowParallax = true,
+            parallaxImageSpeed = 0.35f
         )
         val restored = PageItem.fromJson(page.toJson())
         assertEquals(CropFillMode.CROP, restored.cropFillMode)
         assertEquals(0.7f, restored.parallaxAmount, 0.001f)
+        assertTrue(restored.slowParallax)
+        assertEquals(0.35f, restored.parallaxImageSpeed, 0.001f)
 
         val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
         assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
         assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
+        assertFalse(legacyPage.slowParallax)
     }
 
     @Test
@@ -180,7 +185,42 @@ class ExampleUnitTest {
             pageBRightTravelPx = 30
         )
         assertEquals(5, Color.red(output.getPixel(50, 0)))
+
+        val slowSource = Bitmap.createBitmap(240, 1, Bitmap.Config.ARGB_8888)
+        val slowColumns = IntArray(240) { Color.rgb(it, 0, 0) }
+        slowSource.setPixels(slowColumns, 0, 240, 0, 0, 240, 1)
+        renderer.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = slowSource,
+            pageBBitmap = null,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 70,
+            pageARightTravelPx = 70,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0,
+            pageASlowImageSpeed = 0.5f
+        )
+        assertEquals(95, Color.red(output.getPixel(0, 0)))
+        renderer.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = null,
+            pageBBitmap = slowSource,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 70,
+            pageBRightTravelPx = 70,
+            pageBSlowImageSpeed = 0.5f
+        )
+        assertEquals(95, Color.red(output.getPixel(50, 0)))
         source.recycle()
+        slowSource.recycle()
         output.recycle()
     }
 

@@ -34,7 +34,9 @@ interface PageTransitionRenderer {
         pageALeftTravelPx: Int,
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
-        pageBRightTravelPx: Int
+        pageBRightTravelPx: Int,
+        pageASlowImageSpeed: Float? = null,
+        pageBSlowImageSpeed: Float? = null
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -122,7 +124,9 @@ class ParallaxScrollTransition : PageTransitionRenderer {
         pageALeftTravelPx: Int,
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
-        pageBRightTravelPx: Int
+        pageBRightTravelPx: Int,
+        pageASlowImageSpeed: Float?,
+        pageBSlowImageSpeed: Float?
     ) {
         val p = progress.coerceIn(0f, 1f)
         val destination = Rect()
@@ -146,15 +150,30 @@ class ParallaxScrollTransition : PageTransitionRenderer {
             canvas.drawBitmap(bitmap, source, destination, paint)
         }
 
+        val pageASourceLeft = pageASlowImageSpeed?.let { speed ->
+            val counterTravel = minOf(
+                ((1f - speed.coerceIn(0f, 1f)) * screenWidth).toInt(),
+                pageALeftTravelPx
+            )
+            pageALeftTravelPx - counterTravel * p
+        } ?: (pageALeftTravelPx + pageARightTravelPx * p)
+        val pageBSourceLeft = pageBSlowImageSpeed?.let { speed ->
+            val counterTravel = minOf(
+                ((1f - speed.coerceIn(0f, 1f)) * screenWidth).toInt(),
+                pageBRightTravelPx
+            )
+            pageBLeftTravelPx + counterTravel * (1f - p)
+        } ?: (pageBLeftTravelPx * p)
+
         drawPage(
             pageABitmap,
             (-p * screenWidth).toInt(),
-            pageALeftTravelPx + pageARightTravelPx * p
+            pageASourceLeft
         )
         drawPage(
             pageBBitmap,
             ((1f - p) * screenWidth).toInt(),
-            pageBLeftTravelPx * p
+            pageBSourceLeft
         )
         if (pageABitmap == null && pageBBitmap == null) {
             canvas.drawColor(Color.rgb(18, 22, 34))
