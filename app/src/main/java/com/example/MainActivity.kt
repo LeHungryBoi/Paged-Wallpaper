@@ -18,15 +18,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wallpaper
-import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.PhotoLibrary
-import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -51,13 +49,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.ui.WallpaperViewModel
-import com.example.ui.screens.BackupScreen
-import com.example.ui.screens.CalibrationScreen
 import com.example.ui.screens.EffectsScreen
 import com.example.ui.screens.MediaLibraryScreen
 import com.example.ui.screens.MediaEditorScreen
 import com.example.ui.screens.MediaPickerScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StudioScreen
 import com.example.ui.theme.MyApplicationTheme
 
@@ -68,10 +66,9 @@ enum class AppTab(
     val testTag: String
 ) {
     STUDIO("Studio", Icons.Filled.Wallpaper, Icons.Outlined.Wallpaper, "tab_studio"),
-    CALIBRATE("Calibrate", Icons.Filled.SwapHoriz, Icons.Outlined.SwapHoriz, "tab_calibrate"),
     EFFECTS("Effects", Icons.Filled.Layers, Icons.Outlined.Layers, "tab_effects"),
     MEDIA("Library", Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary, "tab_media"),
-    BACKUP("Backup", Icons.Filled.Archive, Icons.Outlined.Archive, "tab_backup")
+    SETTINGS("Settings", Icons.Filled.Settings, Icons.Outlined.Settings, "tab_settings")
 }
 
 class MainActivity : ComponentActivity() {
@@ -80,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WallpaperDiagnosticsRecorder.initialize(applicationContext)
         enableEdgeToEdge()
 
         setContent {
@@ -258,15 +256,14 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                                 editingPageIndex = pageIndex
                             },
                             onNavigateToCalibration = {
-                                selectedTab = AppTab.CALIBRATE
+                                selectedTab = AppTab.SETTINGS
                             }
                         )
-                        AppTab.CALIBRATE -> CalibrationScreen(viewModel = viewModel)
                         AppTab.EFFECTS -> EffectsScreen(viewModel = viewModel)
                         AppTab.MEDIA -> MediaLibraryScreen(
                             viewModel = viewModel
                         )
-                        AppTab.BACKUP -> BackupScreen(viewModel = viewModel)
+                        AppTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                     }
                 }
             }

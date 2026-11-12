@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.SurfaceHolder
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
 
@@ -82,6 +83,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
+            WallpaperDiagnosticsRecorder.initialize(applicationContext)
             val calib = repository.appState.value.calibration
             currentXOffset = repository.getLastKnownOffsetOrHome()
             awaitingResumeOffset = calib.homePageIndex != 0
@@ -106,6 +108,7 @@ class MultiPageWallpaperService : WallpaperService() {
             super.onVisibilityChanged(visible)
             val wasVisible = isVisible
             isVisible = visible
+            WallpaperDiagnosticsRecorder.recordVisibilityChanged(visible)
             if (visible) {
                 val calib = repository.appState.value.calibration
                 val homeOffset = calib.getHomeOffset()
@@ -167,6 +170,7 @@ class MultiPageWallpaperService : WallpaperService() {
             yPixelOffset: Int
         ) {
             super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
+            WallpaperDiagnosticsRecorder.recordOffsetUpdate(xOffset, isVisible)
             receivedXOffset = xOffset
             receivedYOffset = yOffset
             val calib = repository.appState.value.calibration
@@ -186,7 +190,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (recoveringFromZeroOffset) {
                     val homeTolerance = maxOf(0.02f, kotlin.math.abs(xOffsetStep) * 0.05f)
                     if (kotlin.math.abs(xOffset - homeOffset) > homeTolerance) {
-                        drawFrame()
+                        drawFrame(fromOffsetUpdate = true)
                         return
                     }
                     recoveringFromZeroOffset = false
@@ -213,7 +217,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     recoveringFromZeroOffset = false
                     awaitingResumeOffset = false
                     if (isVisible) {
-                        drawFrame()
+                        drawFrame(fromOffsetUpdate = true)
                     }
                     return
                 }
@@ -234,7 +238,7 @@ class MultiPageWallpaperService : WallpaperService() {
             repository.saveLastKnownOffset(currentXOffset)
 
             if (isVisible) {
-                drawFrame()
+                drawFrame(fromOffsetUpdate = true)
             }
         }
 
@@ -319,9 +323,10 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
-        fun drawFrame() {
+        fun drawFrame(fromOffsetUpdate: Boolean = false) {
             val holder = surfaceHolder ?: return
             var canvas: android.graphics.Canvas? = null
+            var framePosted = false
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
@@ -346,9 +351,16 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (canvas != null) {
                     try {
                         holder.unlockCanvasAndPost(canvas)
+                        framePosted = true
                     } catch (e: Exception) {
                         Log.e("MultiPageWallpaper", "Error unlocking canvas", e)
                     }
+                }
+                if (framePosted) {
+                    WallpaperDiagnosticsRecorder.recordFrameSubmitted(
+                        fromOffsetUpdate = fromOffsetUpdate,
+                        isVisible = isVisible
+                    )
                 }
             }
         }
