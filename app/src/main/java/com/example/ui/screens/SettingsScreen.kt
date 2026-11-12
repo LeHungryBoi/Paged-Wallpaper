@@ -140,6 +140,10 @@ private fun DebugSettings(
             selectedFrameRate = appState.animationFrameRate,
             onFrameRateSelected = viewModel::setAnimationFrameRate
         )
+        MotionBlurSetting(
+            enabled = appState.motionBlurEnabled,
+            onEnabledChange = viewModel::toggleMotionBlur
+        )
         OffsetOverlaySetting(
             enabled = appState.showOffsetDebugOverlay,
             onEnabledChange = viewModel::toggleOffsetDebugOverlay
@@ -230,6 +234,41 @@ private fun DebugSettings(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MotionBlurSetting(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("motion_blur_setting"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Motion blur",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Smear the wallpaper in the direction of scrolling. Blur length adapts to movement and only runs while the wallpaper is moving.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.testTag("toggle_motion_blur")
+            )
         }
     }
 }

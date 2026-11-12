@@ -386,6 +386,7 @@ data class WallpaperAppState(
     val autoBackupEnabled: Boolean = false,
     val showOffsetDebugOverlay: Boolean = false,
     val showFrameDebugIndicator: Boolean = false,
+    val motionBlurEnabled: Boolean = true,
     val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
@@ -409,6 +410,7 @@ data class WallpaperAppState(
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
         put("showFrameDebugIndicator", showFrameDebugIndicator)
+        put("motionBlurEnabled", motionBlurEnabled)
         put("animationFrameRate", animationFrameRate)
         put("schemaVersion", 4)
         put("activePresetId", activePresetId)
@@ -478,6 +480,7 @@ data class WallpaperAppState(
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
+                motionBlurEnabled = json.optBoolean("motionBlurEnabled", true),
                 animationFrameRate = animationFrameRate,
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,

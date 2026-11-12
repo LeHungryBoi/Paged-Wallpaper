@@ -18,6 +18,7 @@ import com.example.data.model.WallpaperAppState
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
+import com.example.render.HorizontalMotionBlur
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
@@ -269,6 +270,7 @@ class ExampleUnitTest {
             resumeFadeEnabled = true,
             showOffsetDebugOverlay = true,
             showFrameDebugIndicator = true,
+            motionBlurEnabled = false,
             animationFrameRate = 144
         )
         val json = state.toJson()
@@ -280,6 +282,7 @@ class ExampleUnitTest {
         assertTrue(restored.resumeFadeEnabled)
         assertTrue(restored.showOffsetDebugOverlay)
         assertTrue(restored.showFrameDebugIndicator)
+        assertFalse(restored.motionBlurEnabled)
         assertEquals(144, restored.animationFrameRate)
     }
 
@@ -292,6 +295,7 @@ class ExampleUnitTest {
             ).toJson().apply {
                 remove("resumeFadeEnabled")
                 remove("showFrameDebugIndicator")
+                remove("motionBlurEnabled")
                 remove("animationFrameRate")
             }
         )
@@ -299,12 +303,43 @@ class ExampleUnitTest {
         assertFalse(restored.resumeFadeEnabled)
         assertFalse(restored.showOffsetDebugOverlay)
         assertFalse(restored.showFrameDebugIndicator)
+        assertTrue(restored.motionBlurEnabled)
         assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, restored.animationFrameRate)
 
         val invalidFrameRate = WallpaperAppState.fromJson(
             restored.toJson().put("animationFrameRate", 75)
         )
         assertEquals(WallpaperAppState.DEFAULT_ANIMATION_FRAME_RATE, invalidFrameRate.animationFrameRate)
+    }
+
+    @Test
+    fun testHorizontalMotionBlurSmearsPixelsAlongMotionDirection() {
+        val bitmap = Bitmap.createBitmap(5, 1, Bitmap.Config.ARGB_8888)
+        val source = intArrayOf(
+            Color.BLACK,
+            Color.BLACK,
+            Color.WHITE,
+            Color.WHITE,
+            Color.WHITE
+        )
+        bitmap.setPixels(source, 0, 5, 0, 0, 5, 1)
+
+        HorizontalMotionBlur().apply(bitmap, radius = 1, motionDirection = 1)
+        val movingRight = IntArray(5)
+        bitmap.getPixels(movingRight, 0, 5, 0, 0, 5, 1)
+
+        assertEquals(0, Color.red(movingRight[1]))
+        assertEquals(127, Color.red(movingRight[2]))
+        assertEquals(255, Color.red(movingRight[3]))
+
+        bitmap.setPixels(source, 0, 5, 0, 0, 5, 1)
+        HorizontalMotionBlur().apply(bitmap, radius = 1, motionDirection = -1)
+        val movingLeft = IntArray(5)
+        bitmap.getPixels(movingLeft, 0, 5, 0, 0, 5, 1)
+
+        assertEquals(127, Color.red(movingLeft[1]))
+        assertEquals(255, Color.red(movingLeft[2]))
+        bitmap.recycle()
     }
 
     @Test

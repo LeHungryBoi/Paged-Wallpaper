@@ -7,8 +7,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.os.Bundle
@@ -19,14 +21,21 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
+import com.example.data.model.CalibrationConfig
+import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
+import com.example.render.HorizontalMotionBlur
 import com.example.transition.TransitionRegistry
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.exp
 
 private const val OFFSET_EPSILON = 0.00005f
 private const val NANOS_PER_SECOND = 1_000_000_000L
+private const val MOTION_BLUR_DOWNSAMPLE_FACTOR = 2
+private const val MOTION_BLUR_SHUTTER_FRACTION = 1.0f
+private const val MAX_MOTION_BLUR_FRAME_GAP_NANOS = 200_000_000L
 
 class MultiPageWallpaperService : WallpaperService() {
 
@@ -38,6 +47,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
         private val repository by lazy { WallpaperRepository.getInstance(applicationContext) }
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val motionBlur = HorizontalMotionBlur()
+        private val motionBlurDestination = Rect()
         private val dimPaint = Paint()
         private val frameDebugColors = intArrayOf(Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW)
         private val frameDebugPaint = Paint()
@@ -90,6 +101,10 @@ class MultiPageWallpaperService : WallpaperService() {
         private var lastAnimationFrameTimeNanos = 0L
         private var nextAnimationFrameDeadlineNanos = 0L
         private var preferredSurfaceFrameRate: Int? = null
+        private var motionBlurBitmap: Bitmap? = null
+        private var motionBlurCanvas: Canvas? = null
+        private var lastMotionBlurPagePosition: Float? = null
+        private var lastMotionBlurFrameTimeNanos = 0L
         private val animationFrameCallback = Choreographer.FrameCallback { frameTimeNanos ->
             animationFramePosted = false
             drawSmoothedOffsetFrame(frameTimeNanos)
@@ -105,6 +120,9 @@ class MultiPageWallpaperService : WallpaperService() {
                 currentXOffset = repository.getLastKnownOffsetOrHome()
                 renderedXOffset = currentXOffset
                 stopOffsetAnimation()
+            }
+            if (!repository.appState.value.motionBlurEnabled) {
+                releaseMotionBlurBuffer()
             }
             updateSurfaceFrameRate()
             if (isVisible && isOffsetAnimationNeeded()) {
@@ -131,6 +149,7 @@ class MultiPageWallpaperService : WallpaperService() {
         override fun onDestroy() {
             super.onDestroy()
             stopOffsetAnimation()
+            releaseMotionBlurBuffer()
             resumeFadeAnimator?.cancel()
             resumeFadeAnimator = null
             repository.removeChangeListener(repoChangeListener)
@@ -168,6 +187,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 drawFrame()
             } else {
                 stopOffsetAnimation()
+                releaseMotionBlurBuffer()
                 resumeFadeAnimator?.cancel()
                 resumeFadeAnimator = null
                 resumeFadeProgress = 1f
@@ -206,6 +226,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             stopOffsetAnimation()
+            releaseMotionBlurBuffer()
             super.onSurfaceDestroyed(holder)
         }
 
@@ -484,7 +505,33 @@ class MultiPageWallpaperService : WallpaperService() {
 
         fun drawFrame(fromOffsetUpdate: Boolean = false) {
             val holder = surfaceHolder ?: return
-            var canvas: android.graphics.Canvas? = null
+            val state = repository.appState.value
+            val frameTimeNanos = System.nanoTime()
+            val pagePosition = getPagePosition(renderedXOffset, state.calibration)
+            val pageDelta = if (
+                state.motionBlurEnabled &&
+                isVisible &&
+                fromOffsetUpdate &&
+                lastMotionBlurPagePosition != null &&
+                frameTimeNanos - lastMotionBlurFrameTimeNanos in 1..MAX_MOTION_BLUR_FRAME_GAP_NANOS
+            ) {
+                pagePosition - lastMotionBlurPagePosition!!
+            } else {
+                0f
+            }
+            val physicalBlurRadius = (
+                abs(pageDelta) *
+                    surfaceWidth *
+                    MOTION_BLUR_SHUTTER_FRACTION
+                ).toInt().coerceAtMost(surfaceWidth / 4)
+            val motionDirection = when {
+                pageDelta > 0f -> -1
+                pageDelta < 0f -> 1
+                else -> 0
+            }
+            val shouldBlur = physicalBlurRadius > 0 && motionDirection != 0 &&
+                state.motionBlurEnabled && isVisible && resumeFadeProgress >= 1f
+            var canvas: Canvas? = null
             var framePosted = false
             frameDebugIndicatorDrawnForFrame = false
             try {
@@ -499,10 +546,17 @@ class MultiPageWallpaperService : WallpaperService() {
                             surfaceHeight.toFloat(),
                             (resumeFadeProgress * 255).toInt().coerceIn(0, 255)
                         )
-                        renderWallpaper(canvas)
+                        renderWallpaper(canvas, state)
                         canvas.restoreToCount(layer)
+                    } else if (shouldBlur) {
+                        renderMotionBlurredWallpaper(
+                            canvas = canvas,
+                            state = state,
+                            physicalBlurRadius = physicalBlurRadius,
+                            motionDirection = motionDirection
+                        )
                     } else {
-                        renderWallpaper(canvas)
+                        renderWallpaper(canvas, state)
                     }
                 }
             } catch (e: Exception) {
@@ -525,12 +579,88 @@ class MultiPageWallpaperService : WallpaperService() {
                         fromOffsetUpdate = fromOffsetUpdate,
                         isVisible = isVisible
                     )
+                    lastMotionBlurPagePosition = pagePosition
+                    lastMotionBlurFrameTimeNanos = frameTimeNanos
                 }
             }
         }
 
-        private fun renderWallpaper(canvas: android.graphics.Canvas) {
-            val state = repository.appState.value
+        private fun renderMotionBlurredWallpaper(
+            canvas: Canvas,
+            state: WallpaperAppState,
+            physicalBlurRadius: Int,
+            motionDirection: Int
+        ) {
+            val bufferWidth = (surfaceWidth / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
+            val bufferHeight = (surfaceHeight / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
+            ensureMotionBlurBuffer(bufferWidth, bufferHeight)
+
+            val bitmap = checkNotNull(motionBlurBitmap)
+            val offscreenCanvas = checkNotNull(motionBlurCanvas)
+            val saveCount = offscreenCanvas.save()
+            try {
+                offscreenCanvas.scale(
+                    bufferWidth.toFloat() / surfaceWidth,
+                    bufferHeight.toFloat() / surfaceHeight
+                )
+                renderWallpaper(offscreenCanvas, state, includeDebugIndicators = false)
+            } finally {
+                offscreenCanvas.restoreToCount(saveCount)
+            }
+
+            val scaledRadius = ceil(
+                physicalBlurRadius.toFloat() * bufferWidth / surfaceWidth
+            ).toInt().coerceAtLeast(1)
+            motionBlur.apply(bitmap, scaledRadius, motionDirection)
+            motionBlurDestination.set(0, 0, surfaceWidth, surfaceHeight)
+            canvas.drawBitmap(bitmap, null, motionBlurDestination, paint)
+            drawDebugIndicators(canvas, state)
+        }
+
+        private fun ensureMotionBlurBuffer(width: Int, height: Int) {
+            if (motionBlurBitmap?.width == width && motionBlurBitmap?.height == height) return
+            releaseMotionBlurBuffer()
+            motionBlurBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            motionBlurCanvas = Canvas(checkNotNull(motionBlurBitmap))
+        }
+
+        private fun releaseMotionBlurBuffer() {
+            motionBlurBitmap?.recycle()
+            motionBlurBitmap = null
+            motionBlurCanvas = null
+            motionBlur.release()
+            lastMotionBlurPagePosition = null
+            lastMotionBlurFrameTimeNanos = 0L
+        }
+
+        private fun getPagePosition(offset: Float, calibration: CalibrationConfig): Float {
+            val pageCount = calibration.pageCount.coerceAtLeast(1)
+            if (pageCount <= 1) return 0f
+
+            val anchors = calibration.customOffsets
+            if (anchors.size != pageCount) {
+                return offset.coerceIn(0f, 1f) * (pageCount - 1)
+            }
+            if (offset <= anchors.first()) return 0f
+            if (offset >= anchors.last()) return (pageCount - 1).toFloat()
+
+            for (index in 0 until pageCount - 1) {
+                val start = anchors[index]
+                val end = anchors[index + 1]
+                if (offset <= end) {
+                    val progress = ((offset - start) / (end - start).coerceAtLeast(0.0001f))
+                        .coerceIn(0f, 1f)
+                    return index + progress
+                }
+            }
+            return (pageCount - 1).toFloat()
+        }
+
+        private fun renderWallpaper(
+            canvas: Canvas,
+            state: WallpaperAppState,
+            includeDebugIndicators: Boolean = true
+        ) {
             val calib = state.calibration
             val pageCount = calib.pageCount.coerceAtLeast(1)
 
@@ -631,10 +761,13 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
 
+            if (includeDebugIndicators) drawDebugIndicators(canvas, state)
+        }
+
+        private fun drawDebugIndicators(canvas: Canvas, state: WallpaperAppState) {
             if (state.showOffsetDebugOverlay) {
                 drawOffsetDebugOverlay(canvas)
             }
-
             if (state.showFrameDebugIndicator) {
                 if (!frameDebugIndicatorEnabled) {
                     frameDebugSequenceIndex = 0

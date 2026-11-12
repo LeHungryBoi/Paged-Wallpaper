@@ -250,6 +250,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(showFrameDebugIndicator = enabled) }
     }
 
+    fun toggleMotionBlur(enabled: Boolean) {
+        repository.updateState { it.copy(motionBlurEnabled = enabled) }
+    }
+
     fun setAnimationFrameRate(frameRate: Int) {
         require(frameRate in WallpaperAppState.supportedAnimationFrameRates) {
             "Unsupported animation frame rate: $frameRate"
