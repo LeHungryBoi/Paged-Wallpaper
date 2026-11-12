@@ -144,7 +144,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testParallaxTransitionUsesDirectionalTravelLimits() {
+    fun testParallaxTransitionMapsImageTravelFromProgress() {
         val source = Bitmap.createBitmap(140, 1, Bitmap.Config.ARGB_8888)
         val columns = IntArray(140) { Color.rgb(it, 0, 0) }
         source.setPixels(columns, 0, 140, 0, 0, 140, 1)
@@ -165,22 +165,6 @@ class ExampleUnitTest {
             pageBRightTravelPx = 0
         )
         assertEquals(75, Color.red(output.getPixel(0, 0)))
-
-        renderer.drawWithParallax(
-            canvas = Canvas(output),
-            pageABitmap = source,
-            pageBBitmap = null,
-            progress = 0.5f,
-            screenWidth = 100,
-            screenHeight = 1,
-            paint = Paint(),
-            pageALeftTravelPx = 10,
-            pageARightTravelPx = 30,
-            pageBLeftTravelPx = 0,
-            pageBRightTravelPx = 0,
-            reverseDirection = true
-        )
-        assertEquals(55, Color.red(output.getPixel(0, 0)))
         source.recycle()
         output.recycle()
     }

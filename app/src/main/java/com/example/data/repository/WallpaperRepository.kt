@@ -491,8 +491,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             page = page,
             targetWidth = reqWidth,
             targetHeight = reqHeight,
-            requestedLeftTravelPx = reqWidth * 0.25f * page.parallaxAmount,
-            requestedRightTravelPx = reqWidth * 0.25f * page.parallaxAmount
+            parallaxAmount = page.parallaxAmount
         ) ?: return getScreenSizedPage()
         synchronized(parallaxBitmapCache) {
             parallaxBitmapCache[key] = rendered
@@ -518,8 +517,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 page = page,
                 targetWidth = reqWidth,
                 targetHeight = reqHeight,
-                requestedLeftTravelPx = 0f,
-                requestedRightTravelPx = 0f
+                parallaxAmount = 0f
             )?.bitmap
             if (rendered != null) {
                 synchronized(bitmapCache) { bitmapCache[key] = rendered }
@@ -696,8 +694,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             page = page,
             targetWidth = targetWidth,
             targetHeight = targetHeight,
-            requestedLeftTravelPx = 0f,
-            requestedRightTravelPx = 0f
+            parallaxAmount = 0f
         )?.bitmap ?: return false
         try {
             FileOutputStream(File(croppedDir, page.croppedFileName ?: "page_${page.pageIndex}.jpg")).use { out ->
@@ -717,8 +714,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         page: PageItem,
         targetWidth: Int,
         targetHeight: Int,
-        requestedLeftTravelPx: Float,
-        requestedRightTravelPx: Float
+        parallaxAmount: Float
     ): ParallaxBitmap? {
         if (targetWidth <= 0 || targetHeight <= 0) return null
         val originalFile = File(originalsDir, media.fileName)
@@ -798,14 +794,9 @@ class WallpaperRepository private constructor(private val context: Context) {
                 availableRightTravelPx =
                     (imageLeft + drawWidth - targetWidth).coerceAtLeast(0f)
             }
-            val leftTravelPx = minOf(
-                requestedLeftTravelPx.coerceAtLeast(0f),
-                availableLeftTravelPx
-            ).toInt()
-            val rightTravelPx = minOf(
-                requestedRightTravelPx.coerceAtLeast(0f),
-                availableRightTravelPx
-            ).toInt()
+            val travelAmount = parallaxAmount.coerceIn(0f, 1f)
+            val leftTravelPx = (availableLeftTravelPx * travelAmount).toInt()
+            val rightTravelPx = (availableRightTravelPx * travelAmount).toInt()
             val outputWidth = targetWidth + leftTravelPx + rightTravelPx
             outputBitmap = try {
                 Bitmap.createBitmap(outputWidth, targetHeight, Bitmap.Config.ARGB_8888)

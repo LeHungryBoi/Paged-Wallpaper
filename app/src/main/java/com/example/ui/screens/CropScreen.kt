@@ -133,9 +133,9 @@ private fun calculatePreviewTravel(
             targetHeight / sourceHeight
         ) * scale.coerceIn(1f, 3f) - targetWidth).coerceAtLeast(0f)
     }
-    val requestedTravel = targetWidth * 0.25f * amount.coerceIn(0f, 1f)
-    return minOf(requestedTravel, availableLeftTravel).coerceAtLeast(0f) to
-        minOf(requestedTravel, availableRightTravel).coerceAtLeast(0f)
+    val travelAmount = amount.coerceIn(0f, 1f)
+    return (availableLeftTravel * travelAmount).coerceAtLeast(0f) to
+        (availableRightTravel * travelAmount).coerceAtLeast(0f)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

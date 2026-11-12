@@ -396,8 +396,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     pageALeftTravelPx = pageAParallax?.leftTravelPx ?: 0,
                     pageARightTravelPx = pageAParallax?.rightTravelPx ?: 0,
                     pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
-                    pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
-                    reverseDirection = offsetDirection < 0
+                    pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0
                 )
             } else {
                 renderer.draw(

@@ -34,8 +34,7 @@ interface PageTransitionRenderer {
         pageALeftTravelPx: Int,
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
-        pageBRightTravelPx: Int,
-        reverseDirection: Boolean = false
+        pageBRightTravelPx: Int
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -108,8 +107,7 @@ class ParallaxScrollTransition : PageTransitionRenderer {
             pageALeftTravelPx = pageABitmap?.let { (it.width - screenWidth).coerceAtLeast(0) / 2 } ?: 0,
             pageARightTravelPx = pageABitmap?.let { (it.width - screenWidth).coerceAtLeast(0) / 2 } ?: 0,
             pageBLeftTravelPx = pageBBitmap?.let { (it.width - screenWidth).coerceAtLeast(0) / 2 } ?: 0,
-            pageBRightTravelPx = pageBBitmap?.let { (it.width - screenWidth).coerceAtLeast(0) / 2 } ?: 0,
-            reverseDirection = false
+            pageBRightTravelPx = pageBBitmap?.let { (it.width - screenWidth).coerceAtLeast(0) / 2 } ?: 0
         )
     }
 
@@ -124,8 +122,7 @@ class ParallaxScrollTransition : PageTransitionRenderer {
         pageALeftTravelPx: Int,
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
-        pageBRightTravelPx: Int,
-        reverseDirection: Boolean
+        pageBRightTravelPx: Int
     ) {
         val p = progress.coerceIn(0f, 1f)
         val destination = Rect()
@@ -136,8 +133,7 @@ class ParallaxScrollTransition : PageTransitionRenderer {
             left: Int,
             leftTravel: Int,
             rightTravel: Int,
-            progressTravel: Float,
-            reverse: Boolean
+            progressTravel: Float
         ) {
             if (bitmap == null) return
             destination.set(left, 0, left + screenWidth, screenHeight)
@@ -145,11 +141,7 @@ class ParallaxScrollTransition : PageTransitionRenderer {
                 canvas.drawBitmap(bitmap, null, destination, paint)
                 return
             }
-            val sourceLeft = if (reverse) {
-                leftTravel * (1f - progressTravel)
-            } else {
-                leftTravel + rightTravel * progressTravel
-            }
+            val sourceLeft = leftTravel + rightTravel * progressTravel
             val boundedSourceLeft = sourceLeft
                 .toInt()
                 .coerceIn(0, (bitmap.width - screenWidth).coerceAtLeast(0))
@@ -162,16 +154,14 @@ class ParallaxScrollTransition : PageTransitionRenderer {
             (-p * screenWidth).toInt(),
             pageALeftTravelPx,
             pageARightTravelPx,
-            p,
-            reverse = reverseDirection
+            p
         )
         drawPage(
             pageBBitmap,
             ((1f - p) * screenWidth).toInt(),
             pageBLeftTravelPx,
             pageBRightTravelPx,
-            1f - p,
-            reverse = reverseDirection
+            1f - p
         )
         if (pageABitmap == null && pageBBitmap == null) {
             canvas.drawColor(Color.rgb(18, 22, 34))
