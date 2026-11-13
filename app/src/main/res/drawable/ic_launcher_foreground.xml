@@ -1,8 +1,27 @@
-<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item
-        android:width="66dp"
-        android:height="66dp"
-        android:drawable="@drawable/wallpaper_icon"
-        android:gravity="center" />
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#26304A"
+        android:pathData="M20,36a4,4 0,0 1,4 -4h12a4,4 0,0 1,4 4v44a4,4 0,0 1,-4 4h-12a4,4 0,0 1,-4 -4z" />
+    <path
+        android:fillColor="#354263"
+        android:pathData="M44,30a4,4 0,0 1,4 -4h12a4,4 0,0 1,4 4v44a4,4 0,0 1,-4 4h-12a4,4 0,0 1,-4 -4z" />
+    <path
+        android:fillColor="#26304A"
+        android:pathData="M68,24a4,4 0,0 1,4 -4h12a4,4 0,0 1,4 4v44a4,4 0,0 1,-4 4h-12a4,4 0,0 1,-4 -4z" />
+    <path
+        android:fillColor="#59D6C8"
+        android:pathData="M23,42h14v4h-14zM23,50h8v3h-8zM23,65h14v2h-14z" />
+    <path
+        android:fillColor="#A5B4FC"
+        android:pathData="M47,36h14v4h-14zM47,44h8v3h-8zM47,59h14v2h-14z" />
+    <path
+        android:fillColor="#FFB77D"
+        android:pathData="M71,30h14v4h-14zM71,38h8v3h-8zM71,53h14v2h-14z" />
+    <path
+        android:fillColor="#F2F4FF"
+        android:pathData="M34,72a3,3 0,1 0,0 6a3,3 0,0 0,0 -6M58,66a3,3 0,1 0,0 6a3,3 0,0 0,0 -6M82,60a3,3 0,1 0,0 6a3,3 0,0 0,0 -6" />
+</vector>

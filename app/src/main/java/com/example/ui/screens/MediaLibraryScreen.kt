@@ -38,13 +38,18 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,6 +66,34 @@ import java.io.File
 
 @Composable
 fun MediaLibraryScreen(
+    viewModel: WallpaperViewModel
+) {
+    var selectedLibraryTab by rememberSaveable { mutableIntStateOf(0) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScrollableTabRow(selectedTabIndex = selectedLibraryTab) {
+            Tab(
+                selected = selectedLibraryTab == 0,
+                onClick = { selectedLibraryTab = 0 },
+                text = { Text("Media") },
+                modifier = Modifier.testTag("library_media_tab")
+            )
+            Tab(
+                selected = selectedLibraryTab == 1,
+                onClick = { selectedLibraryTab = 1 },
+                text = { Text("App icon") },
+                modifier = Modifier.testTag("library_app_icon_tab")
+            )
+        }
+        when (selectedLibraryTab) {
+            0 -> OriginalMediaLibraryContent(viewModel)
+            else -> AppIconLibraryScreen()
+        }
+    }
+}
+
+@Composable
+private fun OriginalMediaLibraryContent(
     viewModel: WallpaperViewModel
 ) {
     val context = LocalContext.current
