@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
@@ -90,6 +91,7 @@ fun AppIconLibraryScreen() {
     var zoom by remember { mutableFloatStateOf(1f) }
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
+    var flipped by remember { mutableStateOf(false) }
     var isReady by remember { mutableStateOf(false) }
     var isWorking by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -109,7 +111,8 @@ fun AppIconLibraryScreen() {
                 hasCustomImage = customImage,
                 zoom = preferences.getFloat("zoom", 1f).coerceIn(MIN_ICON_ZOOM, MAX_ICON_ZOOM),
                 panX = preferences.getFloat("pan_x", 0f),
-                panY = preferences.getFloat("pan_y", 0f)
+                panY = preferences.getFloat("pan_y", 0f),
+                flipped = preferences.getBoolean("flipped", false)
             )
         }
         source = saved.bitmap
@@ -117,6 +120,7 @@ fun AppIconLibraryScreen() {
         zoom = saved.zoom
         panX = saved.panX
         panY = saved.panY
+        flipped = saved.flipped
         if (saved.bitmap == null) {
             error = "Could not read the saved icon image. Choose another image to continue."
         }
@@ -140,7 +144,8 @@ fun AppIconLibraryScreen() {
                     zoom = 1f
                     panX = 0f
                     panY = 0f
-                    persistFraming(context, zoom, panX, panY)
+                    flipped = false
+                    persistFraming(context, zoom, panX, panY, flipped)
                 } catch (e: Exception) {
                     error = "Could not load this image: ${e.localizedMessage ?: "unknown error"}"
                 } finally {
@@ -189,6 +194,7 @@ fun AppIconLibraryScreen() {
                         zoom = zoom,
                         panX = panX,
                         panY = panY,
+                        flipped = flipped,
                         onTransform = { centroidX, centroidY, scaleChange, deltaX, deltaY, width, height ->
                             val newZoom = (zoom * scaleChange).coerceIn(MIN_ICON_ZOOM, MAX_ICON_ZOOM)
                             val appliedScale = newZoom / zoom
@@ -197,7 +203,7 @@ fun AppIconLibraryScreen() {
                             panY = appliedScale * panY +
                                 ((centroidY - height / 2f) * (1f - appliedScale) + deltaY) / height
                             zoom = newZoom
-                            persistFraming(context, zoom, panX, panY)
+                            persistFraming(context, zoom, panX, panY, flipped)
                         },
                         modifier = Modifier
                             .fillMaxSize()
@@ -260,7 +266,7 @@ fun AppIconLibraryScreen() {
                     IconButton(
                         onClick = {
                             zoom = (zoom / ICON_ZOOM_STEP).coerceAtLeast(MIN_ICON_ZOOM)
-                            persistFraming(context, zoom, panX, panY)
+                            persistFraming(context, zoom, panX, panY, flipped)
                         },
                         enabled = isReady && source != null && zoom > MIN_ICON_ZOOM,
                         modifier = Modifier.testTag("app_icon_zoom_out")
@@ -270,12 +276,30 @@ fun AppIconLibraryScreen() {
                     IconButton(
                         onClick = {
                             zoom = (zoom * ICON_ZOOM_STEP).coerceAtMost(MAX_ICON_ZOOM)
-                            persistFraming(context, zoom, panX, panY)
+                            persistFraming(context, zoom, panX, panY, flipped)
                         },
                         enabled = isReady && source != null && zoom < MAX_ICON_ZOOM,
                         modifier = Modifier.testTag("app_icon_zoom_in")
                     ) {
                         Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                    }
+                    IconButton(
+                        onClick = {
+                            flipped = !flipped
+                            persistFraming(context, zoom, panX, panY, flipped)
+                        },
+                        enabled = isReady && source != null,
+                        modifier = Modifier.testTag("app_icon_flip")
+                    ) {
+                        Icon(
+                            Icons.Default.Flip,
+                            contentDescription = if (flipped) "Unflip image" else "Flip image",
+                            tint = if (flipped) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
                     }
                 }
                 OutlinedButton(
@@ -283,9 +307,10 @@ fun AppIconLibraryScreen() {
                         zoom = 1f
                         panX = 0f
                         panY = 0f
-                        persistFraming(context, zoom, panX, panY)
+                        flipped = false
+                        persistFraming(context, zoom, panX, panY, flipped)
                     },
-                    enabled = isReady && (zoom != 1f || panX != 0f || panY != 0f),
+                    enabled = isReady && (zoom != 1f || panX != 0f || panY != 0f || flipped),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.RestartAlt, contentDescription = null)
@@ -320,7 +345,7 @@ fun AppIconLibraryScreen() {
                 scope.launch {
                     try {
                         val icon = withContext(Dispatchers.IO) {
-                            AppIconArtwork.render(currentSource, zoom, panX, panY)
+                            AppIconArtwork.render(currentSource, zoom, panX, panY, flipped)
                         }
                         status = applyHomeScreenIcon(context, icon)
                     } catch (e: Exception) {
@@ -353,15 +378,17 @@ private data class IconEditorState(
     val hasCustomImage: Boolean,
     val zoom: Float,
     val panX: Float,
-    val panY: Float
+    val panY: Float,
+    val flipped: Boolean
 )
 
-private fun persistFraming(context: Context, zoom: Float, panX: Float, panY: Float) {
+private fun persistFraming(context: Context, zoom: Float, panX: Float, panY: Float, flipped: Boolean) {
     context.getSharedPreferences(APP_ICON_PREFS, Context.MODE_PRIVATE)
         .edit()
         .putFloat("zoom", zoom)
         .putFloat("pan_x", panX)
         .putFloat("pan_y", panY)
+        .putBoolean("flipped", flipped)
         .apply()
 }
 
@@ -371,6 +398,7 @@ private fun IconArtworkPreview(
     zoom: Float,
     panX: Float,
     panY: Float,
+    flipped: Boolean,
     onTransform: (
         centroidX: Float,
         centroidY: Float,
@@ -409,6 +437,9 @@ private fun IconArtworkPreview(
             canvas.drawColor(android.graphics.Color.rgb(20, 24, 36))
             canvas.save()
             canvas.clipPath(AppIconArtwork.windowPath(sizePx))
+            if (flipped) {
+                canvas.scale(-1f, 1f, left + width / 2f, top + height / 2f)
+            }
             canvas.drawBitmap(bitmap, null, RectF(left, top, left + width, top + height), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
             canvas.restore()
         }
@@ -443,7 +474,7 @@ private object AppIconArtwork {
         )
     }
 
-    fun render(source: Bitmap, zoom: Float, panX: Float, panY: Float): Bitmap {
+    fun render(source: Bitmap, zoom: Float, panX: Float, panY: Float, flipped: Boolean): Bitmap {
         val bitmap = Bitmap.createBitmap(APP_ICON_SIZE, APP_ICON_SIZE, Bitmap.Config.ARGB_8888)
         val canvas = AndroidCanvas(bitmap)
         canvas.drawColor(android.graphics.Color.rgb(20, 24, 36))
@@ -457,6 +488,9 @@ private object AppIconArtwork {
         val height = source.height * fit
         val left = (APP_ICON_SIZE - width) / 2f + panX * APP_ICON_SIZE
         val top = (APP_ICON_SIZE - height) / 2f + panY * APP_ICON_SIZE
+        if (flipped) {
+            canvas.scale(-1f, 1f, left + width / 2f, top + height / 2f)
+        }
         canvas.drawBitmap(
             source,
             null,
