@@ -6,6 +6,13 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.APP_ICON_MAX_ZOOM
+import com.example.data.model.APP_ICON_WINDOW_COUNT
+import com.example.data.model.AppIconFrame
+import com.example.data.model.AppIconGeometry
+import com.example.data.model.AppIconLibraryState
+import com.example.data.model.AppIconMode
+import com.example.data.model.AppIconPreset
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
@@ -18,6 +25,7 @@ import com.example.data.model.ParallaxMotionSettings
 import com.example.data.model.WallpaperAppState
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
+import com.example.data.repository.AppIconRepository
 import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
@@ -25,6 +33,7 @@ import com.example.render.SwipeDirectionLock
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
+import com.example.ui.icon.AppIconArtwork
 import com.example.transition.ClassicParallaxScrollTransition
 import com.example.transition.ParallaxScrollTransition
 import org.junit.Assert.assertEquals
@@ -36,6 +45,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlinx.coroutines.runBlocking
+import kotlin.math.roundToInt
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -804,5 +814,185 @@ class ExampleUnitTest {
         assertEquals(2, repository.appState.value.pages.size)
         assertTrue(File(context.filesDir, "cropped/restored.jpg").readBytes().contentEquals(restoredImage))
         assertFalse(staleImage.exists())
+    }
+
+    @Test
+    fun testAppIconPresetSerializationRoundTrip() {
+        val preset = AppIconPreset(
+            id = "preset-1",
+            name = "Night windows",
+            mode = AppIconMode.PER_WINDOW,
+            single = AppIconFrame(zoom = 1.5f, panX = -0.2f, panY = 0.3f, flipped = true),
+            windows = listOf(
+                AppIconFrame(zoom = 2f, panX = 0.1f),
+                AppIconFrame(zoom = 0.5f, panY = -0.4f, flipped = true),
+                AppIconFrame()
+            )
+        )
+        val restored = AppIconLibraryState.fromJson(
+            AppIconLibraryState(listOf(preset), preset.id).toJson()
+        )
+
+        assertNotNull(restored)
+        val active = restored?.activePreset ?: error("preset missing after round trip")
+        assertEquals("Night windows", active.name)
+        assertEquals(AppIconMode.PER_WINDOW, active.mode)
+        assertEquals(1.5f, active.single.zoom, 0.0001f)
+        assertEquals(-0.2f, active.single.panX, 0.0001f)
+        assertEquals(0.3f, active.single.panY, 0.0001f)
+        assertTrue(active.single.flipped)
+        assertEquals(2f, active.window(0).zoom, 0.0001f)
+        assertEquals(0.1f, active.window(0).panX, 0.0001f)
+        assertEquals(-0.4f, active.window(1).panY, 0.0001f)
+        assertTrue(active.window(1).flipped)
+        assertEquals(APP_ICON_WINDOW_COUNT, active.normalizedWindows().size)
+    }
+
+    @Test
+    fun testAppIconLibraryFallsBackToFirstPreset() {
+        val first = AppIconPreset(id = "a", name = "A")
+        val second = AppIconPreset(id = "b", name = "B")
+        val json = AppIconLibraryState(listOf(first, second), "missing").toJson()
+
+        val restored = AppIconLibraryState.fromJson(json)
+
+        assertEquals("a", restored?.activePresetId)
+        assertEquals("A", restored?.activePreset?.name)
+    }
+
+    @Test
+    fun testAppIconFrameZoomIsClampedAndDragStillApplies() {
+        val anchored = AppIconFrame().transformed(
+            centroidX = 0.5f,
+            centroidY = 0.5f,
+            scaleChange = 2f,
+            deltaX = 0.1f,
+            deltaY = -0.05f
+        )
+        assertEquals(2f, anchored.zoom, 0.0001f)
+        assertEquals(0.1f, anchored.panX, 0.0001f)
+        assertEquals(-0.05f, anchored.panY, 0.0001f)
+
+        val clamped = AppIconFrame(zoom = 10f).transformed(0.5f, 0.5f, 1000f, 0f, 0f)
+        assertEquals(APP_ICON_MAX_ZOOM, clamped.zoom, 0.0001f)
+    }
+
+    @Test
+    fun testAppIconGeometryKeepsWindowsInsideIconWithEvenGaps() {
+        assertEquals(0.10f, AppIconGeometry.left(0), 0.0001f)
+        for (index in 0 until APP_ICON_WINDOW_COUNT - 1) {
+            val gap = AppIconGeometry.left(index + 1) - AppIconGeometry.right(index)
+            assertEquals(AppIconGeometry.WINDOW_GAP, gap, 0.0001f)
+        }
+        assertEquals(0.10f, 1f - AppIconGeometry.right(APP_ICON_WINDOW_COUNT - 1), 0.0009f)
+        for (index in 0 until APP_ICON_WINDOW_COUNT) {
+            assertTrue(AppIconGeometry.top(index) >= 0.09f - 0.0001f)
+            assertTrue(AppIconGeometry.bottom(index) <= 0.90f + 0.0001f)
+        }
+        // New layout is tighter than the previous 0.18-wide windows with 0.10 gaps.
+        assertTrue(AppIconGeometry.WINDOW_WIDTH > 0.18f)
+        assertTrue(AppIconGeometry.WINDOW_GAP < 0.10f)
+    }
+
+    @Test
+    fun testAppIconArtworkMasksNewWindowLayout() {
+        val size = 100
+        val red = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        val fallback = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.rgb(10, 200, 10))
+        }
+        val exported = AppIconArtwork.compose(
+            size = size,
+            mode = AppIconMode.SINGLE,
+            singleBitmap = red,
+            singleFrame = AppIconFrame(),
+            windowBitmaps = emptyList(),
+            windowFrames = emptyList(),
+            fallback = fallback
+        )
+
+        for (index in 0 until APP_ICON_WINDOW_COUNT) {
+            val centerX = ((AppIconGeometry.left(index) + AppIconGeometry.right(index)) / 2f * size).roundToInt()
+            val centerY = ((AppIconGeometry.top(index) + AppIconGeometry.bottom(index)) / 2f * size).roundToInt()
+            assertEquals(Color.RED, exported.getPixel(centerX, centerY))
+        }
+        // The gap between the first and second window stays empty.
+        val gapX = ((AppIconGeometry.right(0) + AppIconGeometry.left(1)) / 2f * size).roundToInt()
+        val gapY = (0.6f * size).roundToInt()
+        assertEquals(AppIconArtwork.BACKGROUND_COLOR, exported.getPixel(gapX, gapY))
+        assertEquals(AppIconArtwork.BACKGROUND_COLOR, exported.getPixel(2, gapY))
+    }
+
+    @Test
+    fun testAppIconArtworkDrawsPerWindowImages() {
+        fun solid(color: Int) = Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(color)
+        }
+        val colors = listOf(
+            Color.rgb(255, 0, 0),
+            Color.rgb(0, 255, 0),
+            Color.rgb(0, 0, 255)
+        )
+        val size = 100
+        val exported = AppIconArtwork.compose(
+            size = size,
+            mode = AppIconMode.PER_WINDOW,
+            singleBitmap = null,
+            singleFrame = AppIconFrame(),
+            windowBitmaps = colors.map { solid(it) },
+            windowFrames = List(APP_ICON_WINDOW_COUNT) { AppIconFrame() },
+            fallback = solid(Color.WHITE)
+        )
+
+        for (index in 0 until APP_ICON_WINDOW_COUNT) {
+            val centerX = ((AppIconGeometry.left(index) + AppIconGeometry.right(index)) / 2f * size).roundToInt()
+            val centerY = ((AppIconGeometry.top(index) + AppIconGeometry.bottom(index)) / 2f * size).roundToInt()
+            assertEquals(colors[index], exported.getPixel(centerX, centerY))
+        }
+    }
+
+    @Test
+    fun testAppIconRepositoryMigratesLegacySettingsAndImage() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        File(context.filesDir, "app-icon-library.json").delete()
+        File(context.filesDir, "app-icon-source").delete()
+        File(context.filesDir, "app-icons").deleteRecursively()
+        context.getSharedPreferences("app_icon_settings", Context.MODE_PRIVATE)
+            .edit()
+            .putFloat("zoom", 2f)
+            .putFloat("pan_x", 0.25f)
+            .putFloat("pan_y", -0.5f)
+            .putBoolean("flipped", true)
+            .commit()
+        val legacyImage = File(context.filesDir, "app-icon-source")
+        legacyImage.writeBytes(byteArrayOf(1, 2, 3))
+
+        val repository = AppIconRepository(context)
+        val state = repository.loadState()
+
+        assertEquals(1, state.presets.size)
+        val preset = state.activePreset ?: error("migrated preset missing")
+        assertEquals(2f, preset.single.zoom, 0.0001f)
+        assertEquals(0.25f, preset.single.panX, 0.0001f)
+        assertEquals(-0.5f, preset.single.panY, 0.0001f)
+        assertTrue(preset.single.flipped)
+        assertFalse(legacyImage.exists())
+        assertTrue(repository.singleImageFile(preset.id).isFile)
+        assertTrue(File(context.filesDir, "app-icon-library.json").isFile)
+        assertFalse(repository.hasImage(preset.id, 0))
+
+        val reloaded = AppIconRepository(context).loadState()
+        assertEquals(preset.id, reloaded.activePresetId)
+        assertEquals(1, reloaded.presets.size)
+    }
+
+    @Test
+    fun testAppIconPresetWithWindowUpdatesKeepsThreeWindows() {
+        val preset = AppIconPreset(id = "x", name = "X")
+        val updated = preset.withWindow(1, AppIconFrame(zoom = 3f))
+
+        assertEquals(APP_ICON_WINDOW_COUNT, updated.normalizedWindows().size)
+        assertEquals(3f, updated.window(1).zoom, 0.0001f)
+        assertEquals(1f, updated.window(0).zoom, 0.0001f)
     }
 }
