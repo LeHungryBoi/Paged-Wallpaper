@@ -138,11 +138,12 @@ class ExampleUnitTest {
     @Test
     fun testTransitionRegistry() {
         val registry = TransitionRegistry
-        assertEquals(9, registry.transitions.size)
+        assertEquals(10, registry.transitions.size)
         assertNotNull(registry.get("scroll"))
         assertNotNull(registry.get("parallax"))
         assertNotNull(registry.get("parallax_classic"))
         assertNotNull(registry.get("swipe_reveal"))
+        assertNotNull(registry.get("swipe_reveal_stacked"))
         assertNotNull(registry.get("fade"))
         assertNotNull(registry.get("depth"))
         assertNotNull(registry.get("slide_over"))
@@ -150,6 +151,8 @@ class ExampleUnitTest {
         assertEquals("Classic Scroll", registry.get("scroll").displayName)
         assertEquals("Parallax Scroll", registry.get("parallax").displayName)
         assertEquals("Classic Parallax", registry.get("parallax_classic").displayName)
+        assertEquals("Swipe to Reveal", registry.get("swipe_reveal").displayName)
+        assertEquals("Swipe to Reveal Stacked", registry.get("swipe_reveal_stacked").displayName)
     }
 
     @Test
@@ -211,7 +214,7 @@ class ExampleUnitTest {
             pageARightTravelPx = 0,
             pageBLeftTravelPx = 0,
             pageBRightTravelPx = 0,
-            pageBRevealImageMotionPercent = 0.2f
+            revealImageMotionPercent = 0.2f
         )
 
         assertEquals(65, Color.red(output.getPixel(75, 0)))
@@ -219,6 +222,95 @@ class ExampleUnitTest {
         outgoing.recycle()
         incoming.recycle()
         output.recycle()
+    }
+
+    @Test
+    fun testSwipeRevealKeepsTheOutgoingPageOnTopWhenSwipingBackward() {
+        val incoming = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
+            setPixels(IntArray(100) { Color.rgb(it, 0, 0) }, 0, 100, 0, 0, 100, 1)
+        }
+        val outgoing = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.BLUE)
+        }
+        val output = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888)
+
+        TransitionRegistry.get("swipe_reveal").drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = incoming,
+            pageBBitmap = outgoing,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0,
+            pageSwipeForward = false
+        )
+
+        assertEquals(25, Color.red(output.getPixel(25, 0)))
+        assertEquals(Color.BLUE, output.getPixel(75, 0))
+
+        TransitionRegistry.get("swipe_reveal_stacked").drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = incoming,
+            pageBBitmap = outgoing,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0,
+            pageSwipeForward = false
+        )
+
+        assertEquals(75, Color.red(output.getPixel(25, 0)))
+
+        incoming.recycle()
+        outgoing.recycle()
+        output.recycle()
+    }
+
+    @Test
+    fun testPreviousSwipeRevealSelectionMigratesToStackedVariant() {
+        val pages = listOf(PageItem(pageIndex = 0), PageItem(pageIndex = 1))
+        val previousSetting = PageTransitionSetting(
+            universalTransitionId = "swipe_reveal",
+            leftTransitionId = "swipe_reveal",
+            rightTransitionId = "swipe_reveal",
+            separateDirections = true
+        )
+        val previousPreset = WallpaperPreset(
+            id = "preset",
+            name = "Preset",
+            pages = pages,
+            transitions = listOf(previousSetting)
+        )
+        val previousState = WallpaperAppState(
+            pages = pages,
+            calibration = CalibrationConfig(pageCount = 2),
+            transitionType = "swipe_reveal",
+            transitions = listOf(previousSetting),
+            presets = listOf(previousPreset),
+            activePresetId = previousPreset.id,
+            schemaVersion = 4
+        )
+
+        val migrated = PresetDataMigration.migrateTransitionStorage(previousState)
+
+        assertEquals(5, migrated.schemaVersion)
+        assertEquals("swipe_reveal_stacked", migrated.transitionType)
+        assertEquals(
+            "swipe_reveal_stacked",
+            migrated.transitions.single().transitionId(forward = true)
+        )
+        assertEquals(
+            "swipe_reveal_stacked",
+            migrated.presets.single().transitions.single().universalTransitionId
+        )
     }
 
     @Test
@@ -659,7 +751,7 @@ class ExampleUnitTest {
             )
         )
 
-        assertEquals(4, migrated.schemaVersion)
+        assertEquals(5, migrated.schemaVersion)
         assertEquals("parallax", migrated.transitions.single().universalTransitionId)
         assertEquals("parallax", migrated.transitions.single().rightTransitionId)
         assertEquals("fade", migrated.transitions.single().leftTransitionId)

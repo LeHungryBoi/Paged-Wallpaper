@@ -41,7 +41,8 @@ interface PageTransitionRenderer {
         pageBRightTravelPx: Int,
         pageASlowImageSpeed: Float? = null,
         pageBSlowImageSpeed: Float? = null,
-        pageBRevealImageMotionPercent: Float = 0f
+        revealImageMotionPercent: Float = 0f,
+        pageSwipeForward: Boolean = true
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -144,7 +145,8 @@ open class ParallaxScrollTransition(
         pageBRightTravelPx: Int,
         pageASlowImageSpeed: Float?,
         pageBSlowImageSpeed: Float?,
-        pageBRevealImageMotionPercent: Float
+        revealImageMotionPercent: Float,
+        pageSwipeForward: Boolean
     ) {
         val p = progress.coerceIn(0f, 1f)
 
@@ -203,11 +205,19 @@ open class ParallaxScrollTransition(
 
 class ClassicParallaxScrollTransition : ParallaxScrollTransition(useClassicIncomingTravel = true)
 
-class SwipeToRevealTransition : PageTransitionRenderer {
-    override val id: String = "swipe_reveal"
-    override val displayName: String = "Swipe to Reveal"
+open class SwipeRevealTransition(
+    private val followsSwipeDirection: Boolean
+) : PageTransitionRenderer {
+    override val id: String =
+        if (followsSwipeDirection) "swipe_reveal" else "swipe_reveal_stacked"
+    override val displayName: String =
+        if (followsSwipeDirection) "Swipe to Reveal" else "Swipe to Reveal Stacked"
     override val description: String =
-        "The current page slides away to reveal the next page underneath"
+        if (followsSwipeDirection) {
+            "The page being swiped away stays on top and reveals the incoming page"
+        } else {
+            "The left page stays on top of the right page while sliding away"
+        }
     override val supportsParallax: Boolean = true
     override val supportsRevealImageMotion: Boolean = true
 
@@ -254,43 +264,68 @@ class SwipeToRevealTransition : PageTransitionRenderer {
         pageBRightTravelPx: Int,
         pageASlowImageSpeed: Float?,
         pageBSlowImageSpeed: Float?,
-        pageBRevealImageMotionPercent: Float
+        revealImageMotionPercent: Float,
+        pageSwipeForward: Boolean
     ) {
         val p = progress.coerceIn(0f, 1f)
+        val imageMotion = (
+            screenWidth * revealImageMotionPercent.coerceIn(0f, 1f) *
+                (if (pageSwipeForward) 1f - p else p)
+        ).toInt()
 
-        if (pageBBitmap != null) {
-            val imageOffset = (
-                screenWidth * pageBRevealImageMotionPercent.coerceIn(0f, 1f) * (1f - p)
-            ).toInt()
-            destinationB.set(imageOffset, 0, imageOffset + screenWidth, screenHeight)
-            if (pageBBitmap.width <= screenWidth) {
-                canvas.drawBitmap(pageBBitmap, null, destinationB, paint)
+        fun drawPage(
+            bitmap: Bitmap?,
+            left: Int,
+            sourceLeft: Int,
+            destination: Rect,
+            source: Rect
+        ) {
+            if (bitmap == null) return
+            destination.set(left, 0, left + screenWidth, screenHeight)
+            if (bitmap.width <= screenWidth) {
+                canvas.drawBitmap(bitmap, null, destination, paint)
             } else {
-                val sourceLeft = pageBLeftTravelPx.coerceIn(0, pageBBitmap.width - screenWidth)
-                sourceB.set(
-                    sourceLeft,
+                val boundedSourceLeft = sourceLeft.coerceIn(0, bitmap.width - screenWidth)
+                source.set(
+                    boundedSourceLeft,
                     0,
-                    sourceLeft + screenWidth,
-                    pageBBitmap.height
+                    boundedSourceLeft + screenWidth,
+                    bitmap.height
                 )
-                canvas.drawBitmap(pageBBitmap, sourceB, destinationB, paint)
+                canvas.drawBitmap(bitmap, source, destination, paint)
             }
         }
 
-        if (pageABitmap != null && p < 1f) {
-            val left = (-p * screenWidth).toInt()
-            destinationA.set(left, 0, left + screenWidth, screenHeight)
-            if (pageABitmap.width <= screenWidth) {
-                canvas.drawBitmap(pageABitmap, null, destinationA, paint)
-            } else {
-                sourceA.set(
-                    pageALeftTravelPx.coerceIn(0, pageABitmap.width - screenWidth),
-                    0,
-                    pageALeftTravelPx.coerceIn(0, pageABitmap.width - screenWidth) + screenWidth,
-                    pageABitmap.height
-                )
-                canvas.drawBitmap(pageABitmap, sourceA, destinationA, paint)
-            }
+        if (followsSwipeDirection && !pageSwipeForward) {
+            drawPage(
+                pageABitmap,
+                -imageMotion,
+                pageALeftTravelPx,
+                destinationA,
+                sourceA
+            )
+            drawPage(
+                pageBBitmap,
+                ((1f - p) * screenWidth).toInt(),
+                pageBLeftTravelPx,
+                destinationB,
+                sourceB
+            )
+        } else {
+            drawPage(
+                pageBBitmap,
+                imageMotion,
+                pageBLeftTravelPx,
+                destinationB,
+                sourceB
+            )
+            drawPage(
+                pageABitmap,
+                (-p * screenWidth).toInt(),
+                pageALeftTravelPx,
+                destinationA,
+                sourceA
+            )
         }
 
         if (pageABitmap == null && pageBBitmap == null) {
@@ -298,6 +333,10 @@ class SwipeToRevealTransition : PageTransitionRenderer {
         }
     }
 }
+
+class SwipeToRevealTransition : SwipeRevealTransition(followsSwipeDirection = true)
+
+class SwipeToRevealStackedTransition : SwipeRevealTransition(followsSwipeDirection = false)
 
 /**
  * Cross Fade Dissolve transition
@@ -587,6 +626,7 @@ object TransitionRegistry {
         ParallaxScrollTransition(),
         ClassicParallaxScrollTransition(),
         SwipeToRevealTransition(),
+        SwipeToRevealStackedTransition(),
         CrossFadeTransition(),
         SoftBlurTransition(),
         DepthZoomTransition(),

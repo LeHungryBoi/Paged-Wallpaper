@@ -434,7 +434,7 @@ data class WallpaperAppState(
         (pages.size - 1).coerceAtLeast(0)
     ) { PageTransitionSetting(transitionType, transitionType) },
     val presetNeedsSave: Boolean = false,
-    val schemaVersion: Int = 4
+    val schemaVersion: Int = 5
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -455,7 +455,7 @@ data class WallpaperAppState(
         put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
         put("offsetEasingStrength", offsetEasingStrength)
         put("animationFrameRate", animationFrameRate)
-        put("schemaVersion", 4)
+        put("schemaVersion", 5)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
         put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })
