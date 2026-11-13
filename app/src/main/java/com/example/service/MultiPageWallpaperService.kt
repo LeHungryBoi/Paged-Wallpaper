@@ -27,12 +27,14 @@ import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
+import com.example.render.SwipeDirectionLock
 import com.example.transition.TransitionRegistry
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.exp
 
 private const val OFFSET_EPSILON = 0.00005f
+private const val STATIC_OFFSET_TOLERANCE = 0.001f
 private const val NANOS_PER_SECOND = 1_000_000_000L
 private const val MOTION_BLUR_DOWNSAMPLE_FACTOR = 2
 private const val MOTION_BLUR_SHUTTER_FRACTION = 1.0f
@@ -80,6 +82,7 @@ class MultiPageWallpaperService : WallpaperService() {
         private var currentXOffset = 0.5f
         private var renderedXOffset = currentXOffset
         private var offsetDirection = 0
+        private val swipeDirectionLock = SwipeDirectionLock()
         private var currentYOffset = 0.0f
         private var receivedXOffset: Float? = null
         private var receivedYOffset: Float? = null
@@ -120,6 +123,7 @@ class MultiPageWallpaperService : WallpaperService() {
             if (!isVisible || !hasReceivedLauncherOffset) {
                 currentXOffset = repository.getLastKnownOffsetOrHome()
                 renderedXOffset = currentXOffset
+                offsetDirection = swipeDirectionLock.reset()
                 stopOffsetAnimation()
             }
             if (!repository.appState.value.motionBlurEnabled) {
@@ -139,6 +143,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val calib = repository.appState.value.calibration
             currentXOffset = repository.getLastKnownOffsetOrHome()
             renderedXOffset = currentXOffset
+            offsetDirection = swipeDirectionLock.reset()
             awaitingResumeOffset = calib.homePageIndex != 0
             repository.addChangeListener(repoChangeListener)
             extraDimObserver = ExtraDimDetector.registerObserver(applicationContext) {
@@ -176,6 +181,7 @@ class MultiPageWallpaperService : WallpaperService() {
                         (sawZeroOffsetWhileHidden || !hasReceivedLauncherOffset || currentXOffset <= 0.001f)
                     ) {
                         currentXOffset = homeOffset
+                        offsetDirection = swipeDirectionLock.reset()
                         repository.saveLastKnownOffset(currentXOffset)
                     }
                     renderedXOffset = currentXOffset
@@ -284,6 +290,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 if (!hasReceivedLauncherOffset || !isVisible) {
                     currentXOffset = homeOffset
                     renderedXOffset = homeOffset
+                    offsetDirection = swipeDirectionLock.reset()
                     currentYOffset = yOffset
                     stopOffsetAnimation()
                     recoveringFromZeroOffset = false
@@ -299,11 +306,11 @@ class MultiPageWallpaperService : WallpaperService() {
             val nextXOffset = xOffset.coerceIn(0f, 1f)
             val offsetChanged = abs(nextXOffset - currentXOffset) > OFFSET_EPSILON
             val yOffsetChanged = currentYOffset != yOffset
-            if (nextXOffset > currentXOffset + 0.0001f) {
-                offsetDirection = 1
-            } else if (nextXOffset < currentXOffset - 0.0001f) {
-                offsetDirection = -1
-            }
+            offsetDirection = swipeDirectionLock.onOffsetChanged(
+                previousOffset = currentXOffset,
+                nextOffset = nextXOffset,
+                isAtStaticPage = isAtStaticPageOffset(nextXOffset, calib)
+            )
             currentXOffset = nextXOffset
             currentYOffset = yOffset
             hasReceivedLauncherOffset = true
@@ -337,6 +344,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     // Swiped home or home button pressed
                     currentXOffset = calib.getHomeOffset()
                     renderedXOffset = currentXOffset
+                    offsetDirection = swipeDirectionLock.reset()
                     stopOffsetAnimation()
                     awaitingResumeOffset = calib.homePageIndex != 0
                     recoveringFromZeroOffset = false
@@ -366,6 +374,7 @@ class MultiPageWallpaperService : WallpaperService() {
                                     val calib = repository.appState.value.calibration
                                     currentXOffset = calib.getHomeOffset()
                                     renderedXOffset = currentXOffset
+                                    offsetDirection = swipeDirectionLock.reset()
                                     stopOffsetAnimation()
                                     awaitingResumeOffset = calib.homePageIndex != 0
                                     recoveringFromZeroOffset = false
@@ -382,6 +391,7 @@ class MultiPageWallpaperService : WallpaperService() {
                                 if (!hasReceivedLauncherOffset || (currentXOffset <= 0.001f && calib.homePageIndex != 0)) {
                                     currentXOffset = calib.getHomeOffset()
                                     renderedXOffset = currentXOffset
+                                    offsetDirection = swipeDirectionLock.reset()
                                     stopOffsetAnimation()
                                     repository.saveLastKnownOffset(currentXOffset)
                                 }
@@ -586,6 +596,9 @@ class MultiPageWallpaperService : WallpaperService() {
                     )
                     lastMotionBlurPagePosition = pagePosition
                     lastMotionBlurFrameTimeNanos = frameTimeNanos
+                    if (!isOffsetAnimationNeeded()) {
+                        offsetDirection = swipeDirectionLock.onFrameSettled()
+                    }
                 }
             }
         }
@@ -920,6 +933,21 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             setPageTransition(0, 0, 0f)
+        }
+
+        private fun isAtStaticPageOffset(
+            offset: Float,
+            calib: CalibrationConfig
+        ): Boolean {
+            val count = calib.pageCount.coerceAtLeast(1)
+            val anchors = if (calib.customOffsets.size >= count) {
+                calib.customOffsets.take(count)
+            } else {
+                List(count) { index ->
+                    if (count <= 1) 0f else index.toFloat() / (count - 1).toFloat()
+                }
+            }
+            return anchors.any { abs(offset - it) <= STATIC_OFFSET_TOLERANCE }
         }
 
         private fun setPageTransition(pageA: Int, pageB: Int, progress: Float) {

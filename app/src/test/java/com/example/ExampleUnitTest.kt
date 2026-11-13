@@ -21,6 +21,7 @@ import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
+import com.example.render.SwipeDirectionLock
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
@@ -272,6 +273,19 @@ class ExampleUnitTest {
         incoming.recycle()
         outgoing.recycle()
         output.recycle()
+    }
+
+    @Test
+    fun testSwipeDirectionStaysLockedUntilTheStaticPageHasSettled() {
+        val directionLock = SwipeDirectionLock()
+
+        assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.6f, false))
+        assertEquals(1, directionLock.onOffsetChanged(0.6f, 0.55f, false))
+        assertEquals(1, directionLock.onOffsetChanged(0.55f, 0.5f, true))
+        assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.49f, false))
+        assertEquals(1, directionLock.onOffsetChanged(0.49f, 0.5f, true))
+        assertEquals(1, directionLock.onFrameSettled())
+        assertEquals(-1, directionLock.onOffsetChanged(0.5f, 0.49f, false))
     }
 
     @Test
