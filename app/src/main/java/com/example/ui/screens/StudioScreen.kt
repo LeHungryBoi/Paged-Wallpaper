@@ -208,6 +208,35 @@ private fun ParallaxMotionControls(
 }
 
 @Composable
+private fun RevealImageMotionControl(
+    boundaryIndex: Int,
+    itemName: String,
+    motionPercent: Float,
+    onUpdate: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            "Reveal image motion: ${(motionPercent * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelSmall
+        )
+        Slider(
+            value = motionPercent,
+            onValueChange = onUpdate,
+            valueRange = 0f..1f,
+            modifier = Modifier.testTag("reveal_image_motion_${boundaryIndex}_$itemName")
+        )
+        Text(
+            "0% keeps the image still; higher values add more leftward motion.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
 private fun PageTransitionControls(
     boundaryIndex: Int,
     setting: PageTransitionSetting,
@@ -251,7 +280,11 @@ private fun PageTransitionControls(
                                     leftTransitionId = setting.universalTransitionId,
                                     rightTransitionId = setting.universalTransitionId,
                                     leftParallaxMotion = setting.universalParallaxMotion,
-                                    rightParallaxMotion = setting.universalParallaxMotion
+                                    rightParallaxMotion = setting.universalParallaxMotion,
+                                    leftRevealImageMotionPercent =
+                                        setting.universalRevealImageMotionPercent,
+                                    rightRevealImageMotionPercent =
+                                        setting.universalRevealImageMotionPercent
                                 )
                             } else {
                                 setting.copy(separateDirections = false)
@@ -271,12 +304,22 @@ private fun PageTransitionControls(
                     icon = Icons.AutoMirrored.Filled.ArrowForward,
                     onSelect = { onUpdate(setting.copy(rightTransitionId = it)) }
                 )
-                if (TransitionRegistry.get(setting.rightTransitionId).supportsParallax) {
+                if (TransitionRegistry.get(setting.rightTransitionId).supportsParallax &&
+                    !TransitionRegistry.get(setting.rightTransitionId).supportsRevealImageMotion
+                ) {
                     ParallaxMotionControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "right",
                         settings = setting.rightParallaxMotion,
                         onUpdate = { onUpdate(setting.copy(rightParallaxMotion = it)) }
+                    )
+                }
+                if (TransitionRegistry.get(setting.rightTransitionId).supportsRevealImageMotion) {
+                    RevealImageMotionControl(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "right",
+                        motionPercent = setting.rightRevealImageMotionPercent,
+                        onUpdate = { onUpdate(setting.copy(rightRevealImageMotionPercent = it)) }
                     )
                 }
                 TransitionSelector(
@@ -287,12 +330,22 @@ private fun PageTransitionControls(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     onSelect = { onUpdate(setting.copy(leftTransitionId = it)) }
                 )
-                if (TransitionRegistry.get(setting.leftTransitionId).supportsParallax) {
+                if (TransitionRegistry.get(setting.leftTransitionId).supportsParallax &&
+                    !TransitionRegistry.get(setting.leftTransitionId).supportsRevealImageMotion
+                ) {
                     ParallaxMotionControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "left",
                         settings = setting.leftParallaxMotion,
                         onUpdate = { onUpdate(setting.copy(leftParallaxMotion = it)) }
+                    )
+                }
+                if (TransitionRegistry.get(setting.leftTransitionId).supportsRevealImageMotion) {
+                    RevealImageMotionControl(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "left",
+                        motionPercent = setting.leftRevealImageMotionPercent,
+                        onUpdate = { onUpdate(setting.copy(leftRevealImageMotionPercent = it)) }
                     )
                 }
             } else {
@@ -304,12 +357,24 @@ private fun PageTransitionControls(
                     icon = Icons.Default.SwapHoriz,
                     onSelect = { onUpdate(setting.copy(universalTransitionId = it)) }
                 )
-                if (TransitionRegistry.get(setting.universalTransitionId).supportsParallax) {
+                if (TransitionRegistry.get(setting.universalTransitionId).supportsParallax &&
+                    !TransitionRegistry.get(setting.universalTransitionId).supportsRevealImageMotion
+                ) {
                     ParallaxMotionControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "universal",
                         settings = setting.universalParallaxMotion,
                         onUpdate = { onUpdate(setting.copy(universalParallaxMotion = it)) }
+                    )
+                }
+                if (TransitionRegistry.get(setting.universalTransitionId).supportsRevealImageMotion) {
+                    RevealImageMotionControl(
+                        boundaryIndex = boundaryIndex,
+                        itemName = "universal",
+                        motionPercent = setting.universalRevealImageMotionPercent,
+                        onUpdate = {
+                            onUpdate(setting.copy(universalRevealImageMotionPercent = it))
+                        }
                     )
                 }
             }

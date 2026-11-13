@@ -735,7 +735,10 @@ class MultiPageWallpaperService : WallpaperService() {
                     pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
                     pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
                     pageASlowImageSpeed = slowImageSpeed,
-                    pageBSlowImageSpeed = slowImageSpeed
+                    pageBSlowImageSpeed = slowImageSpeed,
+                    pageBRevealImageMotionPercent = transitionSetting
+                        ?.revealImageMotionPercent(offsetDirection >= 0)
+                        ?: 0f
                 )
             } else {
                 renderer.draw(

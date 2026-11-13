@@ -14,6 +14,8 @@ interface PageTransitionRenderer {
     val description: String
     val supportsParallax: Boolean
         get() = false
+    val supportsRevealImageMotion: Boolean
+        get() = false
 
     fun draw(
         canvas: Canvas,
@@ -38,7 +40,8 @@ interface PageTransitionRenderer {
         pageBLeftTravelPx: Int,
         pageBRightTravelPx: Int,
         pageASlowImageSpeed: Float? = null,
-        pageBSlowImageSpeed: Float? = null
+        pageBSlowImageSpeed: Float? = null,
+        pageBRevealImageMotionPercent: Float = 0f
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -140,7 +143,8 @@ open class ParallaxScrollTransition(
         pageBLeftTravelPx: Int,
         pageBRightTravelPx: Int,
         pageASlowImageSpeed: Float?,
-        pageBSlowImageSpeed: Float?
+        pageBSlowImageSpeed: Float?,
+        pageBRevealImageMotionPercent: Float
     ) {
         val p = progress.coerceIn(0f, 1f)
 
@@ -198,6 +202,102 @@ open class ParallaxScrollTransition(
 }
 
 class ClassicParallaxScrollTransition : ParallaxScrollTransition(useClassicIncomingTravel = true)
+
+class SwipeToRevealTransition : PageTransitionRenderer {
+    override val id: String = "swipe_reveal"
+    override val displayName: String = "Swipe to Reveal"
+    override val description: String =
+        "The current page slides away to reveal the next page underneath"
+    override val supportsParallax: Boolean = true
+    override val supportsRevealImageMotion: Boolean = true
+
+    private val sourceA = Rect()
+    private val sourceB = Rect()
+    private val destinationA = Rect()
+    private val destinationB = Rect()
+
+    override fun draw(
+        canvas: Canvas,
+        pageABitmap: Bitmap?,
+        pageBBitmap: Bitmap?,
+        progress: Float,
+        screenWidth: Int,
+        screenHeight: Int,
+        paint: Paint
+    ) {
+        drawWithParallax(
+            canvas = canvas,
+            pageABitmap = pageABitmap,
+            pageBBitmap = pageBBitmap,
+            progress = progress,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            paint = paint,
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0
+        )
+    }
+
+    override fun drawWithParallax(
+        canvas: Canvas,
+        pageABitmap: Bitmap?,
+        pageBBitmap: Bitmap?,
+        progress: Float,
+        screenWidth: Int,
+        screenHeight: Int,
+        paint: Paint,
+        pageALeftTravelPx: Int,
+        pageARightTravelPx: Int,
+        pageBLeftTravelPx: Int,
+        pageBRightTravelPx: Int,
+        pageASlowImageSpeed: Float?,
+        pageBSlowImageSpeed: Float?,
+        pageBRevealImageMotionPercent: Float
+    ) {
+        val p = progress.coerceIn(0f, 1f)
+
+        if (pageBBitmap != null) {
+            val imageOffset = (
+                screenWidth * pageBRevealImageMotionPercent.coerceIn(0f, 1f) * (1f - p)
+            ).toInt()
+            destinationB.set(imageOffset, 0, imageOffset + screenWidth, screenHeight)
+            if (pageBBitmap.width <= screenWidth) {
+                canvas.drawBitmap(pageBBitmap, null, destinationB, paint)
+            } else {
+                val sourceLeft = pageBLeftTravelPx.coerceIn(0, pageBBitmap.width - screenWidth)
+                sourceB.set(
+                    sourceLeft,
+                    0,
+                    sourceLeft + screenWidth,
+                    pageBBitmap.height
+                )
+                canvas.drawBitmap(pageBBitmap, sourceB, destinationB, paint)
+            }
+        }
+
+        if (pageABitmap != null && p < 1f) {
+            val left = (-p * screenWidth).toInt()
+            destinationA.set(left, 0, left + screenWidth, screenHeight)
+            if (pageABitmap.width <= screenWidth) {
+                canvas.drawBitmap(pageABitmap, null, destinationA, paint)
+            } else {
+                sourceA.set(
+                    pageALeftTravelPx.coerceIn(0, pageABitmap.width - screenWidth),
+                    0,
+                    pageALeftTravelPx.coerceIn(0, pageABitmap.width - screenWidth) + screenWidth,
+                    pageABitmap.height
+                )
+                canvas.drawBitmap(pageABitmap, sourceA, destinationA, paint)
+            }
+        }
+
+        if (pageABitmap == null && pageBBitmap == null) {
+            canvas.drawColor(Color.rgb(18, 22, 34))
+        }
+    }
+}
 
 /**
  * Cross Fade Dissolve transition
@@ -486,6 +586,7 @@ object TransitionRegistry {
         ClassicScrollTransition(),
         ParallaxScrollTransition(),
         ClassicParallaxScrollTransition(),
+        SwipeToRevealTransition(),
         CrossFadeTransition(),
         SoftBlurTransition(),
         DepthZoomTransition(),

@@ -138,10 +138,11 @@ class ExampleUnitTest {
     @Test
     fun testTransitionRegistry() {
         val registry = TransitionRegistry
-        assertEquals(8, registry.transitions.size)
+        assertEquals(9, registry.transitions.size)
         assertNotNull(registry.get("scroll"))
         assertNotNull(registry.get("parallax"))
         assertNotNull(registry.get("parallax_classic"))
+        assertNotNull(registry.get("swipe_reveal"))
         assertNotNull(registry.get("fade"))
         assertNotNull(registry.get("depth"))
         assertNotNull(registry.get("slide_over"))
@@ -149,6 +150,75 @@ class ExampleUnitTest {
         assertEquals("Classic Scroll", registry.get("scroll").displayName)
         assertEquals("Parallax Scroll", registry.get("parallax").displayName)
         assertEquals("Classic Parallax", registry.get("parallax_classic").displayName)
+    }
+
+    @Test
+    fun testSwipeRevealMotionSettingSerializationAndDirectionSelection() {
+        val setting = PageTransitionSetting(
+            universalTransitionId = "swipe_reveal",
+            separateDirections = true,
+            leftRevealImageMotionPercent = 0.2f,
+            rightRevealImageMotionPercent = 0.65f
+        )
+        val restored = PageTransitionSetting.fromJson(setting.toJson())
+
+        assertEquals(0.2f, restored.revealImageMotionPercent(forward = false), 0.001f)
+        assertEquals(0.65f, restored.revealImageMotionPercent(forward = true), 0.001f)
+        assertEquals(
+            0f,
+            PageTransitionSetting.fromJson(JSONObject()).universalRevealImageMotionPercent,
+            0.001f
+        )
+    }
+
+    @Test
+    fun testSwipeRevealImageMotionIsIndependentAndConfigurable() {
+        val outgoing = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(Color.RED)
+        }
+        val incoming = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
+            setPixels(IntArray(100) { Color.rgb(it, 0, 0) }, 0, 100, 0, 0, 100, 1)
+        }
+        val output = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888)
+
+        val transition = TransitionRegistry.get("swipe_reveal")
+        transition.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = outgoing,
+            pageBBitmap = incoming,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0
+        )
+
+        assertEquals(Color.RED, output.getPixel(25, 0))
+        assertEquals(75, Color.red(output.getPixel(75, 0)))
+
+        transition.drawWithParallax(
+            canvas = Canvas(output),
+            pageABitmap = outgoing,
+            pageBBitmap = incoming,
+            progress = 0.5f,
+            screenWidth = 100,
+            screenHeight = 1,
+            paint = Paint(),
+            pageALeftTravelPx = 0,
+            pageARightTravelPx = 0,
+            pageBLeftTravelPx = 0,
+            pageBRightTravelPx = 0,
+            pageBRevealImageMotionPercent = 0.2f
+        )
+
+        assertEquals(65, Color.red(output.getPixel(75, 0)))
+
+        outgoing.recycle()
+        incoming.recycle()
+        output.recycle()
     }
 
     @Test

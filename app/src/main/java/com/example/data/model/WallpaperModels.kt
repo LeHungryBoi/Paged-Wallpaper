@@ -108,7 +108,10 @@ data class PageTransitionSetting(
     val separateDirections: Boolean = false,
     val universalParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
     val leftParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
-    val rightParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings()
+    val rightParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
+    val universalRevealImageMotionPercent: Float = 0f,
+    val leftRevealImageMotionPercent: Float = universalRevealImageMotionPercent,
+    val rightRevealImageMotionPercent: Float = universalRevealImageMotionPercent
 ) {
     fun transitionId(forward: Boolean): String =
         if (!separateDirections) universalTransitionId
@@ -118,6 +121,11 @@ data class PageTransitionSetting(
         if (!separateDirections) universalParallaxMotion
         else if (forward) rightParallaxMotion else leftParallaxMotion
 
+    fun revealImageMotionPercent(forward: Boolean): Float =
+        (if (!separateDirections) universalRevealImageMotionPercent
+        else if (forward) rightRevealImageMotionPercent else leftRevealImageMotionPercent)
+            .coerceIn(0f, 1f)
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("universalTransitionId", universalTransitionId)
         put("leftTransitionId", leftTransitionId)
@@ -126,6 +134,9 @@ data class PageTransitionSetting(
         put("universalParallaxMotion", universalParallaxMotion.toJson())
         put("leftParallaxMotion", leftParallaxMotion.toJson())
         put("rightParallaxMotion", rightParallaxMotion.toJson())
+        put("universalRevealImageMotionPercent", universalRevealImageMotionPercent.toDouble())
+        put("leftRevealImageMotionPercent", leftRevealImageMotionPercent.toDouble())
+        put("rightRevealImageMotionPercent", rightRevealImageMotionPercent.toDouble())
     }
 
     companion object {
@@ -148,7 +159,19 @@ data class PageTransitionSetting(
                 ),
                 rightParallaxMotion = ParallaxMotionSettings.fromJson(
                     json.optJSONObject("rightParallaxMotion")
-                )
+                ),
+                universalRevealImageMotionPercent = json.optDouble(
+                    "universalRevealImageMotionPercent",
+                    0.0
+                ).toFloat().coerceIn(0f, 1f),
+                leftRevealImageMotionPercent = json.optDouble(
+                    "leftRevealImageMotionPercent",
+                    json.optDouble("universalRevealImageMotionPercent", 0.0)
+                ).toFloat().coerceIn(0f, 1f),
+                rightRevealImageMotionPercent = json.optDouble(
+                    "rightRevealImageMotionPercent",
+                    json.optDouble("universalRevealImageMotionPercent", 0.0)
+                ).toFloat().coerceIn(0f, 1f)
             )
         }
     }
