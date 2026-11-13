@@ -34,14 +34,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,10 +71,14 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 private const val APP_ICON_SHORTCUT_ID = "paperpages_custom_app_icon"
 private const val APP_ICON_SIZE = 512
 private const val APP_ICON_PREFS = "app_icon_settings"
+private const val MIN_ICON_ZOOM = 0.1f
+private const val MAX_ICON_ZOOM = 100f
+private const val ICON_ZOOM_STEP = 1.2f
 
 @Composable
 fun AppIconLibraryScreen() {
@@ -102,9 +107,9 @@ fun AppIconLibraryScreen() {
             IconEditorState(
                 bitmap = bitmap,
                 hasCustomImage = customImage,
-                zoom = preferences.getFloat("zoom", 1f).coerceIn(1f, 4f),
-                panX = preferences.getFloat("pan_x", 0f).coerceIn(-1f, 1f),
-                panY = preferences.getFloat("pan_y", 0f).coerceIn(-1f, 1f)
+                zoom = preferences.getFloat("zoom", 1f).coerceIn(MIN_ICON_ZOOM, MAX_ICON_ZOOM),
+                panX = preferences.getFloat("pan_x", 0f),
+                panY = preferences.getFloat("pan_y", 0f)
             )
         }
         source = saved.bitmap
@@ -159,7 +164,7 @@ fun AppIconLibraryScreen() {
         ) {
             Text("App icon", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Choose a photo and frame it inside three offset windows. Drag or pinch the preview to adjust it.",
+                "Choose a photo, then drag or pinch it freely behind the three windows.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -184,13 +189,14 @@ fun AppIconLibraryScreen() {
                         zoom = zoom,
                         panX = panX,
                         panY = panY,
-                        onTransform = { scaleChange, deltaX, deltaY, width, height ->
-                            zoom = (zoom * scaleChange).coerceIn(1f, 4f)
-                            val fit = max(width / source!!.width, height / source!!.height) * zoom
-                            val overflowX = ((source!!.width * fit - width) / 2f).coerceAtLeast(1f)
-                            val overflowY = ((source!!.height * fit - height) / 2f).coerceAtLeast(1f)
-                            panX = (panX + deltaX / overflowX).coerceIn(-1f, 1f)
-                            panY = (panY + deltaY / overflowY).coerceIn(-1f, 1f)
+                        onTransform = { centroidX, centroidY, scaleChange, deltaX, deltaY, width, height ->
+                            val newZoom = (zoom * scaleChange).coerceIn(MIN_ICON_ZOOM, MAX_ICON_ZOOM)
+                            val appliedScale = newZoom / zoom
+                            panX = appliedScale * panX +
+                                ((centroidX - width / 2f) * (1f - appliedScale) + deltaX) / width
+                            panY = appliedScale * panY +
+                                ((centroidY - height / 2f) * (1f - appliedScale) + deltaY) / height
+                            zoom = newZoom
                             persistFraming(context, zoom, panX, panY)
                         },
                         modifier = Modifier
@@ -242,24 +248,36 @@ fun AppIconLibraryScreen() {
                     }
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.ZoomIn, contentDescription = null, modifier = Modifier.size(20.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        "Zoom  ${"%.1f".format(zoom)}×",
-                        modifier = Modifier.padding(start = 8.dp),
+                        "Zoom ${(zoom * 100f).roundToInt()}%",
                         style = MaterialTheme.typography.labelLarge
                     )
+                    Spacer(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            zoom = (zoom / ICON_ZOOM_STEP).coerceAtLeast(MIN_ICON_ZOOM)
+                            persistFraming(context, zoom, panX, panY)
+                        },
+                        enabled = isReady && source != null && zoom > MIN_ICON_ZOOM,
+                        modifier = Modifier.testTag("app_icon_zoom_out")
+                    ) {
+                        Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
+                    }
+                    IconButton(
+                        onClick = {
+                            zoom = (zoom * ICON_ZOOM_STEP).coerceAtMost(MAX_ICON_ZOOM)
+                            persistFraming(context, zoom, panX, panY)
+                        },
+                        enabled = isReady && source != null && zoom < MAX_ICON_ZOOM,
+                        modifier = Modifier.testTag("app_icon_zoom_in")
+                    ) {
+                        Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                    }
                 }
-                Slider(
-                    value = zoom,
-                    onValueChange = {
-                        zoom = it
-                        persistFraming(context, zoom, panX, panY)
-                    },
-                    valueRange = 1f..4f,
-                    enabled = isReady && source != null,
-                    modifier = Modifier.testTag("app_icon_zoom_slider")
-                )
                 OutlinedButton(
                     onClick = {
                         zoom = 1f
@@ -353,14 +371,30 @@ private fun IconArtworkPreview(
     zoom: Float,
     panX: Float,
     panY: Float,
-    onTransform: (scaleChange: Float, deltaX: Float, deltaY: Float, width: Float, height: Float) -> Unit,
+    onTransform: (
+        centroidX: Float,
+        centroidY: Float,
+        scaleChange: Float,
+        deltaX: Float,
+        deltaY: Float,
+        width: Float,
+        height: Float
+    ) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val latestOnTransform by rememberUpdatedState(onTransform)
     Canvas(
         modifier = modifier.pointerInput(bitmap) {
-            detectTransformGestures { _, pan, zoomChange, _ ->
-                latestOnTransform(zoomChange, pan.x, pan.y, size.width.toFloat(), size.height.toFloat())
+            detectTransformGestures { centroid, pan, zoomChange, _ ->
+                latestOnTransform(
+                    centroid.x,
+                    centroid.y,
+                    zoomChange,
+                    pan.x,
+                    pan.y,
+                    size.width.toFloat(),
+                    size.height.toFloat()
+                )
             }
         }
     ) {
@@ -370,8 +404,8 @@ private fun IconArtworkPreview(
             val fit = max(sizePx / bitmap.width, size.height / bitmap.height) * zoom
             val width = bitmap.width * fit
             val height = bitmap.height * fit
-            val left = (sizePx - width) / 2f + panX * ((width - sizePx) / 2f).coerceAtLeast(0f)
-            val top = (size.height - height) / 2f + panY * ((height - size.height) / 2f).coerceAtLeast(0f)
+            val left = (sizePx - width) / 2f + panX * sizePx
+            val top = (size.height - height) / 2f + panY * size.height
             canvas.drawColor(android.graphics.Color.rgb(20, 24, 36))
             canvas.save()
             canvas.clipPath(AppIconArtwork.windowPath(sizePx))
@@ -418,11 +452,11 @@ private object AppIconArtwork {
         val fit = max(
             APP_ICON_SIZE.toFloat() / source.width,
             APP_ICON_SIZE.toFloat() / source.height
-        ) * zoom.coerceIn(1f, 4f)
+        ) * zoom.coerceIn(MIN_ICON_ZOOM, MAX_ICON_ZOOM)
         val width = source.width * fit
         val height = source.height * fit
-        val left = (APP_ICON_SIZE - width) / 2f + panX.coerceIn(-1f, 1f) * ((width - APP_ICON_SIZE) / 2f).coerceAtLeast(0f)
-        val top = (APP_ICON_SIZE - height) / 2f + panY.coerceIn(-1f, 1f) * ((height - APP_ICON_SIZE) / 2f).coerceAtLeast(0f)
+        val left = (APP_ICON_SIZE - width) / 2f + panX * APP_ICON_SIZE
+        val top = (APP_ICON_SIZE - height) / 2f + panY * APP_ICON_SIZE
         canvas.drawBitmap(
             source,
             null,
