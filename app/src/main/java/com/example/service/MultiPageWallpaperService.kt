@@ -34,7 +34,8 @@ import kotlin.math.ceil
 import kotlin.math.exp
 
 private const val OFFSET_EPSILON = 0.00005f
-private const val STATIC_OFFSET_TOLERANCE = 0.001f
+private const val STATIC_OFFSET_TOLERANCE = 0.002f
+private const val STATIC_OFFSET_SEGMENT_TOLERANCE_RATIO = 0.02f
 private const val NANOS_PER_SECOND = 1_000_000_000L
 private const val MOTION_BLUR_DOWNSAMPLE_FACTOR = 2
 private const val MOTION_BLUR_SHUTTER_FRACTION = 1.0f
@@ -95,6 +96,7 @@ class MultiPageWallpaperService : WallpaperService() {
         private val offsetOverlayBounds = RectF()
         private var isVisible = false
         private var hasReceivedLauncherOffset = false
+        private var lastLauncherXOffsetStep = 0f
         private var awaitingResumeOffset = false
         private var recoveringFromZeroOffset = false
         private var sawZeroOffsetWhileHidden = false
@@ -178,7 +180,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 // if the launcher's home page is not screen 1.
                 if (!wasVisible) {
                     if (calib.homePageIndex != 0 &&
-                        (sawZeroOffsetWhileHidden || !hasReceivedLauncherOffset || currentXOffset <= 0.001f)
+                        (sawZeroOffsetWhileHidden || !hasReceivedLauncherOffset ||
+                            (currentXOffset <= 0.001f && lastLauncherXOffsetStep <= 0f))
                     ) {
                         currentXOffset = homeOffset
                         offsetDirection = swipeDirectionLock.reset()
@@ -251,24 +254,29 @@ class MultiPageWallpaperService : WallpaperService() {
             receivedYOffset = yOffset
             val calib = repository.appState.value.calibration
             val homeOffset = calib.getHomeOffset()
+            lastLauncherXOffsetStep = xOffsetStep
             val isZeroOffset = xOffset <= 0.001f
+            // A real page-1 offset also has xOffset == 0, but a real launcher reports a
+            // positive xOffsetStep. Only the zero-without-step combination is a dummy reset.
+            val isDummyZeroOffset = isZeroOffset && xOffsetStep <= 0f
 
-            if (calib.homePageIndex != 0 && !isVisible && isZeroOffset) {
+            if (calib.homePageIndex != 0 && !isVisible && isDummyZeroOffset) {
                 sawZeroOffsetWhileHidden = true
                 return
             }
 
             if (calib.homePageIndex != 0 && isVisible) {
-                if (awaitingResumeOffset && isZeroOffset) {
+                if (awaitingResumeOffset && isDummyZeroOffset) {
                     recoveringFromZeroOffset = true
                 }
 
                 if (recoveringFromZeroOffset) {
-                    val homeTolerance = maxOf(0.02f, kotlin.math.abs(xOffsetStep) * 0.05f)
-                    if (kotlin.math.abs(xOffset - homeOffset) > homeTolerance) {
+                    if (isDummyZeroOffset) {
                         drawFrame(fromOffsetUpdate = true)
                         return
                     }
+                    // A real launcher offset means the user is actively swiping; never
+                    // swallow offsets just because they are between page 1 and the home page.
                     recoveringFromZeroOffset = false
                 }
                 awaitingResumeOffset = false
@@ -278,7 +286,7 @@ class MultiPageWallpaperService : WallpaperService() {
             // When fullscreen apps (like YouTube / PiP) or lock screens are active,
             // Android WindowManager dispatches xOffset = 0.0f with xOffsetStep <= 0.0f.
             // When homePageIndex != 0, accepting this would wrongly snap to screen 1!
-            val isDummySystemReset = (xOffset == 0.0f && xOffsetStep <= 0.0f && calib.homePageIndex != 0)
+            val isDummySystemReset = isDummyZeroOffset && calib.homePageIndex != 0
 
             // Ignore system resets while the wallpaper is completely hidden behind an app
             if (!isVisible && isDummySystemReset) {
@@ -388,7 +396,9 @@ class MultiPageWallpaperService : WallpaperService() {
                             Intent.ACTION_USER_PRESENT -> {
                                 // Device unlocked
                                 val calib = repository.appState.value.calibration
-                                if (!hasReceivedLauncherOffset || (currentXOffset <= 0.001f && calib.homePageIndex != 0)) {
+                                if (!hasReceivedLauncherOffset ||
+                                    (currentXOffset <= 0.001f && lastLauncherXOffsetStep <= 0f && calib.homePageIndex != 0)
+                                ) {
                                     currentXOffset = calib.getHomeOffset()
                                     renderedXOffset = currentXOffset
                                     offsetDirection = swipeDirectionLock.reset()
@@ -947,7 +957,12 @@ class MultiPageWallpaperService : WallpaperService() {
                     if (count <= 1) 0f else index.toFloat() / (count - 1).toFloat()
                 }
             }
-            return anchors.any { abs(offset - it) <= STATIC_OFFSET_TOLERANCE }
+            val segmentTolerance = anchors.zipWithNext()
+                .minOfOrNull { (start, end) -> abs(end - start) }
+                ?.let { it * STATIC_OFFSET_SEGMENT_TOLERANCE_RATIO }
+                ?: 0f
+            val tolerance = maxOf(STATIC_OFFSET_TOLERANCE, segmentTolerance)
+            return anchors.any { abs(offset - it) <= tolerance }
         }
 
         private fun setPageTransition(pageA: Int, pageB: Int, progress: Float) {
