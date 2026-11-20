@@ -14,6 +14,8 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.Choreographer
@@ -25,6 +27,8 @@ import com.example.data.model.CalibrationConfig
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
+import com.example.render.GpuFrameRequest
+import com.example.render.GpuWallpaperRenderer
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
 import com.example.render.SwipeDirectionLock
@@ -50,6 +54,10 @@ class MultiPageWallpaperService : WallpaperService() {
     inner class MultiPageEngine : Engine() {
 
         private val repository by lazy { WallpaperRepository.getInstance(applicationContext) }
+        private val mainHandler = Handler(Looper.getMainLooper())
+        private var gpuRenderer: GpuWallpaperRenderer? = null
+        private var gpuRenderingFailed = false
+        private var engineDestroyed = false
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val motionBlur = HorizontalMotionBlur()
         private val motionBlurDestination = Rect()
@@ -119,7 +127,16 @@ class MultiPageWallpaperService : WallpaperService() {
         private var extraDimObserver: ContentObserver? = null
         private var systemBroadcastReceiver: BroadcastReceiver? = null
 
-        private val repoChangeListener = {
+        private val repoChangeListener: () -> Unit = {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                handleRepositoryChange()
+            } else {
+                mainHandler.post { handleRepositoryChange() }
+            }
+        }
+
+        private fun handleRepositoryChange() {
+            if (engineDestroyed) return
             // If the wallpaper is not currently visible or hasn't received active launcher scroll,
             // make sure we stay synchronized with the user's home page setting.
             if (!isVisible || !hasReceivedLauncherOffset) {
@@ -155,6 +172,9 @@ class MultiPageWallpaperService : WallpaperService() {
         }
 
         override fun onDestroy() {
+            engineDestroyed = true
+            gpuRenderer?.release()
+            gpuRenderer = null
             super.onDestroy()
             stopOffsetAnimation()
             releaseMotionBlurBuffer()
@@ -222,10 +242,16 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
+        override fun onSurfaceCreated(holder: SurfaceHolder) {
+            super.onSurfaceCreated(holder)
+            getGpuRenderer()?.onSurfaceChanged(holder.surface, surfaceWidth, surfaceHeight)
+        }
+
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
             surfaceWidth = width
             surfaceHeight = height
+            getGpuRenderer()?.onSurfaceChanged(holder.surface, width, height)
             preferredSurfaceFrameRate = null
             updateSurfaceFrameRate()
             drawFrame()
@@ -237,7 +263,13 @@ class MultiPageWallpaperService : WallpaperService() {
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             stopOffsetAnimation()
             releaseMotionBlurBuffer()
+            gpuRenderer?.onSurfaceDestroyed()
             super.onSurfaceDestroyed(holder)
+        }
+
+        private fun getGpuRenderer(): GpuWallpaperRenderer? {
+            if (gpuRenderingFailed || engineDestroyed) return null
+            return gpuRenderer ?: GpuWallpaperRenderer(repository).also { gpuRenderer = it }
         }
 
         override fun onOffsetsChanged(
@@ -525,6 +557,11 @@ class MultiPageWallpaperService : WallpaperService() {
         }
 
         fun drawFrame(fromOffsetUpdate: Boolean = false) {
+            if (engineDestroyed) return
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                mainHandler.post { drawFrame(fromOffsetUpdate) }
+                return
+            }
             val holder = surfaceHolder ?: return
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
@@ -556,29 +593,73 @@ class MultiPageWallpaperService : WallpaperService() {
             }
             val shouldBlur = physicalBlurRadius > 0 && smearDirection != 0 &&
                 state.motionBlurEnabled && isVisible && resumeFadeProgress >= 1f
+
+            computePageTransition(renderedXOffset, state.calibration)
+            val pageA = transitionPageA
+            val pageB = transitionPageB
+            val progress = mapOffsetProgress(transitionProgress, state)
+            if (state.showFrameDebugIndicator && !frameDebugIndicatorEnabled) {
+                frameDebugSequenceIndex = 0
+            }
+            frameDebugIndicatorEnabled = state.showFrameDebugIndicator
+            frameDebugIndicatorDrawnForFrame = false
+            val request = GpuFrameRequest(
+                state = state,
+                width = surfaceWidth,
+                height = surfaceHeight,
+                pageA = pageA,
+                pageB = pageB,
+                progress = progress,
+                pagePosition = pagePosition,
+                frameTimeNanos = frameTimeNanos,
+                fromOffsetUpdate = fromOffsetUpdate,
+                isVisible = isVisible,
+                swipeForward = offsetDirection >= 0,
+                resumeFadeProgress = resumeFadeProgress,
+                motionBlurRadius = if (shouldBlur) physicalBlurRadius else 0,
+                motionBlurDirection = if (shouldBlur) smearDirection else 0,
+                dimAmount = calculateEffectiveDim(state, pageA, pageB, progress),
+                receivedXOffset = receivedXOffset,
+                receivedYOffset = receivedYOffset,
+                density = resources.displayMetrics.density,
+                frameDebugColor = frameDebugColors[frameDebugSequenceIndex]
+            )
+            val renderer = getGpuRenderer()
+            if (renderer != null && holder.surface.isValid) {
+                renderer.render(
+                    request = request,
+                    onSubmitted = ::onGpuFrameSubmitted,
+                    onFailure = ::onGpuRenderingFailed
+                )
+                return
+            }
+            drawSoftwareFrame(holder, request)
+        }
+
+        private fun drawSoftwareFrame(holder: SurfaceHolder, request: GpuFrameRequest) {
+            val state = request.state
             var canvas: Canvas? = null
             var framePosted = false
-            frameDebugIndicatorDrawnForFrame = false
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
-                    if (resumeFadeProgress < 1f) {
+                    if (request.resumeFadeProgress < 1f) {
                         canvas.drawColor(Color.BLACK)
                         val layer = canvas.saveLayerAlpha(
                             0f,
                             0f,
                             surfaceWidth.toFloat(),
                             surfaceHeight.toFloat(),
-                            (resumeFadeProgress * 255).toInt().coerceIn(0, 255)
+                            (request.resumeFadeProgress * 255).toInt().coerceIn(0, 255)
                         )
                         renderWallpaper(canvas, state)
                         canvas.restoreToCount(layer)
-                    } else if (shouldBlur) {
+                    } else if (request.motionBlurRadius > 0) {
                         renderMotionBlurredWallpaper(
                             canvas = canvas,
                             state = state,
-                            physicalBlurRadius = physicalBlurRadius,
-                            smearDirection = smearDirection
+                            physicalBlurRadius = request.motionBlurRadius,
+                            smearDirection = request.motionBlurDirection
                         )
                     } else {
                         renderWallpaper(canvas, state)
@@ -595,22 +676,39 @@ class MultiPageWallpaperService : WallpaperService() {
                         Log.e("MultiPageWallpaper", "Error unlocking canvas", e)
                     }
                 }
-                if (framePosted) {
-                    if (frameDebugIndicatorDrawnForFrame) {
-                        frameDebugSequenceIndex =
-                            (frameDebugSequenceIndex + 1) % frameDebugColors.size
-                    }
-                    WallpaperDiagnosticsRecorder.recordFrameSubmitted(
-                        fromOffsetUpdate = fromOffsetUpdate,
-                        isVisible = isVisible
-                    )
-                    lastMotionBlurPagePosition = pagePosition
-                    lastMotionBlurFrameTimeNanos = frameTimeNanos
-                    if (!isOffsetAnimationNeeded()) {
-                        offsetDirection = swipeDirectionLock.onFrameSettled()
-                    }
-                }
+                if (framePosted) onFrameSubmitted(request, frameDebugIndicatorDrawnForFrame)
             }
+        }
+
+        private fun onGpuFrameSubmitted(request: GpuFrameRequest) {
+            onFrameSubmitted(
+                request,
+                request.state.showFrameDebugIndicator && request.isVisible
+            )
+        }
+
+        private fun onFrameSubmitted(request: GpuFrameRequest, debugIndicatorDrawn: Boolean) {
+            if (engineDestroyed) return
+            if (debugIndicatorDrawn) {
+                frameDebugSequenceIndex = (frameDebugSequenceIndex + 1) % frameDebugColors.size
+            }
+            WallpaperDiagnosticsRecorder.recordFrameSubmitted(
+                fromOffsetUpdate = request.fromOffsetUpdate,
+                isVisible = request.isVisible
+            )
+            lastMotionBlurPagePosition = request.pagePosition
+            lastMotionBlurFrameTimeNanos = request.frameTimeNanos
+            if (!isOffsetAnimationNeeded()) {
+                offsetDirection = swipeDirectionLock.onFrameSettled()
+            }
+        }
+
+        private fun onGpuRenderingFailed() {
+            if (engineDestroyed || gpuRenderingFailed) return
+            gpuRenderingFailed = true
+            gpuRenderer?.release()
+            gpuRenderer = null
+            drawFrame()
         }
 
         private fun renderMotionBlurredWallpaper(
@@ -776,37 +874,37 @@ class MultiPageWallpaperService : WallpaperService() {
                 )
             }
 
-            // Evaluate Darken / Extra Dim condition
-            val isDimCondition = ExtraDimDetector.isDimConditionActive(applicationContext, state.darken)
-            if (isDimCondition) {
-                val pageAItem = state.pages.find { it.pageIndex == pageA }
-                val pageBItem = state.pages.find { it.pageIndex == pageB }
-
-                val isADark = pageAItem?.isAlreadyDark ?: false
-                val isBDark = pageBItem?.isAlreadyDark ?: false
-
-                // If both are dark, no dimming needed. If one is dark, blend dim factor proportionally
-                val effectiveDim = when {
-                    isADark && isBDark -> 0f
-                    isADark -> state.darken.dimFactor * progress
-                    isBDark -> state.darken.dimFactor * (1f - progress)
-                    else -> state.darken.dimFactor
-                }
-
-                if (effectiveDim > 0.01f) {
-                    val alpha = (effectiveDim.coerceIn(0f, 1f) * 255).toInt()
-                    dimPaint.color = Color.BLACK
-                    dimPaint.alpha = alpha
-                    canvas.drawRect(
-                        0f, 0f,
-                        surfaceWidth.toFloat(),
-                        surfaceHeight.toFloat(),
-                        dimPaint
-                    )
-                }
+            val effectiveDim = calculateEffectiveDim(state, pageA, pageB, progress)
+            if (effectiveDim > 0.01f) {
+                val alpha = (effectiveDim.coerceIn(0f, 1f) * 255).toInt()
+                dimPaint.color = Color.BLACK
+                dimPaint.alpha = alpha
+                canvas.drawRect(
+                    0f, 0f,
+                    surfaceWidth.toFloat(),
+                    surfaceHeight.toFloat(),
+                    dimPaint
+                )
             }
 
             if (includeDebugIndicators) drawDebugIndicators(canvas, state)
+        }
+
+        private fun calculateEffectiveDim(
+            state: WallpaperAppState,
+            pageA: Int,
+            pageB: Int,
+            progress: Float
+        ): Float {
+            if (!ExtraDimDetector.isDimConditionActive(applicationContext, state.darken)) return 0f
+            val isADark = state.pages.find { it.pageIndex == pageA }?.isAlreadyDark ?: false
+            val isBDark = state.pages.find { it.pageIndex == pageB }?.isAlreadyDark ?: false
+            return when {
+                isADark && isBDark -> 0f
+                isADark -> state.darken.dimFactor * progress
+                isBDark -> state.darken.dimFactor * (1f - progress)
+                else -> state.darken.dimFactor
+            }
         }
 
         private fun drawDebugIndicators(canvas: Canvas, state: WallpaperAppState) {

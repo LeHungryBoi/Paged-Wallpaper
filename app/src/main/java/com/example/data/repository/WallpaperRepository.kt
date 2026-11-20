@@ -99,6 +99,9 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     // Bitmap cache for fast Live Wallpaper Engine rendering
+    @Volatile
+    var bitmapGeneration: Long = 0L
+        private set
     private val bitmapCache = mutableMapOf<Triple<Int, Int, Int>, Bitmap>()
     private val parallaxBitmapCache =
         mutableMapOf<Triple<Int, Int, Int>, ParallaxBitmap>()
@@ -281,7 +284,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
         _appState.value = newState
         saveConfigInternal(newState)
-        invalidateCache()
+        if (newState.pages != previousState.pages) invalidateCache()
         notifyListeners()
 
         if (newState.autoBackupEnabled && !newState.backupFolderPath.isNullOrEmpty()) {
@@ -444,12 +447,11 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     fun invalidateCache() {
+        bitmapGeneration++
         synchronized(bitmapCache) {
-            bitmapCache.values.forEach { it.recycle() }
             bitmapCache.clear()
         }
         synchronized(parallaxBitmapCache) {
-            parallaxBitmapCache.values.forEach { it.bitmap.recycle() }
             parallaxBitmapCache.clear()
         }
     }
