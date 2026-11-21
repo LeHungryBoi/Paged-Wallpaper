@@ -14,7 +14,6 @@ import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTrigger
-import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -1049,6 +1048,8 @@ class ExampleUnitTest {
         val fastIntensity = kotlin.math.abs(fastController.overScrollFraction)
 
         assertTrue("Fast flick ($fastIntensity) should exceed slow drag ($slowIntensity)", fastIntensity > slowIntensity + 0.1f)
+        assertTrue("Fast flick should be capped ($fastIntensity)", fastIntensity < 0.34f)
+        assertTrue("Slow drag should still respond ($slowIntensity)", slowIntensity > 0.18f)
     }
 
     @Test
@@ -1099,65 +1100,47 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testEdgeOverScrollNonLinearParallaxScalingCurves() {
+    fun testEdgeOverScrollParallaxScalingIsScreenAnchoredAndCapped() {
         val screenWidth = 1000
         val smallReachPx = 150   // 0.15 screen widths
-        val standardReachPx = 500 // 0.50 screen widths (2x screen wide centered)
         val ultraWideReachPx = 1250 // 1.25 screen widths
 
-        // Default: Diminishing curve anchored to screen width, capped at reach
         val dimUltraHalf = EdgeOverScrollScaling.computeTravelPx(
-            0.5f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+            0.5f, ultraWideReachPx, screenWidth
         )
         val dimUltraFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+            1.0f, ultraWideReachPx, screenWidth
         )
         val dimSmallFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, smallReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+            1.0f, smallReachPx, screenWidth
         )
         assertTrue(dimUltraFull <= 720.5f && dimUltraFull < ultraWideReachPx)
         assertTrue("Diminishing curve should give >50% of its travel by 50% intensity", dimUltraHalf > dimUltraFull * 0.55f)
         assertEquals(smallReachPx.toFloat(), dimSmallFull, 0.5f)
 
-        // Logarithmic Boost: unlocks more of ultra-wide reach than default without exceeding reach
-        val logUltraFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.LOGARITHMIC_BOOST
+        val sourceLeft = EdgeOverScrollScaling.computeSourceLeftPx(
+            intensity = 1f,
+            leftTravelPx = 200,
+            rightTravelPx = 300,
+            screenWidth = screenWidth
         )
-        val logSmallFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, smallReachPx, screenWidth, EdgeOverScrollCurve.LOGARITHMIC_BOOST
-        )
-        assertTrue("Logarithmic boost ($logUltraFull) should exceed diminishing cap ($dimUltraFull) on ultra-wide", logUltraFull > dimUltraFull)
-        assertTrue(logUltraFull < ultraWideReachPx)
-        assertTrue(logSmallFull <= smallReachPx)
-
-        // Power Fling: stays gentle at low intensity and reaches 100% of reach at full fling
-        val powerUltraQuarter = EdgeOverScrollScaling.computeTravelPx(
-            0.25f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
-        )
-        val powerUltraFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
-        )
-        val powerStdFull = EdgeOverScrollScaling.computeTravelPx(
-            1.0f, standardReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
-        )
-        assertTrue("Power fling at 0.25 should stay conservative (<20% of reach)", powerUltraQuarter < ultraWideReachPx * 0.20f)
-        assertEquals(ultraWideReachPx.toFloat(), powerUltraFull, 0.5f)
-        assertEquals(standardReachPx.toFloat(), powerStdFull, 0.5f)
+        assertTrue(sourceLeft > 200f)
+        assertTrue(sourceLeft <= 500f)
     }
 
     @Test
-    fun testEdgeOverScrollCurveStateRoundTripAndDefaultFallback() {
+    fun testEdgeOverScrollCurveKeyIsIgnoredWhenRestoringState() {
         val state = WallpaperAppState(
             pages = listOf(PageItem(0)),
             calibration = CalibrationConfig(),
-            edgeOverScrollCurve = EdgeOverScrollCurve.LOGARITHMIC_BOOST
+            animationFrameRate = 120
         )
-        val restored = WallpaperAppState.fromJson(state.toJson())
-        assertEquals(EdgeOverScrollCurve.LOGARITHMIC_BOOST, restored.edgeOverScrollCurve)
-
-        val legacyJson = state.toJson().apply { remove("edgeOverScrollCurve") }
-        val fallbackState = WallpaperAppState.fromJson(legacyJson)
-        assertEquals(EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED, fallbackState.edgeOverScrollCurve)
+        val legacyJson = state.toJson().apply {
+            put("edgeOverScrollCurve", "POWER_FLING")
+        }
+        val restored = WallpaperAppState.fromJson(legacyJson)
+        assertEquals(120, restored.animationFrameRate)
+        assertFalse(restored.toJson().has("edgeOverScrollCurve"))
     }
 }
 

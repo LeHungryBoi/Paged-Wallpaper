@@ -417,8 +417,7 @@ class GpuWallpaperRenderer(
             intensity = frame.edgeOverScrollFraction,
             leftTravelPx = page.leftTravelPx,
             rightTravelPx = page.rightTravelPx,
-            screenWidth = frame.width,
-            curve = frame.state.edgeOverScrollCurve
+            screenWidth = frame.width
         )
         drawPage(page, 0, sourceLeft, frame, 1f)
     }

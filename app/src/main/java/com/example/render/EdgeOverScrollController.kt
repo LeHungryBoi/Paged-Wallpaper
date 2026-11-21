@@ -237,8 +237,9 @@ class EdgeOverScrollController {
                     1f
                 }
                 val velocityRamp = (distanceComponent / VELOCITY_RAMP_DISTANCE).coerceIn(0f, 1f)
+                val softenedVelocity = activeOutwardVelocityNorm.pow(VELOCITY_RESPONSE_EXPONENT)
                 val velocityBoost = VELOCITY_INTENSITY_WEIGHT *
-                    activeOutwardVelocityNorm *
+                    softenedVelocity *
                     (0.35f + 0.65f * distanceComponent) *
                     reversalAttenuation *
                     velocityRamp
@@ -431,7 +432,8 @@ class EdgeOverScrollController {
         private const val MAX_TRACKED_VELOCITY_PX_S = 12_000f
         private const val VELOCITY_SMOOTHING_TAU_MS = 45f
         private const val VELOCITY_REFERENCE_SCREEN_PER_SEC = 2.4f
-        private const val VELOCITY_INTENSITY_WEIGHT = 0.42f
+        private const val VELOCITY_INTENSITY_WEIGHT = 0.28f
+        private const val VELOCITY_RESPONSE_EXPONENT = 0.7f
         private const val VELOCITY_RAMP_DISTANCE = 0.08f
         private const val INWARD_FLING_SCREEN_PER_SEC = 1.1f
     }

@@ -26,7 +26,6 @@ import android.view.ViewConfiguration
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
-import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
@@ -906,8 +905,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     bitmap = edgeBitmap,
                     leftTravelPx = edgeParallax?.leftTravelPx ?: 0,
                     rightTravelPx = edgeParallax?.rightTravelPx ?: 0,
-                    fraction = edgeOverScrollController.overScrollFraction,
-                    curve = state.edgeOverScrollCurve
+                    fraction = edgeOverScrollController.overScrollFraction
                 )
             } else {
                 val usesParallax = renderer.supportsParallax
@@ -1001,8 +999,7 @@ class MultiPageWallpaperService : WallpaperService() {
             bitmap: Bitmap?,
             leftTravelPx: Int,
             rightTravelPx: Int,
-            fraction: Float,
-            curve: EdgeOverScrollCurve
+            fraction: Float
         ) {
             if (bitmap == null) return
             edgeOverScrollDstRect.set(0, 0, surfaceWidth, surfaceHeight)
@@ -1014,8 +1011,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 intensity = fraction,
                 leftTravelPx = leftTravelPx,
                 rightTravelPx = rightTravelPx,
-                screenWidth = surfaceWidth,
-                curve = curve
+                screenWidth = surfaceWidth
             ).toInt().coerceIn(0, (bitmap.width - surfaceWidth).coerceAtLeast(0))
             edgeOverScrollSrcRect.set(sourceLeft, 0, sourceLeft + surfaceWidth, bitmap.height)
             canvas.drawBitmap(bitmap, edgeOverScrollSrcRect, edgeOverScrollDstRect, paint)
