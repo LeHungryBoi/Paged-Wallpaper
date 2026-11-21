@@ -19,14 +19,17 @@ import android.os.Looper
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.Choreographer
+import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
+import android.view.ViewConfiguration
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
+import com.example.render.EdgeOverScrollController
 import com.example.render.GpuFrameRequest
 import com.example.render.GpuWallpaperRenderer
 import com.example.render.HorizontalMotionBlur
@@ -92,6 +95,10 @@ class MultiPageWallpaperService : WallpaperService() {
         private var renderedXOffset = currentXOffset
         private var offsetDirection = 0
         private val swipeDirectionLock = SwipeDirectionLock()
+        private val edgeOverScrollController = EdgeOverScrollController()
+        private val touchSlop by lazy { ViewConfiguration.get(applicationContext).scaledTouchSlop }
+        private val edgeOverScrollSrcRect = Rect()
+        private val edgeOverScrollDstRect = Rect()
         private var currentYOffset = 0.0f
         private var receivedXOffset: Float? = null
         private var receivedYOffset: Float? = null
@@ -143,6 +150,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 currentXOffset = repository.getLastKnownOffsetOrHome()
                 renderedXOffset = currentXOffset
                 offsetDirection = swipeDirectionLock.reset()
+                edgeOverScrollController.reset()
                 stopOffsetAnimation()
             }
             if (!repository.appState.value.motionBlurEnabled) {
@@ -158,6 +166,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onCreate(surfaceHolder: SurfaceHolder) {
             super.onCreate(surfaceHolder)
+            setTouchEventsEnabled(true)
             WallpaperDiagnosticsRecorder.initialize(applicationContext)
             val calib = repository.appState.value.calibration
             currentXOffset = repository.getLastKnownOffsetOrHome()
@@ -216,6 +225,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
                 drawFrame()
             } else {
+                edgeOverScrollController.reset()
                 stopOffsetAnimation()
                 releaseMotionBlurBuffer()
                 resumeFadeAnimator?.cancel()
@@ -346,11 +356,6 @@ class MultiPageWallpaperService : WallpaperService() {
             val nextXOffset = xOffset.coerceIn(0f, 1f)
             val offsetChanged = abs(nextXOffset - currentXOffset) > OFFSET_EPSILON
             val yOffsetChanged = currentYOffset != yOffset
-            offsetDirection = swipeDirectionLock.onOffsetChanged(
-                previousOffset = currentXOffset,
-                nextOffset = nextXOffset,
-                isAtStaticPage = isAtStaticPageOffset(nextXOffset, calib)
-            )
             currentXOffset = nextXOffset
             currentYOffset = yOffset
             hasReceivedLauncherOffset = true
@@ -358,12 +363,65 @@ class MultiPageWallpaperService : WallpaperService() {
             // Persist the last valid offset so it survives service recreation
             repository.saveLastKnownOffset(currentXOffset)
 
+            // While the finger is held down on an edge page, follow the touch signal exclusively
+            // until release so misleading launcher edge offsets do not hijack the gesture.
+            if (edgeOverScrollController.isTouchActive) {
+                return
+            }
+
+            offsetDirection = swipeDirectionLock.onOffsetChanged(
+                previousOffset = renderedXOffset,
+                nextOffset = nextXOffset,
+                isAtStaticPage = isAtStaticPageOffset(nextXOffset, calib)
+            )
+
             if (isVisible) {
                 if (isOffsetAnimationNeeded()) {
                     scheduleOffsetAnimationFrame()
                 } else {
                     stopOffsetAnimation()
                     if (offsetChanged || yOffsetChanged) {
+                        drawFrame(fromOffsetUpdate = true)
+                    }
+                }
+            }
+        }
+
+        override fun onTouchEvent(event: MotionEvent) {
+            super.onTouchEvent(event)
+            if (engineDestroyed) return
+            val calib = repository.appState.value.calibration
+            val wasTouchActive = edgeOverScrollController.isTouchActive
+            val result = edgeOverScrollController.onTouchEvent(
+                event = event,
+                surfaceWidth = surfaceWidth,
+                touchSlop = touchSlop,
+                currentXOffset = currentXOffset,
+                renderedXOffset = renderedXOffset,
+                calibration = calib
+            )
+            if (edgeOverScrollController.isTouchActive) {
+                if (edgeOverScrollController.isOverScrollLocked) {
+                    renderedXOffset = edgeOverScrollController.lockedEdgeOffset
+                    stopOffsetAnimation()
+                    if (result.needsRedraw && isVisible) {
+                        drawFrame(fromOffsetUpdate = true)
+                    }
+                }
+            } else if (wasTouchActive) {
+                if (!edgeOverScrollController.hasActiveFraction() &&
+                    abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON
+                ) {
+                    offsetDirection = swipeDirectionLock.onOffsetChanged(
+                        previousOffset = renderedXOffset,
+                        nextOffset = currentXOffset,
+                        isAtStaticPage = isAtStaticPageOffset(currentXOffset, calib)
+                    )
+                }
+                if (isVisible) {
+                    if (isOffsetAnimationNeeded()) {
+                        scheduleOffsetAnimationFrame()
+                    } else if (result.needsRedraw) {
                         drawFrame(fromOffsetUpdate = true)
                     }
                 }
@@ -385,6 +443,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     currentXOffset = calib.getHomeOffset()
                     renderedXOffset = currentXOffset
                     offsetDirection = swipeDirectionLock.reset()
+                    edgeOverScrollController.reset()
                     stopOffsetAnimation()
                     awaitingResumeOffset = calib.homePageIndex != 0
                     recoveringFromZeroOffset = false
@@ -415,6 +474,7 @@ class MultiPageWallpaperService : WallpaperService() {
                                     currentXOffset = calib.getHomeOffset()
                                     renderedXOffset = currentXOffset
                                     offsetDirection = swipeDirectionLock.reset()
+                                    edgeOverScrollController.reset()
                                     stopOffsetAnimation()
                                     awaitingResumeOffset = calib.homePageIndex != 0
                                     recoveringFromZeroOffset = false
@@ -480,7 +540,8 @@ class MultiPageWallpaperService : WallpaperService() {
         }
 
         private fun isOffsetAnimationNeeded(): Boolean =
-            abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON
+            abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON ||
+                (!edgeOverScrollController.isTouchActive && edgeOverScrollController.hasActiveFraction())
 
         private fun drawSmoothedOffsetFrame(frameTimeNanos: Long) {
             if (!isVisible) {
@@ -507,9 +568,15 @@ class MultiPageWallpaperService : WallpaperService() {
             val smoothingFraction = (
                 1.0 - exp(-elapsedNanos.toDouble() / smoothingTimeNanos)
             ).toFloat()
-            renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
-            if (!isOffsetAnimationNeeded()) {
-                renderedXOffset = currentXOffset
+            val wasResolvingEdgeOverScroll = !edgeOverScrollController.isTouchActive &&
+                edgeOverScrollController.hasActiveFraction()
+            if (wasResolvingEdgeOverScroll) {
+                edgeOverScrollController.stepReleaseDecay(smoothingFraction)
+            } else if (!edgeOverScrollController.isTouchActive) {
+                renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
+                if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
+                    renderedXOffset = currentXOffset
+                }
             }
 
             drawFrame(fromOffsetUpdate = true)
@@ -565,7 +632,8 @@ class MultiPageWallpaperService : WallpaperService() {
             val holder = surfaceHolder ?: return
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
-            val pagePosition = getPagePosition(renderedXOffset, state)
+            val pagePosition = getPagePosition(renderedXOffset, state) +
+                edgeOverScrollController.overScrollFraction * 0.5f
             val pageDelta = if (
                 state.motionBlurEnabled &&
                 isVisible &&
@@ -622,7 +690,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 receivedXOffset = receivedXOffset,
                 receivedYOffset = receivedYOffset,
                 density = resources.displayMetrics.density,
-                frameDebugColor = frameDebugColors[frameDebugSequenceIndex]
+                frameDebugColor = frameDebugColors[frameDebugSequenceIndex],
+                edgeOverScrollFraction = edgeOverScrollController.overScrollFraction
             )
             val renderer = getGpuRenderer()
             if (renderer != null && holder.surface.isValid) {
@@ -810,68 +879,94 @@ class MultiPageWallpaperService : WallpaperService() {
             val progress = mapOffsetProgress(transitionProgress, state)
 
             val transitionSetting = state.transitions.getOrNull(pageA)
-            val transitionId = transitionSetting?.transitionId(offsetDirection >= 0)
+            val swipeForward = offsetDirection >= 0
+            val transitionId = transitionSetting?.transitionId(swipeForward)
                 ?: state.transitionType
             val renderer = TransitionRegistry.get(transitionId)
-            val usesParallax = renderer.supportsParallax
-            val slowImageSpeed = transitionSetting
-                ?.parallaxMotion(offsetDirection >= 0)
-                ?.takeIf { it.slowImageMotionEnabled }
-                ?.imageSpeed
-                ?.coerceIn(0f, 1f)
-            val pageAParallax = if (usesParallax) {
-                repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
-            } else {
-                null
-            }
-            val pageBParallax = if (usesParallax && pageA != pageB) {
-                repository.getParallaxBitmap(pageB, surfaceWidth, surfaceHeight)
-            } else {
-                null
-            }
-            val pageABitmap = pageAParallax?.bitmap
-                ?: if (usesParallax) null
-                else repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
-            val pageBBitmap = if (pageA != pageB) {
-                pageBParallax?.bitmap
-                    ?: if (usesParallax) null
-                    else repository.getCroppedBitmap(pageB, surfaceWidth, surfaceHeight)
-            } else {
-                null
-            }
+            val isEdgeOverScroll = pageA == pageB &&
+                abs(edgeOverScrollController.overScrollFraction) > EdgeOverScrollController.FRACTION_EPSILON
 
-            // Draw transition
             canvas.drawColor(android.graphics.Color.rgb(18, 22, 34))
-            if (usesParallax) {
-                renderer.drawWithParallax(
+            if (isEdgeOverScroll) {
+                val edgeParallax = repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
+                val edgeBitmap = edgeParallax?.bitmap
+                    ?: repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
+                drawEdgeOverScroll(
                     canvas = canvas,
-                    pageABitmap = pageABitmap,
-                    pageBBitmap = pageBBitmap,
-                    progress = progress,
-                    screenWidth = surfaceWidth,
-                    screenHeight = surfaceHeight,
-                    paint = paint,
-                    pageALeftTravelPx = pageAParallax?.leftTravelPx ?: 0,
-                    pageARightTravelPx = pageAParallax?.rightTravelPx ?: 0,
-                    pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
-                    pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
-                    pageASlowImageSpeed = slowImageSpeed,
-                    pageBSlowImageSpeed = slowImageSpeed,
-                    revealImageMotionPercent = transitionSetting
-                        ?.revealImageMotionPercent(offsetDirection >= 0)
-                        ?: 0f,
-                    pageSwipeForward = offsetDirection >= 0
+                    bitmap = edgeBitmap,
+                    leftTravelPx = edgeParallax?.leftTravelPx ?: 0,
+                    rightTravelPx = edgeParallax?.rightTravelPx ?: 0,
+                    fraction = edgeOverScrollController.overScrollFraction
                 )
             } else {
-                renderer.draw(
-                    canvas = canvas,
-                    pageABitmap = pageABitmap,
-                    pageBBitmap = pageBBitmap,
-                    progress = progress,
-                    screenWidth = surfaceWidth,
-                    screenHeight = surfaceHeight,
-                    paint = paint
-                )
+                val usesParallax = renderer.supportsParallax
+                val parallaxMotion = transitionSetting?.parallaxMotion(swipeForward)
+                val revealRates = transitionSetting?.revealMotionRates(swipeForward)
+                val slowImageMotionEnabled = if (renderer.supportsRevealImageMotion) {
+                    false
+                } else {
+                    parallaxMotion?.slowImageMotionEnabled ?: false
+                }
+                val outgoingMotionRate = if (renderer.supportsRevealImageMotion) {
+                    revealRates?.outgoingRate ?: 0f
+                } else {
+                    parallaxMotion?.outgoingMotionRate ?: 1f
+                }
+                val incomingMotionRate = if (renderer.supportsRevealImageMotion) {
+                    revealRates?.incomingRate ?: 0f
+                } else {
+                    parallaxMotion?.incomingMotionRate ?: 1f
+                }
+                val pageAParallax = if (usesParallax) {
+                    repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
+                } else {
+                    null
+                }
+                val pageBParallax = if (usesParallax && pageA != pageB) {
+                    repository.getParallaxBitmap(pageB, surfaceWidth, surfaceHeight)
+                } else {
+                    null
+                }
+                val pageABitmap = pageAParallax?.bitmap
+                    ?: if (usesParallax) null
+                    else repository.getCroppedBitmap(pageA, surfaceWidth, surfaceHeight)
+                val pageBBitmap = if (pageA != pageB) {
+                    pageBParallax?.bitmap
+                        ?: if (usesParallax) null
+                        else repository.getCroppedBitmap(pageB, surfaceWidth, surfaceHeight)
+                } else {
+                    null
+                }
+
+                if (usesParallax) {
+                    renderer.drawWithParallax(
+                        canvas = canvas,
+                        pageABitmap = pageABitmap,
+                        pageBBitmap = pageBBitmap,
+                        progress = progress,
+                        screenWidth = surfaceWidth,
+                        screenHeight = surfaceHeight,
+                        paint = paint,
+                        pageALeftTravelPx = pageAParallax?.leftTravelPx ?: 0,
+                        pageARightTravelPx = pageAParallax?.rightTravelPx ?: 0,
+                        pageBLeftTravelPx = pageBParallax?.leftTravelPx ?: 0,
+                        pageBRightTravelPx = pageBParallax?.rightTravelPx ?: 0,
+                        slowImageMotionEnabled = slowImageMotionEnabled,
+                        pageSwipeForward = swipeForward,
+                        outgoingMotionRate = outgoingMotionRate,
+                        incomingMotionRate = incomingMotionRate
+                    )
+                } else {
+                    renderer.draw(
+                        canvas = canvas,
+                        pageABitmap = pageABitmap,
+                        pageBBitmap = pageBBitmap,
+                        progress = progress,
+                        screenWidth = surfaceWidth,
+                        screenHeight = surfaceHeight,
+                        paint = paint
+                    )
+                }
             }
 
             val effectiveDim = calculateEffectiveDim(state, pageA, pageB, progress)
@@ -888,6 +983,31 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             if (includeDebugIndicators) drawDebugIndicators(canvas, state)
+        }
+
+        private fun drawEdgeOverScroll(
+            canvas: Canvas,
+            bitmap: Bitmap?,
+            leftTravelPx: Int,
+            rightTravelPx: Int,
+            fraction: Float
+        ) {
+            if (bitmap == null) return
+            val clampedFraction = fraction.coerceIn(-1f, 1f)
+            edgeOverScrollDstRect.set(0, 0, surfaceWidth, surfaceHeight)
+            if (bitmap.width <= surfaceWidth) {
+                canvas.drawBitmap(bitmap, null, edgeOverScrollDstRect, paint)
+                return
+            }
+            val sourceLeft = when {
+                clampedFraction < 0f && leftTravelPx > 0 ->
+                    leftTravelPx * (1f - (-clampedFraction))
+                clampedFraction > 0f && rightTravelPx > 0 ->
+                    leftTravelPx + rightTravelPx * clampedFraction
+                else -> leftTravelPx.toFloat()
+            }.toInt().coerceIn(0, (bitmap.width - surfaceWidth).coerceAtLeast(0))
+            edgeOverScrollSrcRect.set(sourceLeft, 0, sourceLeft + surfaceWidth, bitmap.height)
+            canvas.drawBitmap(bitmap, edgeOverScrollSrcRect, edgeOverScrollDstRect, paint)
         }
 
         private fun calculateEffectiveDim(

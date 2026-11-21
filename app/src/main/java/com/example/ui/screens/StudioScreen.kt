@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.ParallaxMotionSettings
+import com.example.data.model.RevealMotionRates
 import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
@@ -187,49 +188,67 @@ private fun ParallaxMotionControls(
                 modifier = Modifier.testTag("slow_image_motion_${boundaryIndex}_$itemName")
             )
         }
-        if (settings.slowImageMotionEnabled) {
-            Text(
-                "Image speed: ${(settings.imageSpeed * 100).roundToInt()}% of page speed",
-                style = MaterialTheme.typography.labelSmall
-            )
-            Slider(
-                value = settings.imageSpeed,
-                onValueChange = { onUpdate(settings.copy(imageSpeed = it)) },
-                valueRange = 0f..1f,
-                modifier = Modifier.testTag("parallax_image_speed_${boundaryIndex}_$itemName")
-            )
-            Text(
-                "Limited by available image reach.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Text(
+            "Outgoing motion rate: ${(settings.outgoingMotionRate * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelSmall
+        )
+        Slider(
+            value = settings.outgoingMotionRate,
+            onValueChange = { onUpdate(settings.copy(outgoingMotionRate = it)) },
+            valueRange = 0f..1f,
+            modifier = Modifier.testTag("parallax_outgoing_motion_rate_${boundaryIndex}_$itemName")
+        )
+        Text(
+            "Incoming motion rate: ${(settings.incomingMotionRate * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelSmall
+        )
+        Slider(
+            value = settings.incomingMotionRate,
+            onValueChange = { onUpdate(settings.copy(incomingMotionRate = it)) },
+            valueRange = 0f..1f,
+            modifier = Modifier.testTag("parallax_incoming_motion_rate_${boundaryIndex}_$itemName")
+        )
+        Text(
+            "100% travels each image's full parallax reach.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
 @Composable
-private fun RevealImageMotionControl(
+private fun RevealMotionRateControls(
     boundaryIndex: Int,
     itemName: String,
-    motionPercent: Float,
-    onUpdate: (Float) -> Unit
+    rates: RevealMotionRates,
+    onUpdate: (RevealMotionRates) -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            "Reveal image motion: ${(motionPercent * 100).roundToInt()}%",
+            "Outgoing reveal motion rate: ${(rates.outgoingRate * 100).roundToInt()}%",
             style = MaterialTheme.typography.labelSmall
         )
         Slider(
-            value = motionPercent,
-            onValueChange = onUpdate,
+            value = rates.outgoingRate,
+            onValueChange = { onUpdate(rates.copy(outgoingRate = it)) },
             valueRange = 0f..1f,
-            modifier = Modifier.testTag("reveal_image_motion_${boundaryIndex}_$itemName")
+            modifier = Modifier.testTag("reveal_outgoing_motion_rate_${boundaryIndex}_$itemName")
         )
         Text(
-            "0% keeps the image still; higher values add more leftward motion.",
+            "Incoming reveal motion rate: ${(rates.incomingRate * 100).roundToInt()}%",
+            style = MaterialTheme.typography.labelSmall
+        )
+        Slider(
+            value = rates.incomingRate,
+            onValueChange = { onUpdate(rates.copy(incomingRate = it)) },
+            valueRange = 0f..1f,
+            modifier = Modifier.testTag("reveal_incoming_motion_rate_${boundaryIndex}_$itemName")
+        )
+        Text(
+            "100% travels each image's full parallax reach.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -281,10 +300,8 @@ private fun PageTransitionControls(
                                     rightTransitionId = setting.universalTransitionId,
                                     leftParallaxMotion = setting.universalParallaxMotion,
                                     rightParallaxMotion = setting.universalParallaxMotion,
-                                    leftRevealImageMotionPercent =
-                                        setting.universalRevealImageMotionPercent,
-                                    rightRevealImageMotionPercent =
-                                        setting.universalRevealImageMotionPercent
+                                    leftRevealMotionRates = setting.universalRevealMotionRates,
+                                    rightRevealMotionRates = setting.universalRevealMotionRates
                                 )
                             } else {
                                 setting.copy(separateDirections = false)
@@ -315,11 +332,11 @@ private fun PageTransitionControls(
                     )
                 }
                 if (TransitionRegistry.get(setting.rightTransitionId).supportsRevealImageMotion) {
-                    RevealImageMotionControl(
+                    RevealMotionRateControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "right",
-                        motionPercent = setting.rightRevealImageMotionPercent,
-                        onUpdate = { onUpdate(setting.copy(rightRevealImageMotionPercent = it)) }
+                        rates = setting.rightRevealMotionRates,
+                        onUpdate = { onUpdate(setting.copy(rightRevealMotionRates = it)) }
                     )
                 }
                 TransitionSelector(
@@ -341,11 +358,11 @@ private fun PageTransitionControls(
                     )
                 }
                 if (TransitionRegistry.get(setting.leftTransitionId).supportsRevealImageMotion) {
-                    RevealImageMotionControl(
+                    RevealMotionRateControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "left",
-                        motionPercent = setting.leftRevealImageMotionPercent,
-                        onUpdate = { onUpdate(setting.copy(leftRevealImageMotionPercent = it)) }
+                        rates = setting.leftRevealMotionRates,
+                        onUpdate = { onUpdate(setting.copy(leftRevealMotionRates = it)) }
                     )
                 }
             } else {
@@ -368,12 +385,12 @@ private fun PageTransitionControls(
                     )
                 }
                 if (TransitionRegistry.get(setting.universalTransitionId).supportsRevealImageMotion) {
-                    RevealImageMotionControl(
+                    RevealMotionRateControls(
                         boundaryIndex = boundaryIndex,
                         itemName = "universal",
-                        motionPercent = setting.universalRevealImageMotionPercent,
+                        rates = setting.universalRevealMotionRates,
                         onUpdate = {
-                            onUpdate(setting.copy(universalRevealImageMotionPercent = it))
+                            onUpdate(setting.copy(universalRevealMotionRates = it))
                         }
                     )
                 }

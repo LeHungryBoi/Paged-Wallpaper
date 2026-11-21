@@ -49,7 +49,8 @@ data class GpuFrameRequest(
     val receivedXOffset: Float?,
     val receivedYOffset: Float?,
     val density: Float,
-    val frameDebugColor: Int
+    val frameDebugColor: Int,
+    val edgeOverScrollFraction: Float = 0f
 )
 
 class GpuWallpaperRenderer(
@@ -347,40 +348,52 @@ class GpuWallpaperRenderer(
         val setting = frame.state.transitions.getOrNull(frame.pageA)
         val transitionId = setting?.transitionId(frame.swipeForward) ?: frame.state.transitionType
         val transition = TransitionRegistry.get(transitionId)
-        val pageA = getPageTexture(frame, frame.pageA, transition.supportsParallax)
-        val pageB = if (frame.pageA == frame.pageB) {
-            null
-        } else {
-            getPageTexture(frame, frame.pageB, transition.supportsParallax)
-        }
-        val slowImageSpeed = setting
-            ?.parallaxMotion(frame.swipeForward)
-            ?.takeIf { it.slowImageMotionEnabled }
-            ?.imageSpeed
-            ?.coerceIn(0f, 1f)
-        val revealMotion = setting?.revealImageMotionPercent(frame.swipeForward) ?: 0f
+        val isEdgeOverScroll = frame.pageA == frame.pageB &&
+            kotlin.math.abs(frame.edgeOverScrollFraction) > EdgeOverScrollController.FRACTION_EPSILON
 
-        when (transition.id) {
-            "parallax", "parallax_classic" -> drawParallax(
-                frame,
-                pageA,
-                pageB,
-                transition.id == "parallax_classic",
-                slowImageSpeed
-            )
-            "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
-                frame,
-                pageA,
-                pageB,
-                transition.id == "swipe_reveal",
-                revealMotion
-            )
-            "fade" -> drawFade(frame, pageA, pageB)
-            "soft_blur" -> drawSoftBlur(frame, pageA, pageB)
-            "depth" -> drawDepth(frame, pageA, pageB)
-            "slide_over" -> drawSlideOver(frame, pageA, pageB)
-            "cube" -> drawCube(frame, pageA, pageB)
-            else -> drawScroll(frame, pageA, pageB)
+        if (isEdgeOverScroll) {
+            val edgePage = getPageTexture(frame, frame.pageA, usesParallax = true)
+            drawEdgeOverScroll(frame, edgePage)
+        } else {
+            val pageA = getPageTexture(frame, frame.pageA, transition.supportsParallax)
+            val pageB = if (frame.pageA == frame.pageB) {
+                null
+            } else {
+                getPageTexture(frame, frame.pageB, transition.supportsParallax)
+            }
+            val parallaxMotion = setting?.parallaxMotion(frame.swipeForward)
+            val slowImageMotionEnabled = parallaxMotion?.slowImageMotionEnabled ?: false
+            val parallaxOutgoingRate = parallaxMotion?.outgoingMotionRate?.coerceIn(0f, 1f) ?: 1f
+            val parallaxIncomingRate = parallaxMotion?.incomingMotionRate?.coerceIn(0f, 1f) ?: 1f
+            val revealRates = setting?.revealMotionRates(frame.swipeForward)
+            val revealOutgoingRate = revealRates?.outgoingRate ?: 0f
+            val revealIncomingRate = revealRates?.incomingRate ?: 0f
+
+            when (transition.id) {
+                "parallax", "parallax_classic" -> drawParallax(
+                    frame,
+                    pageA,
+                    pageB,
+                    transition.id == "parallax_classic",
+                    slowImageMotionEnabled,
+                    parallaxOutgoingRate,
+                    parallaxIncomingRate
+                )
+                "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
+                    frame,
+                    pageA,
+                    pageB,
+                    transition.id == "swipe_reveal",
+                    revealOutgoingRate,
+                    revealIncomingRate
+                )
+                "fade" -> drawFade(frame, pageA, pageB)
+                "soft_blur" -> drawSoftBlur(frame, pageA, pageB)
+                "depth" -> drawDepth(frame, pageA, pageB)
+                "slide_over" -> drawSlideOver(frame, pageA, pageB)
+                "cube" -> drawCube(frame, pageA, pageB)
+                else -> drawScroll(frame, pageA, pageB)
+            }
         }
 
         if (frame.dimAmount > 0.01f) {
@@ -398,6 +411,19 @@ class GpuWallpaperRenderer(
         if (includeDebugIndicators) drawDebugIndicators(frame)
     }
 
+    private fun drawEdgeOverScroll(frame: GpuFrameRequest, page: PageTexture?) {
+        if (page == null) return
+        val fraction = frame.edgeOverScrollFraction.coerceIn(-1f, 1f)
+        val sourceLeft = when {
+            fraction < 0f && page.leftTravelPx > 0 ->
+                page.leftTravelPx * (1f - (-fraction))
+            fraction > 0f && page.rightTravelPx > 0 ->
+                page.leftTravelPx + page.rightTravelPx * fraction
+            else -> page.leftTravelPx.toFloat()
+        }
+        drawPage(page, 0, sourceLeft, frame, 1f)
+    }
+
     private fun drawScroll(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
         val p = frame.progress.coerceIn(0f, 1f)
         if (pageA != null && p < 1f) {
@@ -413,26 +439,24 @@ class GpuWallpaperRenderer(
         pageA: PageTexture?,
         pageB: PageTexture?,
         classicIncoming: Boolean,
-        slowImageSpeed: Float?
+        slowImageMotionEnabled: Boolean,
+        outgoingMotionRate: Float,
+        incomingMotionRate: Float
     ) {
         val p = frame.progress.coerceIn(0f, 1f)
-        val sourceA = slowImageSpeed?.let { speed ->
-            val counterTravel = minOf(
-                ((1f - speed) * frame.width).toInt(),
-                pageA?.leftTravelPx ?: 0
-            )
-            (pageA?.leftTravelPx ?: 0) - counterTravel * p
-        } ?: ((pageA?.leftTravelPx ?: 0) + (pageA?.rightTravelPx ?: 0) * p)
-        val sourceB = slowImageSpeed?.let { speed ->
-            val counterTravel = minOf(
-                ((1f - speed) * frame.width).toInt(),
-                pageB?.rightTravelPx ?: 0
-            )
-            (pageB?.leftTravelPx ?: 0) + counterTravel * (1f - p)
-        } ?: if (classicIncoming) {
-            (pageB?.leftTravelPx ?: 0) + (pageB?.rightTravelPx ?: 0) * (1f - p)
+        val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
+        val incomingRate = incomingMotionRate.coerceIn(0f, 1f)
+        val pageARate = if (frame.swipeForward) outgoingRate else incomingRate
+        val pageBRate = if (frame.swipeForward) incomingRate else outgoingRate
+        val sourceA = if (slowImageMotionEnabled) {
+            (pageA?.leftTravelPx ?: 0) * (1f - pageARate * p)
         } else {
-            (pageB?.leftTravelPx ?: 0) * p
+            (pageA?.leftTravelPx ?: 0) + (pageA?.rightTravelPx ?: 0) * pageARate * p
+        }
+        val sourceB = if (slowImageMotionEnabled || classicIncoming) {
+            (pageB?.leftTravelPx ?: 0) + (pageB?.rightTravelPx ?: 0) * pageBRate * (1f - p)
+        } else {
+            (pageB?.leftTravelPx ?: 0) * (1f - pageBRate * (1f - p))
         }
         pageA?.let { drawPage(it, (-p * frame.width).toInt(), sourceA, frame, 1f) }
         pageB?.let { drawPage(it, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f) }
@@ -443,30 +467,23 @@ class GpuWallpaperRenderer(
         pageA: PageTexture?,
         pageB: PageTexture?,
         followsDirection: Boolean,
-        revealMotion: Float
+        outgoingRevealRate: Float,
+        incomingRevealRate: Float
     ) {
         val p = frame.progress.coerceIn(0f, 1f)
-        val imageMotion = (
-            frame.width * revealMotion.coerceIn(0f, 1f) *
-                (if (frame.swipeForward) 1f - p else p)
-            ).toInt()
+        val pageARate = if (frame.swipeForward) outgoingRevealRate else incomingRevealRate
+        val pageBRate = if (frame.swipeForward) incomingRevealRate else outgoingRevealRate
+        val sourceA = (pageA?.leftTravelPx ?: 0) + (pageA?.rightTravelPx ?: 0) * pageARate * p
+        val sourceB = (pageB?.leftTravelPx ?: 0) * (1f - pageBRate * (1f - p))
         if (followsDirection && !frame.swipeForward) {
-            pageA?.let {
-                drawPage(it, -imageMotion, it.leftTravelPx.toFloat(), frame, 1f)
-            }
+            pageA?.let { drawPage(it, 0, sourceA, frame, 1f) }
             pageB?.let {
-                drawPage(
-                    it,
-                    ((1f - p) * frame.width).toInt(),
-                    it.leftTravelPx.toFloat(),
-                    frame,
-                    1f
-                )
+                drawPage(it, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f)
             }
         } else {
-            pageB?.let { drawPage(it, imageMotion, it.leftTravelPx.toFloat(), frame, 1f) }
+            pageB?.let { drawPage(it, 0, sourceB, frame, 1f) }
             pageA?.let {
-                drawPage(it, (-p * frame.width).toInt(), it.leftTravelPx.toFloat(), frame, 1f)
+                drawPage(it, (-p * frame.width).toInt(), sourceA, frame, 1f)
             }
         }
     }
@@ -726,9 +743,9 @@ class GpuWallpaperRenderer(
             uvScaleX = 1f
             uvOffsetX = 0f
         } else {
-            val boundedLeft = sourceLeft.toInt().coerceIn(0, page.originalWidth - frame.width)
+            val boundedLeft = sourceLeft.coerceIn(0f, (page.originalWidth - frame.width).toFloat())
             uvScaleX = frame.width.toFloat() / page.originalWidth
-            uvOffsetX = boundedLeft.toFloat() / page.originalWidth
+            uvOffsetX = boundedLeft / page.originalWidth
         }
         drawTextureModel(
             textureId = page.textureId,

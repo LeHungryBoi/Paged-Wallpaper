@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
@@ -18,10 +19,12 @@ import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.ParallaxMotionSettings
+import com.example.data.model.RevealMotionRates
 import com.example.data.model.WallpaperAppState
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
+import com.example.render.EdgeOverScrollController
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
 import com.example.render.SwipeDirectionLock
@@ -39,6 +42,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -48,6 +52,7 @@ import java.util.zip.ZipOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ExampleUnitTest {
 
     @Test
@@ -165,31 +170,49 @@ class ExampleUnitTest {
         val setting = PageTransitionSetting(
             universalTransitionId = "swipe_reveal",
             separateDirections = true,
-            leftRevealImageMotionPercent = 0.2f,
-            rightRevealImageMotionPercent = 0.65f
+            leftRevealMotionRates = RevealMotionRates(outgoingRate = 0.2f, incomingRate = 0.8f),
+            rightRevealMotionRates = RevealMotionRates(outgoingRate = 0.65f, incomingRate = 0.35f)
         )
         val restored = PageTransitionSetting.fromJson(setting.toJson())
 
-        assertEquals(0.2f, restored.revealImageMotionPercent(forward = false), 0.001f)
-        assertEquals(0.65f, restored.revealImageMotionPercent(forward = true), 0.001f)
+        assertEquals(0.2f, restored.revealMotionRates(forward = false).outgoingRate, 0.001f)
+        assertEquals(0.8f, restored.revealMotionRates(forward = false).incomingRate, 0.001f)
+        assertEquals(0.65f, restored.revealMotionRates(forward = true).outgoingRate, 0.001f)
+        assertEquals(0.35f, restored.revealMotionRates(forward = true).incomingRate, 0.001f)
+
+        val legacySetting = PageTransitionSetting.fromJson(
+            JSONObject()
+                .put("universalTransitionId", "swipe_reveal")
+                .put("separateDirections", true)
+                .put("leftRevealImageMotionPercent", 0.25)
+                .put("rightRevealImageMotionPercent", 0.75)
+        )
+        assertEquals(0.25f, legacySetting.revealMotionRates(forward = false).outgoingRate, 0.001f)
+        assertEquals(0.25f, legacySetting.revealMotionRates(forward = false).incomingRate, 0.001f)
+        assertEquals(0.75f, legacySetting.revealMotionRates(forward = true).outgoingRate, 0.001f)
+        assertEquals(0.75f, legacySetting.revealMotionRates(forward = true).incomingRate, 0.001f)
         assertEquals(
             0f,
-            PageTransitionSetting.fromJson(JSONObject()).universalRevealImageMotionPercent,
+            PageTransitionSetting.fromJson(JSONObject()).universalRevealMotionRates.outgoingRate,
             0.001f
         )
     }
 
     @Test
-    fun testSwipeRevealImageMotionIsIndependentAndConfigurable() {
-        val outgoing = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
-            eraseColor(Color.RED)
+    fun testSwipeRevealImageMotionUsesFullParallaxReachIndependently() {
+        val outgoing = Bitmap.createBitmap(150, 1, Bitmap.Config.ARGB_8888).apply {
+            setPixels(IntArray(150) { Color.rgb(it, 0, 0) }, 0, 150, 0, 0, 150, 1)
         }
-        val incoming = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888).apply {
-            setPixels(IntArray(100) { Color.rgb(it, 0, 0) }, 0, 100, 0, 0, 100, 1)
+        val incoming = Bitmap.createBitmap(150, 1, Bitmap.Config.ARGB_8888).apply {
+            setPixels(IntArray(150) { Color.rgb(0, it, 0) }, 0, 150, 0, 0, 150, 1)
         }
         val output = Bitmap.createBitmap(100, 1, Bitmap.Config.ARGB_8888)
-
         val transition = TransitionRegistry.get("swipe_reveal")
+
+        // Forward swipe at p = 0.5:
+        // outgoing pageA covers [0..50) on output (-50..50) and incoming pageB is revealed at [50..100).
+        // pageA sourceLeft = 10 + 40 * 1.0 * 0.5 = 30 -> output[0] samples source[30 + 50] = 80
+        // pageB sourceLeft = 40 * (1 - 0.5 * 0.5) = 30 -> output[75] samples source[30 + 75] = 105
         transition.drawWithParallax(
             canvas = Canvas(output),
             pageABitmap = outgoing,
@@ -198,15 +221,21 @@ class ExampleUnitTest {
             screenWidth = 100,
             screenHeight = 1,
             paint = Paint(),
-            pageALeftTravelPx = 0,
-            pageARightTravelPx = 0,
-            pageBLeftTravelPx = 0,
-            pageBRightTravelPx = 0
+            pageALeftTravelPx = 10,
+            pageARightTravelPx = 40,
+            pageBLeftTravelPx = 40,
+            pageBRightTravelPx = 10,
+            pageSwipeForward = true,
+            outgoingMotionRate = 1f,
+            incomingMotionRate = 0.5f
         )
 
-        assertEquals(Color.RED, output.getPixel(25, 0))
-        assertEquals(75, Color.red(output.getPixel(75, 0)))
+        assertEquals(80, Color.red(output.getPixel(0, 0)))
+        assertEquals(105, Color.green(output.getPixel(75, 0)))
 
+        // Backward swipe at p = 0.5 swaps roles cleanly (pageB is outgoing on top, pageA is incoming underneath):
+        // pageA uses incomingRate (0.25): sourceLeft = 10 + 40 * 0.25 * 0.5 = 15 -> output[25] samples source[15 + 25] = 40
+        // pageB uses outgoingRate (1.0): sourceLeft = 40 * (1 - 1.0 * 0.5) = 20 -> output[75] samples source[20 + 25] = 45
         transition.drawWithParallax(
             canvas = Canvas(output),
             pageABitmap = outgoing,
@@ -215,14 +244,17 @@ class ExampleUnitTest {
             screenWidth = 100,
             screenHeight = 1,
             paint = Paint(),
-            pageALeftTravelPx = 0,
-            pageARightTravelPx = 0,
-            pageBLeftTravelPx = 0,
-            pageBRightTravelPx = 0,
-            revealImageMotionPercent = 0.2f
+            pageALeftTravelPx = 10,
+            pageARightTravelPx = 40,
+            pageBLeftTravelPx = 40,
+            pageBRightTravelPx = 10,
+            pageSwipeForward = false,
+            outgoingMotionRate = 1f,
+            incomingMotionRate = 0.25f
         )
 
-        assertEquals(65, Color.red(output.getPixel(75, 0)))
+        assertEquals(40, Color.red(output.getPixel(25, 0)))
+        assertEquals(45, Color.green(output.getPixel(75, 0)))
 
         outgoing.recycle()
         incoming.recycle()
@@ -387,6 +419,9 @@ class ExampleUnitTest {
         val slowSource = Bitmap.createBitmap(240, 1, Bitmap.Config.ARGB_8888)
         val slowColumns = IntArray(240) { Color.rgb(it, 0, 0) }
         slowSource.setPixels(slowColumns, 0, 240, 0, 0, 240, 1)
+
+        // Slow image motion: 50% outgoing motion rate pans 50% of pageA's leftTravelPx (70 -> 52)
+        // at p = 0.5, so screen pixel 0 (frame offset -50 -> bitmap +50) reads column 52 + 50 = 102.
         renderer.drawWithParallax(
             canvas = Canvas(output),
             pageABitmap = slowSource,
@@ -399,9 +434,14 @@ class ExampleUnitTest {
             pageARightTravelPx = 70,
             pageBLeftTravelPx = 0,
             pageBRightTravelPx = 0,
-            pageASlowImageSpeed = 0.5f
+            slowImageMotionEnabled = true,
+            outgoingMotionRate = 0.5f,
+            incomingMotionRate = 1f
         )
-        assertEquals(95, Color.red(output.getPixel(0, 0)))
+        assertEquals(102, Color.red(output.getPixel(0, 0)))
+
+        // Slow image motion: 100% incoming motion rate pans 100% of pageB's rightTravelPx (70 + 70 * 0.5 = 105)
+        // at p = 0.5, so screen pixel 50 (frame offset +50 -> bitmap +0) reads column 105.
         renderer.drawWithParallax(
             canvas = Canvas(output),
             pageABitmap = null,
@@ -414,9 +454,11 @@ class ExampleUnitTest {
             pageARightTravelPx = 0,
             pageBLeftTravelPx = 70,
             pageBRightTravelPx = 70,
-            pageBSlowImageSpeed = 0.5f
+            slowImageMotionEnabled = true,
+            outgoingMotionRate = 0.25f,
+            incomingMotionRate = 1f
         )
-        assertEquals(95, Color.red(output.getPixel(50, 0)))
+        assertEquals(105, Color.red(output.getPixel(50, 0)))
         source.recycle()
         slowSource.recycle()
         output.recycle()
@@ -675,8 +717,8 @@ class ExampleUnitTest {
                     leftTransitionId = "fade",
                     rightTransitionId = "parallax",
                     separateDirections = true,
-                    leftParallaxMotion = ParallaxMotionSettings(true, 0.3f),
-                    rightParallaxMotion = ParallaxMotionSettings(true, 0.7f)
+                    leftParallaxMotion = ParallaxMotionSettings(true, 0.3f, 0.45f),
+                    rightParallaxMotion = ParallaxMotionSettings(true, 0.7f, 0.85f)
                 )
             )
         )
@@ -690,12 +732,22 @@ class ExampleUnitTest {
         assertTrue(restored.transitions[0].parallaxMotion(forward = false).slowImageMotionEnabled)
         assertEquals(
             0.7f,
-            restored.transitions[0].parallaxMotion(forward = true).imageSpeed,
+            restored.transitions[0].parallaxMotion(forward = true).outgoingMotionRate,
+            0.001f
+        )
+        assertEquals(
+            0.85f,
+            restored.transitions[0].parallaxMotion(forward = true).incomingMotionRate,
             0.001f
         )
         assertEquals(
             0.3f,
-            restored.transitions[0].parallaxMotion(forward = false).imageSpeed,
+            restored.transitions[0].parallaxMotion(forward = false).outgoingMotionRate,
+            0.001f
+        )
+        assertEquals(
+            0.45f,
+            restored.transitions[0].parallaxMotion(forward = false).incomingMotionRate,
             0.001f
         )
         assertEquals("cube", restored.transitions[0].universalTransitionId)
@@ -740,8 +792,13 @@ class ExampleUnitTest {
 
         assertTrue(migrated.transitions[0].universalParallaxMotion.slowImageMotionEnabled)
         assertEquals(
-            0.35f,
-            migrated.transitions[0].universalParallaxMotion.imageSpeed,
+            0.65f,
+            migrated.transitions[0].universalParallaxMotion.outgoingMotionRate,
+            0.001f
+        )
+        assertEquals(
+            0.65f,
+            migrated.transitions[0].universalParallaxMotion.incomingMotionRate,
             0.001f
         )
         assertTrue(migrated.transitions[1].universalParallaxMotion.slowImageMotionEnabled)
@@ -901,6 +958,72 @@ class ExampleUnitTest {
         assertEquals(100, smoothCopy.height)
         smoothCopy.recycle()
         blurCheck.recycle()
+    }
+
+    @Test
+    fun testEdgeOverScrollControllerEngagesAtBothEdgesYieldsInwardAndDecaysSmoothly() {
+        val calib = CalibrationConfig(pageCount = 3, customOffsets = listOf(0f, 0.5f, 1f))
+        val controller = EdgeOverScrollController()
+        val width = 1000
+        val slop = 24
+
+        // 1. Middle page (0.5f) never activates touch tracking
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 500f, 500f, width, slop, 0.5f, 0.5f, calib)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+
+        // 2. Left edge (0.0f): dragging rightward (outward toward -1) locks negative fraction
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib)
+        assertTrue(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+
+        val lockMove = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 300f + slop + 275f, 505f, width, slop, 0.7f, 0f, calib
+        )
+        assertTrue(lockMove.handled)
+        assertTrue(lockMove.needsRedraw)
+        assertTrue(controller.isTouchActive)
+        assertTrue(controller.isOverScrollLocked)
+        assertEquals(0f, controller.lockedEdgeOffset, 0.001f)
+        assertEquals(-0.5f, controller.overScrollFraction, 0.01f)
+
+        // Release and verify smooth decay toward 0f, plus continuous re-grab mid-decay
+        controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 300f + slop + 275f, 505f, width, slop, 0.7f, 0f, calib)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+        controller.stepReleaseDecay(0.5f)
+        assertEquals(-0.25f, controller.overScrollFraction, 0.01f)
+
+        // Mid-decay re-grab continues seamlessly from -0.25f without snapping
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 400f, 500f, width, slop, 0f, 0f, calib)
+        assertTrue(controller.isTouchActive)
+        assertTrue(controller.isOverScrollLocked)
+        assertEquals(-0.25f, controller.overScrollFraction, 0.01f)
+        controller.reset()
+
+        // 3. Left edge inward swipe (leftward) yields immediately to launcher offset scrolling
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 500f, 500f, width, slop, 0f, 0f, calib)
+        val inward = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 500f - slop - 10f, 500f, width, slop, 0f, 0f, calib)
+        assertFalse(inward.handled)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+        assertEquals(0f, controller.overScrollFraction, 0.001f)
+
+        // 4. Vertical swipe on edge yields cleanly
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 500f, 500f, width, slop, 0f, 0f, calib)
+        val vertical = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 505f, 500f + slop + 40f, width, slop, 0f, 0f, calib)
+        assertFalse(vertical.handled)
+        assertFalse(controller.isTouchActive)
+
+        // 5. Right edge (1.0f): dragging leftward (outward) locks positive fraction
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 700f, 500f, width, slop, 1f, 1f, calib)
+        val rightOutward = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 700f - slop - 275f, 500f, width, slop, 1f, 1f, calib
+        )
+        assertTrue(rightOutward.handled)
+        assertTrue(controller.isOverScrollLocked)
+        assertEquals(1f, controller.lockedEdgeOffset, 0.001f)
+        assertEquals(0.5f, controller.overScrollFraction, 0.01f)
     }
 }
 

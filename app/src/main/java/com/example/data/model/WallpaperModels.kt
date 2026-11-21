@@ -178,21 +178,86 @@ data class PageItem(
     }
 }
 
+data class RevealMotionRates(
+    val outgoingRate: Float = 0f,
+    val incomingRate: Float = 0f
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("outgoingRate", outgoingRate.coerceIn(0f, 1f).toDouble())
+        put("incomingRate", incomingRate.coerceIn(0f, 1f).toDouble())
+    }
+
+    companion object {
+        fun fromJson(
+            json: JSONObject?,
+            legacyPercent: Double = 0.0
+        ): RevealMotionRates {
+            val fallback = legacyPercent.toFloat().coerceIn(0f, 1f)
+            return if (json != null) {
+                RevealMotionRates(
+                    outgoingRate = json.optDouble("outgoingRate", fallback.toDouble())
+                        .toFloat()
+                        .coerceIn(0f, 1f),
+                    incomingRate = json.optDouble("incomingRate", fallback.toDouble())
+                        .toFloat()
+                        .coerceIn(0f, 1f)
+                )
+            } else {
+                RevealMotionRates(outgoingRate = fallback, incomingRate = fallback)
+            }
+        }
+    }
+}
+
 data class ParallaxMotionSettings(
     val slowImageMotionEnabled: Boolean = false,
-    val imageSpeed: Float = 0.5f
+    val outgoingMotionRate: Float = 1f,
+    val incomingMotionRate: Float = 1f
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("slowImageMotionEnabled", slowImageMotionEnabled)
-        put("imageSpeed", imageSpeed.toDouble())
+        put("outgoingMotionRate", outgoingMotionRate.coerceIn(0f, 1f).toDouble())
+        put("incomingMotionRate", incomingMotionRate.coerceIn(0f, 1f).toDouble())
     }
 
     companion object {
         fun fromJson(json: JSONObject?): ParallaxMotionSettings =
             json?.let {
+                val slowEnabled = it.optBoolean("slowImageMotionEnabled", false)
+                val hasMotionRate = it.has("outgoingMotionRate") || it.has("incomingMotionRate")
+                val hasPrevRevealRate =
+                    it.has("outgoingRevealMotionRate") || it.has("incomingRevealMotionRate")
+                val hasLegacySpeed =
+                    it.has("outgoingImageSpeed") || it.has("incomingImageSpeed") || it.has("imageSpeed")
+
+                val defaultOutgoing = when {
+                    hasMotionRate -> it.optDouble("outgoingMotionRate", 1.0)
+                    hasPrevRevealRate -> it.optDouble("outgoingRevealMotionRate", 1.0)
+                    slowEnabled && hasLegacySpeed -> {
+                        val speed = it.optDouble(
+                            "outgoingImageSpeed",
+                            it.optDouble("imageSpeed", 0.5)
+                        ).toFloat().coerceIn(0f, 1f)
+                        (1f - speed).toDouble()
+                    }
+                    else -> 1.0
+                }
+                val defaultIncoming = when {
+                    hasMotionRate -> it.optDouble("incomingMotionRate", 1.0)
+                    hasPrevRevealRate -> it.optDouble("incomingRevealMotionRate", 1.0)
+                    slowEnabled && hasLegacySpeed -> {
+                        val speed = it.optDouble(
+                            "incomingImageSpeed",
+                            it.optDouble("imageSpeed", 0.5)
+                        ).toFloat().coerceIn(0f, 1f)
+                        (1f - speed).toDouble()
+                    }
+                    else -> 1.0
+                }
                 ParallaxMotionSettings(
-                    slowImageMotionEnabled = it.optBoolean("slowImageMotionEnabled", false),
-                    imageSpeed = it.optDouble("imageSpeed", 0.5).toFloat().coerceIn(0f, 1f)
+                    slowImageMotionEnabled = slowEnabled,
+                    outgoingMotionRate = defaultOutgoing.toFloat().coerceIn(0f, 1f),
+                    incomingMotionRate = defaultIncoming.toFloat().coerceIn(0f, 1f)
                 )
             } ?: ParallaxMotionSettings()
     }
@@ -206,9 +271,9 @@ data class PageTransitionSetting(
     val universalParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
     val leftParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
     val rightParallaxMotion: ParallaxMotionSettings = ParallaxMotionSettings(),
-    val universalRevealImageMotionPercent: Float = 0f,
-    val leftRevealImageMotionPercent: Float = universalRevealImageMotionPercent,
-    val rightRevealImageMotionPercent: Float = universalRevealImageMotionPercent
+    val universalRevealMotionRates: RevealMotionRates = RevealMotionRates(),
+    val leftRevealMotionRates: RevealMotionRates = universalRevealMotionRates,
+    val rightRevealMotionRates: RevealMotionRates = universalRevealMotionRates
 ) {
     fun transitionId(forward: Boolean): String =
         if (!separateDirections) universalTransitionId
@@ -218,10 +283,14 @@ data class PageTransitionSetting(
         if (!separateDirections) universalParallaxMotion
         else if (forward) rightParallaxMotion else leftParallaxMotion
 
-    fun revealImageMotionPercent(forward: Boolean): Float =
-        (if (!separateDirections) universalRevealImageMotionPercent
-        else if (forward) rightRevealImageMotionPercent else leftRevealImageMotionPercent)
-            .coerceIn(0f, 1f)
+    fun revealMotionRates(forward: Boolean): RevealMotionRates =
+        (if (!separateDirections) universalRevealMotionRates
+        else if (forward) rightRevealMotionRates else leftRevealMotionRates).let {
+            RevealMotionRates(
+                outgoingRate = it.outgoingRate.coerceIn(0f, 1f),
+                incomingRate = it.incomingRate.coerceIn(0f, 1f)
+            )
+        }
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("universalTransitionId", universalTransitionId)
@@ -231,9 +300,9 @@ data class PageTransitionSetting(
         put("universalParallaxMotion", universalParallaxMotion.toJson())
         put("leftParallaxMotion", leftParallaxMotion.toJson())
         put("rightParallaxMotion", rightParallaxMotion.toJson())
-        put("universalRevealImageMotionPercent", universalRevealImageMotionPercent.toDouble())
-        put("leftRevealImageMotionPercent", leftRevealImageMotionPercent.toDouble())
-        put("rightRevealImageMotionPercent", rightRevealImageMotionPercent.toDouble())
+        put("universalRevealMotionRates", universalRevealMotionRates.toJson())
+        put("leftRevealMotionRates", leftRevealMotionRates.toJson())
+        put("rightRevealMotionRates", rightRevealMotionRates.toJson())
     }
 
     companion object {
@@ -243,6 +312,39 @@ data class PageTransitionSetting(
                 json.optString("transitionId", "scroll")
             )
             val legacyReverse = json.optString("reverseTransitionId", legacyForward)
+            val legacyUniversalReveal = json.optDouble("universalRevealImageMotionPercent", 0.0)
+            val legacyLeftReveal = json.optDouble(
+                "leftRevealImageMotionPercent",
+                legacyUniversalReveal
+            )
+            val legacyRightReveal = json.optDouble(
+                "rightRevealImageMotionPercent",
+                legacyUniversalReveal
+            )
+            val universalRates = RevealMotionRates.fromJson(
+                json.optJSONObject("universalRevealMotionRates"),
+                legacyUniversalReveal
+            )
+            val leftRates = if (json.has("leftRevealMotionRates")) {
+                RevealMotionRates.fromJson(
+                    json.optJSONObject("leftRevealMotionRates"),
+                    legacyLeftReveal
+                )
+            } else if (json.has("leftRevealImageMotionPercent")) {
+                RevealMotionRates.fromJson(null, legacyLeftReveal)
+            } else {
+                universalRates
+            }
+            val rightRates = if (json.has("rightRevealMotionRates")) {
+                RevealMotionRates.fromJson(
+                    json.optJSONObject("rightRevealMotionRates"),
+                    legacyRightReveal
+                )
+            } else if (json.has("rightRevealImageMotionPercent")) {
+                RevealMotionRates.fromJson(null, legacyRightReveal)
+            } else {
+                universalRates
+            }
             return PageTransitionSetting(
                 universalTransitionId = json.optString("universalTransitionId", legacyForward),
                 leftTransitionId = json.optString("leftTransitionId", legacyReverse),
@@ -257,18 +359,9 @@ data class PageTransitionSetting(
                 rightParallaxMotion = ParallaxMotionSettings.fromJson(
                     json.optJSONObject("rightParallaxMotion")
                 ),
-                universalRevealImageMotionPercent = json.optDouble(
-                    "universalRevealImageMotionPercent",
-                    0.0
-                ).toFloat().coerceIn(0f, 1f),
-                leftRevealImageMotionPercent = json.optDouble(
-                    "leftRevealImageMotionPercent",
-                    json.optDouble("universalRevealImageMotionPercent", 0.0)
-                ).toFloat().coerceIn(0f, 1f),
-                rightRevealImageMotionPercent = json.optDouble(
-                    "rightRevealImageMotionPercent",
-                    json.optDouble("universalRevealImageMotionPercent", 0.0)
-                ).toFloat().coerceIn(0f, 1f)
+                universalRevealMotionRates = universalRates,
+                leftRevealMotionRates = leftRates,
+                rightRevealMotionRates = rightRates
             )
         }
     }
@@ -285,11 +378,14 @@ private fun parsePageItems(
             pages.add(PageItem.fromJson(pageJson))
             legacyMotionSettings.add(
                 if (pageJson.optBoolean("slowParallax", false)) {
+                    val legacySpeed = pageJson.optDouble("parallaxImageSpeed", 0.5)
+                        .toFloat()
+                        .coerceIn(0f, 1f)
+                    val migratedRate = (1f - legacySpeed).coerceIn(0f, 1f)
                     ParallaxMotionSettings(
                         slowImageMotionEnabled = true,
-                        imageSpeed = pageJson.optDouble("parallaxImageSpeed", 0.5)
-                            .toFloat()
-                            .coerceIn(0f, 1f)
+                        outgoingMotionRate = migratedRate,
+                        incomingMotionRate = migratedRate
                     )
                 } else {
                     null
@@ -314,7 +410,8 @@ private fun migrateLegacyParallaxSettings(
         } else {
             val motion = ParallaxMotionSettings(
                 slowImageMotionEnabled = true,
-                imageSpeed = configuredLegacyMotions.map { it.imageSpeed }.average().toFloat()
+                outgoingMotionRate = configuredLegacyMotions.map { it.outgoingMotionRate }.average().toFloat(),
+                incomingMotionRate = configuredLegacyMotions.map { it.incomingMotionRate }.average().toFloat()
             )
             setting.copy(
                 universalParallaxMotion = motion,

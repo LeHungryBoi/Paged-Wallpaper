@@ -39,10 +39,10 @@ interface PageTransitionRenderer {
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
         pageBRightTravelPx: Int,
-        pageASlowImageSpeed: Float? = null,
-        pageBSlowImageSpeed: Float? = null,
-        revealImageMotionPercent: Float = 0f,
-        pageSwipeForward: Boolean = true
+        slowImageMotionEnabled: Boolean = false,
+        pageSwipeForward: Boolean = true,
+        outgoingMotionRate: Float = 1f,
+        incomingMotionRate: Float = 1f
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -143,12 +143,16 @@ open class ParallaxScrollTransition(
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
         pageBRightTravelPx: Int,
-        pageASlowImageSpeed: Float?,
-        pageBSlowImageSpeed: Float?,
-        revealImageMotionPercent: Float,
-        pageSwipeForward: Boolean
+        slowImageMotionEnabled: Boolean,
+        pageSwipeForward: Boolean,
+        outgoingMotionRate: Float,
+        incomingMotionRate: Float
     ) {
         val p = progress.coerceIn(0f, 1f)
+        val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
+        val incomingRate = incomingMotionRate.coerceIn(0f, 1f)
+        val pageARate = if (pageSwipeForward) outgoingRate else incomingRate
+        val pageBRate = if (pageSwipeForward) incomingRate else outgoingRate
 
         fun drawPage(
             bitmap: Bitmap?,
@@ -168,23 +172,15 @@ open class ParallaxScrollTransition(
             canvas.drawBitmap(bitmap, source, destination, paint)
         }
 
-        val pageASourceLeft = pageASlowImageSpeed?.let { speed ->
-            val counterTravel = minOf(
-                ((1f - speed.coerceIn(0f, 1f)) * screenWidth).toInt(),
-                pageALeftTravelPx
-            )
-            pageALeftTravelPx - counterTravel * p
-        } ?: (pageALeftTravelPx + pageARightTravelPx * p)
-        val pageBSourceLeft = pageBSlowImageSpeed?.let { speed ->
-            val counterTravel = minOf(
-                ((1f - speed.coerceIn(0f, 1f)) * screenWidth).toInt(),
-                pageBRightTravelPx
-            )
-            pageBLeftTravelPx + counterTravel * (1f - p)
-        } ?: if (useClassicIncomingTravel) {
-            pageBLeftTravelPx + pageBRightTravelPx * (1f - p)
+        val pageASourceLeft = if (slowImageMotionEnabled) {
+            pageALeftTravelPx * (1f - pageARate * p)
         } else {
-            pageBLeftTravelPx * p
+            pageALeftTravelPx + pageARightTravelPx * pageARate * p
+        }
+        val pageBSourceLeft = if (slowImageMotionEnabled || useClassicIncomingTravel) {
+            pageBLeftTravelPx + pageBRightTravelPx * pageBRate * (1f - p)
+        } else {
+            pageBLeftTravelPx * (1f - pageBRate * (1f - p))
         }
 
         drawPage(
@@ -262,16 +258,19 @@ open class SwipeRevealTransition(
         pageARightTravelPx: Int,
         pageBLeftTravelPx: Int,
         pageBRightTravelPx: Int,
-        pageASlowImageSpeed: Float?,
-        pageBSlowImageSpeed: Float?,
-        revealImageMotionPercent: Float,
-        pageSwipeForward: Boolean
+        slowImageMotionEnabled: Boolean,
+        pageSwipeForward: Boolean,
+        outgoingMotionRate: Float,
+        incomingMotionRate: Float
     ) {
         val p = progress.coerceIn(0f, 1f)
-        val imageMotion = (
-            screenWidth * revealImageMotionPercent.coerceIn(0f, 1f) *
-                (if (pageSwipeForward) 1f - p else p)
-        ).toInt()
+        val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
+        val incomingRate = incomingMotionRate.coerceIn(0f, 1f)
+        val pageARate = if (pageSwipeForward) outgoingRate else incomingRate
+        val pageBRate = if (pageSwipeForward) incomingRate else outgoingRate
+
+        val pageASourceLeft = (pageALeftTravelPx + pageARightTravelPx * pageARate * p).toInt()
+        val pageBSourceLeft = (pageBLeftTravelPx * (1f - pageBRate * (1f - p))).toInt()
 
         fun drawPage(
             bitmap: Bitmap?,
@@ -299,30 +298,30 @@ open class SwipeRevealTransition(
         if (followsSwipeDirection && !pageSwipeForward) {
             drawPage(
                 pageABitmap,
-                -imageMotion,
-                pageALeftTravelPx,
+                0,
+                pageASourceLeft,
                 destinationA,
                 sourceA
             )
             drawPage(
                 pageBBitmap,
                 ((1f - p) * screenWidth).toInt(),
-                pageBLeftTravelPx,
+                pageBSourceLeft,
                 destinationB,
                 sourceB
             )
         } else {
             drawPage(
                 pageBBitmap,
-                imageMotion,
-                pageBLeftTravelPx,
+                0,
+                pageBSourceLeft,
                 destinationB,
                 sourceB
             )
             drawPage(
                 pageABitmap,
                 (-p * screenWidth).toInt(),
-                pageALeftTravelPx,
+                pageASourceLeft,
                 destinationA,
                 sourceA
             )

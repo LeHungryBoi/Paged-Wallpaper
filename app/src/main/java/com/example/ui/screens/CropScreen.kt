@@ -106,8 +106,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
 
-private const val UNREACHABLE_PARALLAX_OVERLAY_ALPHA = 0.2f
-
 private fun calculatePreviewTravel(
     sourceWidth: Int,
     sourceHeight: Int,
@@ -621,16 +619,10 @@ fun MediaEditorScreen(
                         mapX(frameRight),
                         mapY(frameBottom)
                     )
-                    val leftReachUnavailable = page.pageIndex == 0
-                    val rightReachUnavailable = page.pageIndex >= pageCount - 1
                     val reachStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.rgb(255, 180, 0)
                         style = Paint.Style.STROKE
                         strokeWidth = 2.dp.toPx()
-                    }
-                    val unreachableOverlay = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.BLACK
-                        alpha = (UNREACHABLE_PARALLAX_OVERLAY_ALPHA * 255).roundToInt()
                     }
                     val staticStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = android.graphics.Color.rgb(80, 220, 255)
@@ -638,24 +630,6 @@ fun MediaEditorScreen(
                         strokeWidth = 2.dp.toPx()
                     }
                     nativeCanvas.drawRect(reachBounds, reachStroke)
-                    if (leftReachUnavailable && reachLeft < frameLeft) {
-                        nativeCanvas.drawRect(
-                            mapX(reachLeft),
-                            mapY(frameTop),
-                            mapX(frameLeft),
-                            mapY(frameBottom),
-                            unreachableOverlay
-                        )
-                    }
-                    if (rightReachUnavailable && reachRight > frameRight) {
-                        nativeCanvas.drawRect(
-                            mapX(frameRight),
-                            mapY(frameTop),
-                            mapX(reachRight),
-                            mapY(frameBottom),
-                            unreachableOverlay
-                        )
-                    }
                     nativeCanvas.drawRect(staticBounds, staticStroke)
                 }
                 }
@@ -676,7 +650,7 @@ fun MediaEditorScreen(
                     )
                 }
                 Text(
-                    "Darkened reach cannot be used from this page.",
+                    "Edge reach is also used for edge over-scroll.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
