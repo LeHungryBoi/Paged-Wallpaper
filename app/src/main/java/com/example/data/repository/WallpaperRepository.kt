@@ -26,6 +26,7 @@ import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.model.WallpaperAppState
+import com.example.util.ImageProcessingUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -630,6 +631,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             cropPanY = updatedPage.cropPanY.coerceIn(-1f, 1f),
             cropScale = updatedPage.cropScale.coerceIn(1f, 3f),
             blurAmount = updatedPage.blurAmount.coerceIn(0f, 1f),
+            blurTintIntensity = updatedPage.blurTintIntensity.coerceIn(0f, 1f),
             parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f)
         )
         if (!renderMediaForPage(media, normalized, targetWidth, targetHeight)) return@withContext false
@@ -742,7 +744,6 @@ class WallpaperRepository private constructor(private val context: Context) {
             return null
         } ?: return null
         var outputBitmap: Bitmap? = null
-        var blurredBackground: Bitmap? = null
 
         try {
             val sourceWidth = fullBitmap.width
@@ -819,29 +820,19 @@ class WallpaperRepository private constructor(private val context: Context) {
                         .toInt().coerceAtMost(sourceWidth),
                     centerCrop.bottom
                 )
-                val blurScale = 1f - page.blurAmount.coerceIn(0f, 1f) * 0.94f
-                val backgroundWidth = (outputWidth * blurScale).toInt().coerceAtLeast(1)
-                val backgroundHeight = (targetHeight * blurScale).toInt().coerceAtLeast(1)
-                blurredBackground = Bitmap.createBitmap(
-                    backgroundWidth,
-                    backgroundHeight,
-                    Bitmap.Config.ARGB_8888
+                ImageProcessingUtils.drawStyledBlurredBackdrop(
+                    canvas = canvas,
+                    srcBmp = fullBitmap,
+                    srcRect = expandedBackground,
+                    targetWidth = outputWidth,
+                    targetHeight = targetHeight,
+                    blurAmount = page.blurAmount,
+                    blurStyle = page.blurStyle,
+                    blurTintMode = page.blurTintMode,
+                    blurTintColor = page.blurTintColor,
+                    blurTintIntensity = page.blurTintIntensity,
+                    blurRainbowStyle = page.blurRainbowStyle
                 )
-                Canvas(blurredBackground!!).drawBitmap(
-                    fullBitmap,
-                    expandedBackground,
-                    Rect(0, 0, backgroundWidth, backgroundHeight),
-                    paint
-                )
-                canvas.drawBitmap(
-                    blurredBackground!!,
-                    null,
-                    Rect(0, 0, outputWidth, targetHeight),
-                    paint
-                )
-                if (page.cropFillMode == CropFillMode.GLASS) {
-                    canvas.drawColor(Color.argb(58, 24, 28, 38))
-                }
 
                 val fitScale = minOf(
                     targetWidth.toFloat() / sourceWidth,
@@ -853,15 +844,17 @@ class WallpaperRepository private constructor(private val context: Context) {
                     panX * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
                 val centerY = targetHeight / 2f +
                     panY * ((drawHeight - targetHeight) / 2f).coerceAtLeast(0f)
+                val fgDstRect = RectF(
+                    centerX - drawWidth / 2f,
+                    centerY - drawHeight / 2f,
+                    centerX + drawWidth / 2f,
+                    centerY + drawHeight / 2f
+                )
+                ImageProcessingUtils.drawForegroundShadow(canvas, fgDstRect)
                 canvas.drawBitmap(
                     fullBitmap,
                     null,
-                    RectF(
-                        centerX - drawWidth / 2f,
-                        centerY - drawHeight / 2f,
-                        centerX + drawWidth / 2f,
-                        centerY + drawHeight / 2f
-                    ),
+                    fgDstRect,
                     paint
                 )
             } else {
@@ -899,7 +892,6 @@ class WallpaperRepository private constructor(private val context: Context) {
             outputBitmap?.recycle()
             return null
         } finally {
-            blurredBackground?.recycle()
             fullBitmap.recycle()
         }
     }

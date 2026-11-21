@@ -30,14 +30,23 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Flare
+import androidx.compose.material.icons.filled.Grain
+import androidx.compose.material.icons.filled.LensBlur
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Vignette
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -60,6 +69,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,21 +78,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.model.BlurRainbowStyle
+import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
+import com.example.util.ImageProcessingUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -159,6 +178,11 @@ fun MediaEditorScreen(
     var isAlreadyDark by remember(media.id, page.pageIndex) { mutableStateOf(page.isAlreadyDark) }
     var cropFillMode by remember(media.id, page.pageIndex) { mutableStateOf(page.cropFillMode) }
     var blurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurAmount) }
+    var blurStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurStyle) }
+    var blurTintMode by remember(media.id, page.pageIndex) { mutableStateOf(page.blurTintMode) }
+    var blurTintColor by remember(media.id, page.pageIndex) { mutableIntStateOf(page.blurTintColor) }
+    var blurTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTintIntensity) }
+    var blurRainbowStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurRainbowStyle) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
     var expandedPreview by remember(media.id) { mutableStateOf<String?>(null) }
 
@@ -185,19 +209,38 @@ fun MediaEditorScreen(
         bitmap = loaded
     }
 
-    LaunchedEffect(media.id, blurAmount, bitmap) {
+    LaunchedEffect(
+        media.id,
+        bitmap,
+        cropFillMode,
+        blurAmount,
+        blurStyle,
+        blurTintMode,
+        blurTintColor,
+        blurTintIntensity,
+        blurRainbowStyle
+    ) {
         val source = bitmap ?: return@LaunchedEffect
-        val blurScale = 1f - blurAmount.coerceIn(0f, 1f) * 0.94f
-        val previewScale = minOf(blurScale, 512f / maxOf(source.width, source.height))
-        val preview = withContext(Dispatchers.IO) {
-            Bitmap.createScaledBitmap(
-                source,
-                (source.width * previewScale).toInt().coerceAtLeast(1),
-                (source.height * previewScale).toInt().coerceAtLeast(1),
-                true
+        if (cropFillMode == CropFillMode.CROP) {
+            blurredBitmap = null
+            return@LaunchedEffect
+        }
+        if (blurredBitmap != null) {
+            delay(40)
+        }
+        val preview = withContext(Dispatchers.Default) {
+            ImageProcessingUtils.renderBackdropPreviewBitmap(
+                srcBmp = source,
+                targetWidth = 270,
+                targetHeight = 585,
+                blurAmount = blurAmount,
+                blurStyle = blurStyle,
+                blurTintMode = blurTintMode,
+                blurTintColor = blurTintColor,
+                blurTintIntensity = blurTintIntensity,
+                blurRainbowStyle = blurRainbowStyle
             )
         }
-        blurredBitmap?.takeIf { it !== preview && it !== source && !it.isRecycled }?.recycle()
         blurredBitmap = preview
     }
 
@@ -253,6 +296,11 @@ fun MediaEditorScreen(
                                     isAlreadyDark = isAlreadyDark,
                                     cropFillMode = cropFillMode,
                                     blurAmount = blurAmount,
+                                    blurStyle = blurStyle,
+                                    blurTintMode = blurTintMode,
+                                    blurTintColor = blurTintColor,
+                                    blurTintIntensity = blurTintIntensity,
+                                    blurRainbowStyle = blurRainbowStyle,
                                     cropPanX = panX,
                                     cropPanY = panY,
                                     cropScale = zoom,
@@ -346,16 +394,13 @@ fun MediaEditorScreen(
                     if (source != null) {
                         if (cropFillMode != CropFillMode.CROP) {
                             Image(
-                                bitmap = (if (blurAmount == 0f) source else blurredBitmap ?: source).asImageBitmap(),
+                                bitmap = (blurredBitmap ?: source).asImageBitmap(),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .blur(if (blurredBitmap == null) (blurAmount * 24f).dp else 0.dp)
+                                    .blur(if (blurredBitmap == null) (blurAmount * 20f).dp else 0.dp)
                             )
-                            if (cropFillMode == CropFillMode.GLASS) {
-                                Box(Modifier.fillMaxSize().background(Color(0x5018202C)))
-                            }
                         }
                         Canvas(Modifier.fillMaxSize().clipToBounds()) {
                             val targetWidth = size.width
@@ -415,15 +460,17 @@ fun MediaEditorScreen(
                                         panX * ((imageWidth - targetWidth) / 2f).coerceAtLeast(0f)
                                     val centerY = targetHeight / 2f +
                                         panY * ((imageHeight - targetHeight) / 2f).coerceAtLeast(0f)
+                                    val fgDstRect = RectF(
+                                        centerX - imageWidth / 2f,
+                                        centerY - imageHeight / 2f,
+                                        centerX + imageWidth / 2f,
+                                        centerY + imageHeight / 2f
+                                    )
+                                    ImageProcessingUtils.drawForegroundShadow(nativeCanvas, fgDstRect)
                                     nativeCanvas.drawBitmap(
                                         source,
                                         null,
-                                        RectF(
-                                            centerX - imageWidth / 2f,
-                                            centerY - imageHeight / 2f,
-                                            centerX + imageWidth / 2f,
-                                            centerY + imageHeight / 2f
-                                        ),
+                                        fgDstRect,
                                         paint
                                     )
                                 }
@@ -649,20 +696,249 @@ fun MediaEditorScreen(
                             CropFillMode.values().forEach { mode ->
                                 FilterChip(
                                     selected = cropFillMode == mode,
-                                    onClick = { cropFillMode = mode },
+                                    onClick = {
+                                        cropFillMode = mode
+                                        if (mode == CropFillMode.BLUR &&
+                                            (blurStyle == BlurStyle.WIN7_AERO || blurStyle == BlurStyle.MODERN_ACRYLIC)
+                                        ) {
+                                            blurStyle = BlurStyle.SMOOTH_GAUSSIAN
+                                        } else if (mode == CropFillMode.GLASS &&
+                                            blurStyle == BlurStyle.SMOOTH_GAUSSIAN
+                                        ) {
+                                            blurStyle = BlurStyle.WIN7_AERO
+                                        }
+                                    },
                                     label = { Text(mode.displayName, style = MaterialTheme.typography.labelSmall) },
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("crop_fill_${mode.name.lowercase()}")
                                 )
                             }
                         }
                         if (cropFillMode != CropFillMode.CROP) {
-                            Text("Background blur: ${(blurAmount * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
-                            Slider(
-                                value = blurAmount,
-                                onValueChange = { blurAmount = it },
-                                valueRange = 0f..1f,
-                                modifier = Modifier.testTag("crop_blur_slider")
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("Blur style", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    BlurStyle.values().forEach { style ->
+                                        FilterChip(
+                                            selected = blurStyle == style,
+                                            onClick = {
+                                                blurStyle = style
+                                                cropFillMode = if (
+                                                    style == BlurStyle.WIN7_AERO ||
+                                                    style == BlurStyle.MODERN_ACRYLIC ||
+                                                    style == BlurStyle.PRISM_REFRACTION
+                                                ) {
+                                                    CropFillMode.GLASS
+                                                } else {
+                                                    CropFillMode.BLUR
+                                                }
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    imageVector = blurStyleIcon(style),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            },
+                                            label = { Text(style.shortLabel, style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.testTag("blur_style_${style.name.lowercase()}")
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = blurStyle.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("Background blur: ${(blurAmount * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                                Slider(
+                                    value = blurAmount,
+                                    onValueChange = { blurAmount = it },
+                                    valueRange = 0f..1f,
+                                    modifier = Modifier.testTag("crop_blur_slider")
+                                )
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Palette,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        "Color tinting",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    BlurTintMode.values().forEach { mode ->
+                                        FilterChip(
+                                            selected = blurTintMode == mode,
+                                            onClick = { blurTintMode = mode },
+                                            label = { Text(mode.displayName, style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .testTag("tint_mode_${mode.name.lowercase()}")
+                                        )
+                                    }
+                                }
+
+                                when (blurTintMode) {
+                                    BlurTintMode.NONE -> Unit
+
+                                    BlurTintMode.SOLID -> {
+                                        val hsv = remember(blurTintColor) {
+                                            FloatArray(3).also {
+                                                android.graphics.Color.colorToHSV(blurTintColor, it)
+                                            }
+                                        }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            TINT_SWATCH_COLORS.forEachIndexed { idx, swatchColor ->
+                                                val selected = blurTintColor == swatchColor
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(48.dp)
+                                                        .clip(CircleShape)
+                                                        .clickable(
+                                                            role = Role.RadioButton,
+                                                            onClickLabel = "Select tint color"
+                                                        ) { blurTintColor = swatchColor }
+                                                        .testTag("tint_swatch_$idx"),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(34.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(swatchColor))
+                                                            .border(
+                                                                width = if (selected) 2.5.dp else 1.dp,
+                                                                color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.55f),
+                                                                shape = CircleShape
+                                                            ),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        if (selected) {
+                                                            Icon(
+                                                                Icons.Default.Check,
+                                                                contentDescription = "Selected tint color",
+                                                                tint = if (Color(swatchColor).luminanceCompat() > 0.6f) Color.Black else Color.White,
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(blurTintColor))
+                                                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                                            )
+                                            Text(
+                                                "Custom hue",
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(6.dp)
+                                                    .clip(RoundedCornerShape(3.dp))
+                                                    .background(
+                                                        Brush.horizontalGradient(
+                                                            listOf(
+                                                                Color.Red,
+                                                                Color.Yellow,
+                                                                Color.Green,
+                                                                Color.Cyan,
+                                                                Color.Blue,
+                                                                Color.Magenta,
+                                                                Color.Red
+                                                            )
+                                                        )
+                                                    )
+                                            )
+                                        }
+                                        Slider(
+                                            value = hsv[0],
+                                            onValueChange = { hue ->
+                                                val sat = hsv[1].coerceAtLeast(0.75f)
+                                                val value = hsv[2].coerceAtLeast(0.88f)
+                                                blurTintColor = android.graphics.Color.HSVToColor(
+                                                    floatArrayOf(hue.coerceIn(0f, 360f), sat, value)
+                                                )
+                                            },
+                                            valueRange = 0f..360f,
+                                            modifier = Modifier.testTag("tint_hue_slider")
+                                        )
+                                        Text(
+                                            "Tint intensity: ${(blurTintIntensity * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                        Slider(
+                                            value = blurTintIntensity,
+                                            onValueChange = { blurTintIntensity = it },
+                                            valueRange = 0f..1f,
+                                            modifier = Modifier.testTag("tint_intensity_slider")
+                                        )
+                                    }
+
+                                    BlurTintMode.RAINBOW -> {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            BlurRainbowStyle.values().forEach { style ->
+                                                FilterChip(
+                                                    selected = blurRainbowStyle == style,
+                                                    onClick = { blurRainbowStyle = style },
+                                                    label = { Text(style.displayName, style = MaterialTheme.typography.labelSmall) },
+                                                    modifier = Modifier.testTag("rainbow_style_${style.name.lowercase()}")
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            "Rainbow intensity: ${(blurTintIntensity * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelMedium
+                                        )
+                                        Slider(
+                                            value = blurTintIntensity,
+                                            onValueChange = { blurTintIntensity = it },
+                                            valueRange = 0f..1f,
+                                            modifier = Modifier.testTag("tint_intensity_slider")
+                                        )
+                                    }
+                                }
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.ZoomIn, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -739,3 +1015,27 @@ fun MediaEditorScreen(
         }
     }
 }
+
+private val TINT_SWATCH_COLORS = listOf(
+    0xFF38BDF8.toInt(), // Ice Cyan (Win7 Aero signature)
+    0xFF6366F1.toInt(), // Royal Indigo
+    0xFF10B981.toInt(), // Emerald Mint
+    0xFFF43F5E.toInt(), // Coral Rose
+    0xFFF59E0B.toInt(), // Warm Amber
+    0xFFA855F7.toInt(), // Orchid Violet
+    0xFF1E293B.toInt(), // Deep Obsidian Slate
+    0xFFF8FAFC.toInt()  // Pure Frost Pearl
+)
+
+private fun blurStyleIcon(style: BlurStyle): ImageVector = when (style) {
+    BlurStyle.SMOOTH_GAUSSIAN -> Icons.Default.BlurOn
+    BlurStyle.WIN7_AERO -> Icons.Default.AutoAwesome
+    BlurStyle.MODERN_ACRYLIC -> Icons.Default.Grain
+    BlurStyle.SILKY_VIGNETTE -> Icons.Default.Vignette
+    BlurStyle.BOKEH_BLOOM -> Icons.Default.LensBlur
+    BlurStyle.PRISM_REFRACTION -> Icons.Default.Flare
+}
+
+private fun Color.luminanceCompat(): Float =
+    0.299f * red + 0.587f * green + 0.114f * blue
+

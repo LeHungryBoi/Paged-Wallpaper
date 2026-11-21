@@ -6,6 +6,9 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.BlurRainbowStyle
+import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTintMode
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
@@ -22,6 +25,7 @@ import com.example.data.repository.WallpaperRepository
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
 import com.example.render.SwipeDirectionLock
+import com.example.util.ImageProcessingUtils
 import org.json.JSONArray
 import org.json.JSONObject
 import com.example.transition.TransitionRegistry
@@ -805,4 +809,98 @@ class ExampleUnitTest {
         assertTrue(File(context.filesDir, "cropped/restored.jpg").readBytes().contentEquals(restoredImage))
         assertFalse(staleImage.exists())
     }
+
+    @Test
+    fun testBlurStyleAndTintSerializationAndLegacyGlassFallback() {
+        val page = PageItem(
+            pageIndex = 1,
+            originalId = "media",
+            cropFillMode = CropFillMode.GLASS,
+            blurAmount = 0.8f,
+            blurStyle = BlurStyle.MODERN_ACRYLIC,
+            blurTintMode = BlurTintMode.RAINBOW,
+            blurTintColor = 0xFF10B981.toInt(),
+            blurTintIntensity = 0.65f,
+            blurRainbowStyle = BlurRainbowStyle.RADIAL_IRIDESCENCE
+        )
+        val restored = PageItem.fromJson(page.toJson())
+        assertEquals(BlurStyle.MODERN_ACRYLIC, restored.blurStyle)
+        assertEquals(BlurTintMode.RAINBOW, restored.blurTintMode)
+        assertEquals(0xFF10B981.toInt(), restored.blurTintColor)
+        assertEquals(0.65f, restored.blurTintIntensity, 0.001f)
+        assertEquals(BlurRainbowStyle.RADIAL_IRIDESCENCE, restored.blurRainbowStyle)
+
+        val legacyGlass = PageItem.fromJson(
+            JSONObject()
+                .put("pageIndex", 0)
+                .put("cropFillMode", "GLASS")
+        )
+        assertEquals(CropFillMode.GLASS, legacyGlass.cropFillMode)
+        assertEquals(BlurStyle.WIN7_AERO, legacyGlass.blurStyle)
+        assertEquals(BlurTintMode.NONE, legacyGlass.blurTintMode)
+    }
+
+    @Test
+    fun testOpticalBackdropBlurProducesSmoothTransitionsAndSupportsAllStylesAndTints() {
+        val w = 200
+        val h = 200
+        val pixels = IntArray(w * h) { index ->
+            val x = index % w
+            if (x < 100) Color.WHITE else Color.BLACK
+        }
+        val blurCheck = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+            setPixels(pixels, 0, w, 0, 0, w, h)
+        }
+        ImageProcessingUtils.fastBlur(blurCheck, 18)
+        ImageProcessingUtils.fastBlur(blurCheck, 12)
+
+        val leftLum = Color.red(blurCheck.getPixel(80, 100))
+        val centerLum = Color.red(blurCheck.getPixel(100, 100))
+        val rightLum = Color.red(blurCheck.getPixel(120, 100))
+        assertTrue(leftLum > centerLum)
+        assertTrue(centerLum > rightLum)
+        assertTrue(centerLum in 40..215)
+
+        // Verify all 6 BlurStyles, Solid tint, and all 4 Rainbow styles render cleanly at target dimensions
+        BlurStyle.values().forEach { style ->
+            val tinted = ImageProcessingUtils.renderBackdropPreviewBitmap(
+                srcBmp = blurCheck,
+                targetWidth = 120,
+                targetHeight = 160,
+                blurAmount = 0.65f,
+                blurStyle = style,
+                blurTintMode = BlurTintMode.SOLID,
+                blurTintColor = 0xFF38BDF8.toInt(),
+                blurTintIntensity = 0.55f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM
+            )
+            assertEquals(120, tinted.width)
+            assertEquals(160, tinted.height)
+            tinted.recycle()
+        }
+
+        BlurRainbowStyle.values().forEach { rainbowStyle ->
+            val rainbow = ImageProcessingUtils.renderBackdropPreviewBitmap(
+                srcBmp = blurCheck,
+                targetWidth = 120,
+                targetHeight = 160,
+                blurAmount = 0.7f,
+                blurStyle = BlurStyle.WIN7_AERO,
+                blurTintMode = BlurTintMode.RAINBOW,
+                blurTintColor = Color.WHITE,
+                blurTintIntensity = 0.8f,
+                blurRainbowStyle = rainbowStyle
+            )
+            assertEquals(120, rainbow.width)
+            assertEquals(160, rainbow.height)
+            rainbow.recycle()
+        }
+
+        val smoothCopy = ImageProcessingUtils.createSmoothBlurredCopy(blurCheck, maxDimension = 100, blurRadius = 10)
+        assertEquals(100, smoothCopy.width)
+        assertEquals(100, smoothCopy.height)
+        smoothCopy.recycle()
+        blurCheck.recycle()
+    }
 }
+

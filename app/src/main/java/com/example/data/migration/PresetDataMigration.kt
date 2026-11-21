@@ -1,5 +1,6 @@
 package com.example.data.migration
 
+import com.example.data.model.BlurStyle
 import com.example.data.model.CropFillMode
 import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
@@ -19,12 +20,18 @@ object PresetDataMigration {
         if (state.schemaVersion >= LEGACY_PRESET_SCHEMA_VERSION) return state
         val migratedPages = state.pages.map { page ->
             val legacy = page.originalId?.let(legacyMediaMetadata::get) ?: return@map page
+            val fillMode = CropFillMode.fromName(
+                legacy.optString("cropFillMode", CropFillMode.BLUR.name)
+            )
             page.copy(
                 isAlreadyDark = legacy.optBoolean("isAlreadyDark", page.isAlreadyDark),
-                cropFillMode = CropFillMode.fromName(
-                    legacy.optString("cropFillMode", CropFillMode.BLUR.name)
-                ),
+                cropFillMode = fillMode,
                 blurAmount = legacy.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f),
+                blurStyle = if (fillMode == CropFillMode.GLASS) {
+                    BlurStyle.WIN7_AERO
+                } else {
+                    BlurStyle.SMOOTH_GAUSSIAN
+                },
                 cropPanX = legacy.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropPanY = legacy.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = legacy.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),

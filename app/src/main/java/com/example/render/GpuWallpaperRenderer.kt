@@ -23,6 +23,7 @@ import com.example.data.model.PageItem
 import com.example.data.model.WallpaperAppState
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
+import com.example.util.ImageProcessingUtils
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -636,12 +637,7 @@ class GpuWallpaperRenderer(
         val textureId = uploadBitmap(bitmap)
         var blurredTextureId = 0
         return try {
-            val blurred = Bitmap.createScaledBitmap(
-                bitmap,
-                (bitmap.width / 8).coerceAtLeast(1),
-                (bitmap.height / 8).coerceAtLeast(1),
-                true
-            )
+            val blurred = ImageProcessingUtils.createSmoothBlurredCopy(bitmap)
             try {
                 blurredTextureId = uploadBitmap(blurred)
             } finally {

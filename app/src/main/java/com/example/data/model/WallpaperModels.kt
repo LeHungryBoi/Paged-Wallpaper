@@ -24,11 +24,76 @@ enum class OffsetEasingStyle(val displayName: String) {
 enum class CropFillMode(val displayName: String, val description: String) {
     CROP("Crop to fill", "Fill the screen by cropping the image edges"),
     BLUR("Blurred fill", "Keep the whole image over a softly blurred background"),
-    GLASS("Frosted fill", "Keep the whole image over a tinted, blurred background");
+    GLASS("Frosted fill", "Keep the whole image over a stylized glass backdrop");
 
     companion object {
         fun fromName(name: String): CropFillMode =
             values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: BLUR
+    }
+}
+
+enum class BlurStyle(
+    val displayName: String,
+    val shortLabel: String,
+    val description: String
+) {
+    SMOOTH_GAUSSIAN(
+        "Smooth Gaussian",
+        "Gaussian",
+        "Pure, silky large-radius optical blur with natural color fidelity"
+    ),
+    WIN7_AERO(
+        "Win7 Aero Glass",
+        "Win7 Aero",
+        "Classic translucent glass with diagonal specular reflections and icy sheen"
+    ),
+    MODERN_ACRYLIC(
+        "Modern Acrylic",
+        "Acrylic",
+        "Vibrant frosted material with subtle micro-grain noise and soft veil"
+    ),
+    SILKY_VIGNETTE(
+        "Silky Vignette",
+        "Vignette",
+        "Luminous soft-blur center with velvety darkened edge falloff"
+    ),
+    BOKEH_BLOOM(
+        "Bokeh Bloom",
+        "Bokeh",
+        "Creamy optical blur with glowing highlight bloom"
+    ),
+    PRISM_REFRACTION(
+        "Prism Refraction",
+        "Prism",
+        "Subtle chromatic glass dispersion with soft spectral shimmer"
+    );
+
+    companion object {
+        fun fromName(name: String, fallback: BlurStyle = SMOOTH_GAUSSIAN): BlurStyle =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: fallback
+    }
+}
+
+enum class BlurTintMode(val displayName: String) {
+    NONE("Natural"),
+    SOLID("Single color"),
+    RAINBOW("Rainbow");
+
+    companion object {
+        fun fromName(name: String): BlurTintMode =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: NONE
+    }
+}
+
+enum class BlurRainbowStyle(val displayName: String) {
+    DIAGONAL_PRISM("Diagonal Prism"),
+    VERTICAL_AURA("Vertical Aura"),
+    RADIAL_IRIDESCENCE("Radial Glow"),
+    NEON_SUNSET("Aurora Wave");
+
+    companion object {
+        fun fromName(name: String): BlurRainbowStyle =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: DIAGONAL_PRISM
     }
 }
 
@@ -40,6 +105,11 @@ data class PageItem(
     val customLabel: String = "",
     val cropFillMode: CropFillMode = CropFillMode.BLUR,
     val blurAmount: Float = 0.65f,
+    val blurStyle: BlurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+    val blurTintMode: BlurTintMode = BlurTintMode.NONE,
+    val blurTintColor: Int = DEFAULT_BLUR_TINT_COLOR,
+    val blurTintIntensity: Float = 0.42f,
+    val blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
     val cropPanX: Float = 0f,
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
@@ -54,6 +124,11 @@ data class PageItem(
         put("customLabel", customLabel)
         put("cropFillMode", cropFillMode.name)
         put("blurAmount", blurAmount.toDouble())
+        put("blurStyle", blurStyle.name)
+        put("blurTintMode", blurTintMode.name)
+        put("blurTintColor", blurTintColor)
+        put("blurTintIntensity", blurTintIntensity.toDouble())
+        put("blurRainbowStyle", blurRainbowStyle.name)
         put("cropPanX", cropPanX.toDouble())
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
@@ -62,15 +137,37 @@ data class PageItem(
     }
 
     companion object {
+        const val DEFAULT_BLUR_TINT_COLOR = 0xFF38BDF8.toInt()
+
         fun fromJson(json: JSONObject): PageItem {
+            val fillMode = CropFillMode.fromName(
+                json.optString("cropFillMode", CropFillMode.BLUR.name)
+            )
+            val fallbackBlurStyle = if (fillMode == CropFillMode.GLASS) {
+                BlurStyle.WIN7_AERO
+            } else {
+                BlurStyle.SMOOTH_GAUSSIAN
+            }
             return PageItem(
                 pageIndex = json.optInt("pageIndex", 0),
                 originalId = json.optString("originalId").takeIf { it.isNotEmpty() },
                 croppedFileName = json.optString("croppedFileName").takeIf { it.isNotEmpty() },
                 isAlreadyDark = json.optBoolean("isAlreadyDark", false),
                 customLabel = json.optString("customLabel", ""),
-                cropFillMode = CropFillMode.fromName(json.optString("cropFillMode", CropFillMode.BLUR.name)),
+                cropFillMode = fillMode,
                 blurAmount = json.optDouble("blurAmount", 0.65).toFloat().coerceIn(0f, 1f),
+                blurStyle = BlurStyle.fromName(
+                    json.optString("blurStyle", ""),
+                    fallback = fallbackBlurStyle
+                ),
+                blurTintMode = BlurTintMode.fromName(
+                    json.optString("blurTintMode", BlurTintMode.NONE.name)
+                ),
+                blurTintColor = json.optInt("blurTintColor", DEFAULT_BLUR_TINT_COLOR),
+                blurTintIntensity = json.optDouble("blurTintIntensity", 0.42).toFloat().coerceIn(0f, 1f),
+                blurRainbowStyle = BlurRainbowStyle.fromName(
+                    json.optString("blurRainbowStyle", BlurRainbowStyle.DIAGONAL_PRISM.name)
+                ),
                 cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
