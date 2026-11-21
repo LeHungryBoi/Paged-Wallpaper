@@ -21,6 +21,27 @@ enum class OffsetEasingStyle(val displayName: String) {
     }
 }
 
+enum class EdgeOverScrollCurve(val displayName: String, val description: String) {
+    DIMINISHING_SCREEN_ANCHORED(
+        "Diminishing (Screen-Anchored)",
+        "Scales smoothly against screen width with diminishing resistance, capped cleanly at each wallpaper's parallax reach."
+    ),
+    LOGARITHMIC_BOOST(
+        "Logarithmic Boost",
+        "Logarithmically unlocks extra headroom on ultra-wide wallpapers while softly capping narrow-reach images."
+    ),
+    POWER_FLING(
+        "Power Fling",
+        "Keeps gentle drags subtle while letting fast, full flings reach 100% of the wallpaper's parallax reach."
+    );
+
+    companion object {
+        fun fromName(name: String): EdgeOverScrollCurve =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) }
+                ?: DIMINISHING_SCREEN_ANCHORED
+    }
+}
+
 enum class CropFillMode(val displayName: String, val description: String) {
     CROP("Crop to fill", "Fill the screen by cropping the image edges"),
     BLUR("Blurred fill", "Keep the whole image over a softly blurred background"),
@@ -619,6 +640,7 @@ data class WallpaperAppState(
     val offsetEasingStyle: OffsetEasingStyle = OffsetEasingStyle.SYMMETRIC,
     val offsetEasingLinearZonePercent: Int = 60,
     val offsetEasingStrength: Int = 50,
+    val edgeOverScrollCurve: EdgeOverScrollCurve = EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED,
     val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
@@ -648,6 +670,7 @@ data class WallpaperAppState(
         put("offsetEasingStyle", offsetEasingStyle.name)
         put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
         put("offsetEasingStrength", offsetEasingStrength)
+        put("edgeOverScrollCurve", edgeOverScrollCurve.name)
         put("animationFrameRate", animationFrameRate)
         put("schemaVersion", 5)
         put("activePresetId", activePresetId)
@@ -733,6 +756,12 @@ data class WallpaperAppState(
                     60
                 ).coerceIn(0, 100),
                 offsetEasingStrength = json.optInt("offsetEasingStrength", 50).coerceIn(0, 100),
+                edgeOverScrollCurve = EdgeOverScrollCurve.fromName(
+                    json.optString(
+                        "edgeOverScrollCurve",
+                        EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED.name
+                    )
+                ),
                 animationFrameRate = animationFrameRate,
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,

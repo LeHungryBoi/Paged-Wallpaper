@@ -413,14 +413,13 @@ class GpuWallpaperRenderer(
 
     private fun drawEdgeOverScroll(frame: GpuFrameRequest, page: PageTexture?) {
         if (page == null) return
-        val fraction = frame.edgeOverScrollFraction.coerceIn(-1f, 1f)
-        val sourceLeft = when {
-            fraction < 0f && page.leftTravelPx > 0 ->
-                page.leftTravelPx * (1f - (-fraction))
-            fraction > 0f && page.rightTravelPx > 0 ->
-                page.leftTravelPx + page.rightTravelPx * fraction
-            else -> page.leftTravelPx.toFloat()
-        }
+        val sourceLeft = EdgeOverScrollScaling.computeSourceLeftPx(
+            intensity = frame.edgeOverScrollFraction,
+            leftTravelPx = page.leftTravelPx,
+            rightTravelPx = page.rightTravelPx,
+            screenWidth = frame.width,
+            curve = frame.state.edgeOverScrollCurve
+        )
         drawPage(page, 0, sourceLeft, frame, 1f)
     }
 

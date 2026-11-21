@@ -82,6 +82,10 @@ fun EffectsScreen(
             onLinearZonePercentChange = viewModel::setOffsetEasingLinearZonePercent,
             onStrengthChange = viewModel::setOffsetEasingStrength
         )
+        EdgeOverScrollCurveSetting(
+            selectedCurve = appState.edgeOverScrollCurve,
+            onCurveSelected = viewModel::setEdgeOverScrollCurve
+        )
         AnimationFrameRateSetting(
             selectedFrameRate = appState.animationFrameRate,
             onFrameRateSelected = viewModel::setAnimationFrameRate

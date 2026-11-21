@@ -3,6 +3,8 @@ package com.example.render
 import android.view.MotionEvent
 import com.example.data.model.CalibrationConfig
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.pow
 
 class EdgeOverScrollController {
 
@@ -10,6 +12,11 @@ class EdgeOverScrollController {
         NONE,
         LEFT,
         RIGHT
+    }
+
+    enum class SnapBackMode {
+        FAST,
+        SLOW
     }
 
     data class TouchResult(
@@ -29,10 +36,21 @@ class EdgeOverScrollController {
     var lockedEdgeOffset: Float = 0f
         private set
 
+    var snapBackMode: SnapBackMode = SnapBackMode.SLOW
+        private set
+
     private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
     private var downX: Float = 0f
     private var downY: Float = 0f
+    private var lastX: Float = 0f
+    private var lastEventTimeMs: Long = 0L
     private var edgeAtDown: EdgeSide = EdgeSide.NONE
+    private var outwardVelocityPxPerSec: Float = 0f
+    private var activeOutwardVelocityNorm: Float = 0f
+    private var peakOutwardRawPx: Float = 0f
+    private var hasReversedPastOrigin: Boolean = false
+    private var releaseStartFraction: Float = 0f
+    private var releaseElapsedNanos: Long = 0L
 
     fun hasActiveFraction(): Boolean = abs(overScrollFraction) > FRACTION_EPSILON
 
@@ -81,7 +99,8 @@ class EdgeOverScrollController {
             touchSlop = touchSlop,
             currentXOffset = currentXOffset,
             renderedXOffset = renderedXOffset,
-            calibration = calibration
+            calibration = calibration,
+            eventTimeMs = event.eventTime
         )
     }
 
@@ -94,11 +113,15 @@ class EdgeOverScrollController {
         touchSlop: Int,
         currentXOffset: Float,
         renderedXOffset: Float,
-        calibration: CalibrationConfig
+        calibration: CalibrationConfig,
+        eventTimeMs: Long = 0L
     ): TouchResult {
+        val safeWidth = surfaceWidth.coerceAtLeast(1)
+        val slop = touchSlop.coerceAtLeast(1).toFloat()
+        val dragSpan = overScrollDragDistancePx(safeWidth)
+
         when (actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val dragSpan = overScrollDragDistancePx(surfaceWidth)
                 if (hasActiveFraction()) {
                     val existingEdge = if (overScrollFraction < 0f) EdgeSide.LEFT else EdgeSide.RIGHT
                     val anchors = resolveAnchors(calibration)
@@ -110,9 +133,17 @@ class EdgeOverScrollController {
                     }
                     activePointerId = pointerId
                     val sign = if (existingEdge == EdgeSide.LEFT) 1f else -1f
-                    val existingDistance = abs(overScrollFraction) * dragSpan + touchSlop
+                    val existingDistance = abs(overScrollFraction) * dragSpan + slop
                     downX = x - sign * existingDistance
                     downY = y
+                    lastX = x
+                    lastEventTimeMs = eventTimeMs
+                    outwardVelocityPxPerSec = 0f
+                    activeOutwardVelocityNorm = 0f
+                    peakOutwardRawPx = existingDistance
+                    hasReversedPastOrigin = false
+                    snapBackMode = SnapBackMode.SLOW
+                    releaseElapsedNanos = 0L
                     isTouchActive = true
                     isOverScrollLocked = true
                     return TouchResult(handled = true, needsRedraw = false)
@@ -129,6 +160,14 @@ class EdgeOverScrollController {
                     activePointerId = pointerId
                     downX = x
                     downY = y
+                    lastX = x
+                    lastEventTimeMs = eventTimeMs
+                    outwardVelocityPxPerSec = 0f
+                    activeOutwardVelocityNorm = 0f
+                    peakOutwardRawPx = 0f
+                    hasReversedPastOrigin = false
+                    snapBackMode = SnapBackMode.SLOW
+                    releaseElapsedNanos = 0L
                     isTouchActive = true
                     isOverScrollLocked = false
                 } else {
@@ -141,33 +180,27 @@ class EdgeOverScrollController {
                 if (!isTouchActive || edgeAtDown == EdgeSide.NONE) {
                     return TouchResult(handled = false, needsRedraw = false)
                 }
+                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+
                 val dx = x - downX
                 val dy = y - downY
-                val slop = touchSlop.coerceAtLeast(1).toFloat()
+                val outwardRawDx = when (edgeAtDown) {
+                    EdgeSide.LEFT -> dx
+                    EdgeSide.RIGHT -> -dx
+                    EdgeSide.NONE -> 0f
+                }
 
                 if (!isOverScrollLocked) {
                     if (abs(dy) > slop && abs(dy) > abs(dx) * VERTICAL_REJECT_RATIO) {
                         clearTouchOnly()
                         return TouchResult(handled = false, needsRedraw = false)
                     }
-                    when (edgeAtDown) {
-                        EdgeSide.LEFT -> {
-                            if (dx > slop) {
-                                isOverScrollLocked = true
-                            } else if (dx < -slop) {
-                                clearTouchOnly()
-                                return TouchResult(handled = false, needsRedraw = false)
-                            }
-                        }
-                        EdgeSide.RIGHT -> {
-                            if (dx < -slop) {
-                                isOverScrollLocked = true
-                            } else if (dx > slop) {
-                                clearTouchOnly()
-                                return TouchResult(handled = false, needsRedraw = false)
-                            }
-                        }
-                        EdgeSide.NONE -> Unit
+                    if (outwardRawDx > slop) {
+                        isOverScrollLocked = true
+                        peakOutwardRawPx = outwardRawDx
+                    } else if (outwardRawDx < -slop) {
+                        clearTouchOnly()
+                        return TouchResult(handled = false, needsRedraw = false)
                     }
                 }
 
@@ -175,16 +208,45 @@ class EdgeOverScrollController {
                     return TouchResult(handled = false, needsRedraw = false)
                 }
 
-                val dragSpan = overScrollDragDistancePx(surfaceWidth)
+                if (outwardRawDx <= 0f) {
+                    val hadFraction = hasActiveFraction()
+                    hasReversedPastOrigin = true
+                    snapBackMode = SnapBackMode.FAST
+                    overScrollFraction = 0f
+                    releaseStartFraction = 0f
+                    releaseElapsedNanos = 0L
+                    clearTouchOnly()
+                    return TouchResult(handled = false, needsRedraw = hadFraction)
+                }
+
+                if (outwardRawDx >= peakOutwardRawPx) {
+                    peakOutwardRawPx = outwardRawDx
+                }
+
+                val effectivePx = if (outwardRawDx >= peakOutwardRawPx) {
+                    (outwardRawDx - slop).coerceAtLeast(0f)
+                } else {
+                    val returnRatio = (outwardRawDx / peakOutwardRawPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+                    (peakOutwardRawPx - slop).coerceAtLeast(0f) * returnRatio
+                }
+
+                val distanceComponent = (effectivePx / dragSpan).coerceIn(0f, 1f)
+                val reversalAttenuation = if (peakOutwardRawPx > 0f) {
+                    (outwardRawDx / peakOutwardRawPx).coerceIn(0f, 1f)
+                } else {
+                    1f
+                }
+                val velocityRamp = (distanceComponent / VELOCITY_RAMP_DISTANCE).coerceIn(0f, 1f)
+                val velocityBoost = VELOCITY_INTENSITY_WEIGHT *
+                    activeOutwardVelocityNorm *
+                    (0.35f + 0.65f * distanceComponent) *
+                    reversalAttenuation *
+                    velocityRamp
+
+                val magnitude = (distanceComponent + velocityBoost).coerceIn(0f, 1f)
                 val nextFraction = when (edgeAtDown) {
-                    EdgeSide.LEFT -> {
-                        val effectiveDx = (dx - slop).coerceAtLeast(0f)
-                        -(effectiveDx / dragSpan).coerceIn(0f, 1f)
-                    }
-                    EdgeSide.RIGHT -> {
-                        val effectiveDx = (-dx - slop).coerceAtLeast(0f)
-                        (effectiveDx / dragSpan).coerceIn(0f, 1f)
-                    }
+                    EdgeSide.LEFT -> -magnitude
+                    EdgeSide.RIGHT -> magnitude
                     EdgeSide.NONE -> 0f
                 }
                 val changed = abs(nextFraction - overScrollFraction) > FRACTION_EPSILON
@@ -195,6 +257,7 @@ class EdgeOverScrollController {
             MotionEvent.ACTION_POINTER_UP -> {
                 if (isTouchActive && pointerId == activePointerId) {
                     val wasLocked = isOverScrollLocked
+                    prepareRelease(surfaceWidth = safeWidth)
                     clearTouchOnly()
                     return TouchResult(
                         handled = wasLocked,
@@ -208,6 +271,9 @@ class EdgeOverScrollController {
             MotionEvent.ACTION_CANCEL -> {
                 val wasActive = isTouchActive
                 val wasLocked = isOverScrollLocked
+                if (wasActive || wasLocked) {
+                    prepareRelease(surfaceWidth = safeWidth)
+                }
                 clearTouchOnly()
                 return TouchResult(
                     handled = wasActive || wasLocked,
@@ -219,21 +285,87 @@ class EdgeOverScrollController {
         }
     }
 
-    fun stepReleaseDecay(smoothingFraction: Float) {
+    fun promoteToFastSnapBack() {
+        if (snapBackMode != SnapBackMode.FAST) {
+            snapBackMode = SnapBackMode.FAST
+        }
+    }
+
+    fun stepRelease(elapsedNanos: Long, fastSmoothingFraction: Float) {
         if (isOverScrollLocked || isTouchActive) return
         if (!hasActiveFraction()) {
             overScrollFraction = 0f
             return
         }
-        overScrollFraction += (0f - overScrollFraction) * smoothingFraction.coerceIn(0f, 1f)
-        if (!hasActiveFraction()) {
-            overScrollFraction = 0f
+        when (snapBackMode) {
+            SnapBackMode.FAST -> {
+                overScrollFraction += (0f - overScrollFraction) * fastSmoothingFraction.coerceIn(0f, 1f)
+                if (!hasActiveFraction()) {
+                    overScrollFraction = 0f
+                }
+            }
+            SnapBackMode.SLOW -> {
+                releaseElapsedNanos += elapsedNanos.coerceAtLeast(1L)
+                val t = (releaseElapsedNanos.toFloat() / SLOW_SNAP_BACK_DURATION_NANOS.toFloat())
+                    .coerceIn(0f, 1f)
+                val remaining = (1f - t).pow(SLOW_EASE_OUT_POWER)
+                overScrollFraction = releaseStartFraction * remaining
+                if (t >= 1f || !hasActiveFraction()) {
+                    overScrollFraction = 0f
+                }
+            }
         }
+    }
+
+    fun stepReleaseDecay(smoothingFraction: Float) {
+        stepRelease(
+            elapsedNanos = DEFAULT_FRAME_NANOS,
+            fastSmoothingFraction = smoothingFraction
+        )
     }
 
     fun reset() {
         clearTouchOnly()
         overScrollFraction = 0f
+        snapBackMode = SnapBackMode.SLOW
+        hasReversedPastOrigin = false
+        releaseStartFraction = 0f
+        releaseElapsedNanos = 0L
+    }
+
+    private fun updateVelocity(x: Float, eventTimeMs: Long, surfaceWidth: Int) {
+        val stepDx = x - lastX
+        val outwardStepDx = when (edgeAtDown) {
+            EdgeSide.LEFT -> stepDx
+            EdgeSide.RIGHT -> -stepDx
+            EdgeSide.NONE -> 0f
+        }
+        if (eventTimeMs > lastEventTimeMs) {
+            val dtMs = (eventTimeMs - lastEventTimeMs).coerceAtLeast(1L)
+            val instantVel = (outwardStepDx / (dtMs / 1000f))
+                .coerceIn(-MAX_TRACKED_VELOCITY_PX_S, MAX_TRACKED_VELOCITY_PX_S)
+            val alpha = (dtMs / VELOCITY_SMOOTHING_TAU_MS).coerceIn(0.15f, 0.85f)
+            outwardVelocityPxPerSec += (instantVel - outwardVelocityPxPerSec) * alpha
+
+            val referenceVel = surfaceWidth * VELOCITY_REFERENCE_SCREEN_PER_SEC
+            val currentVelNorm = (outwardVelocityPxPerSec / referenceVel).coerceIn(0f, 1f)
+            if (outwardStepDx > 0f) {
+                activeOutwardVelocityNorm = max(currentVelNorm, activeOutwardVelocityNorm * 0.92f)
+            } else if (outwardStepDx < 0f) {
+                activeOutwardVelocityNorm *= 0.45f
+            }
+        }
+        lastX = x
+        lastEventTimeMs = eventTimeMs
+    }
+
+    private fun prepareRelease(surfaceWidth: Int) {
+        val inwardFlingThreshold = surfaceWidth * INWARD_FLING_SCREEN_PER_SEC
+        val isSwitchingPages = hasReversedPastOrigin ||
+            outwardVelocityPxPerSec < -inwardFlingThreshold
+        snapBackMode = if (isSwitchingPages) SnapBackMode.FAST else SnapBackMode.SLOW
+        releaseStartFraction = overScrollFraction
+        releaseElapsedNanos = 0L
     }
 
     private fun clearTouchOnly() {
@@ -241,6 +373,9 @@ class EdgeOverScrollController {
         isOverScrollLocked = false
         edgeAtDown = EdgeSide.NONE
         activePointerId = MotionEvent.INVALID_POINTER_ID
+        outwardVelocityPxPerSec = 0f
+        activeOutwardVelocityNorm = 0f
+        peakOutwardRawPx = 0f
     }
 
     private fun detectSettledEdge(
@@ -286,9 +421,18 @@ class EdgeOverScrollController {
 
     companion object {
         const val FRACTION_EPSILON = 0.0005f
+        const val SLOW_SNAP_BACK_DURATION_NANOS = 420_000_000L
+        private const val DEFAULT_FRAME_NANOS = 16_666_667L
+        private const val SLOW_EASE_OUT_POWER = 2.2f
         private const val STATIC_OFFSET_TOLERANCE = 0.002f
         private const val STATIC_SEGMENT_TOLERANCE_RATIO = 0.02f
         private const val DRAG_DISTANCE_SCREEN_FRACTION = 0.55f
         private const val VERTICAL_REJECT_RATIO = 1.2f
+        private const val MAX_TRACKED_VELOCITY_PX_S = 12_000f
+        private const val VELOCITY_SMOOTHING_TAU_MS = 45f
+        private const val VELOCITY_REFERENCE_SCREEN_PER_SEC = 2.4f
+        private const val VELOCITY_INTENSITY_WEIGHT = 0.42f
+        private const val VELOCITY_RAMP_DISTANCE = 0.08f
+        private const val INWARD_FLING_SCREEN_PER_SEC = 1.1f
     }
 }

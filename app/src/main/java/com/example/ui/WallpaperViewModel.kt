@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.DarkenConfig
+import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -284,6 +285,10 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState {
             it.copy(offsetEasingStrength = strength.coerceIn(0, 100))
         }
+    }
+
+    fun setEdgeOverScrollCurve(curve: EdgeOverScrollCurve) {
+        repository.updateState { it.copy(edgeOverScrollCurve = curve) }
     }
 
     fun setAnimationFrameRate(frameRate: Int) {

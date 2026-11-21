@@ -26,10 +26,12 @@ import android.view.ViewConfiguration
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
+import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
 import com.example.render.EdgeOverScrollController
+import com.example.render.EdgeOverScrollScaling
 import com.example.render.GpuFrameRequest
 import com.example.render.GpuWallpaperRenderer
 import com.example.render.HorizontalMotionBlur
@@ -353,6 +355,7 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             // Real launcher offset from user swiping
+            val previousXOffset = currentXOffset
             val nextXOffset = xOffset.coerceIn(0f, 1f)
             val offsetChanged = abs(nextXOffset - currentXOffset) > OFFSET_EPSILON
             val yOffsetChanged = currentYOffset != yOffset
@@ -367,6 +370,13 @@ class MultiPageWallpaperService : WallpaperService() {
             // until release so misleading launcher edge offsets do not hijack the gesture.
             if (edgeOverScrollController.isTouchActive) {
                 return
+            }
+
+            if (edgeOverScrollController.hasActiveFraction()) {
+                val anchor = edgeOverScrollController.lockedEdgeOffset
+                if (abs(nextXOffset - anchor) > abs(previousXOffset - anchor) + 0.01f) {
+                    edgeOverScrollController.promoteToFastSnapBack()
+                }
             }
 
             offsetDirection = swipeDirectionLock.onOffsetChanged(
@@ -571,7 +581,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val wasResolvingEdgeOverScroll = !edgeOverScrollController.isTouchActive &&
                 edgeOverScrollController.hasActiveFraction()
             if (wasResolvingEdgeOverScroll) {
-                edgeOverScrollController.stepReleaseDecay(smoothingFraction)
+                edgeOverScrollController.stepRelease(elapsedNanos, smoothingFraction)
             } else if (!edgeOverScrollController.isTouchActive) {
                 renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
                 if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
@@ -896,7 +906,8 @@ class MultiPageWallpaperService : WallpaperService() {
                     bitmap = edgeBitmap,
                     leftTravelPx = edgeParallax?.leftTravelPx ?: 0,
                     rightTravelPx = edgeParallax?.rightTravelPx ?: 0,
-                    fraction = edgeOverScrollController.overScrollFraction
+                    fraction = edgeOverScrollController.overScrollFraction,
+                    curve = state.edgeOverScrollCurve
                 )
             } else {
                 val usesParallax = renderer.supportsParallax
@@ -990,22 +1001,22 @@ class MultiPageWallpaperService : WallpaperService() {
             bitmap: Bitmap?,
             leftTravelPx: Int,
             rightTravelPx: Int,
-            fraction: Float
+            fraction: Float,
+            curve: EdgeOverScrollCurve
         ) {
             if (bitmap == null) return
-            val clampedFraction = fraction.coerceIn(-1f, 1f)
             edgeOverScrollDstRect.set(0, 0, surfaceWidth, surfaceHeight)
             if (bitmap.width <= surfaceWidth) {
                 canvas.drawBitmap(bitmap, null, edgeOverScrollDstRect, paint)
                 return
             }
-            val sourceLeft = when {
-                clampedFraction < 0f && leftTravelPx > 0 ->
-                    leftTravelPx * (1f - (-clampedFraction))
-                clampedFraction > 0f && rightTravelPx > 0 ->
-                    leftTravelPx + rightTravelPx * clampedFraction
-                else -> leftTravelPx.toFloat()
-            }.toInt().coerceIn(0, (bitmap.width - surfaceWidth).coerceAtLeast(0))
+            val sourceLeft = EdgeOverScrollScaling.computeSourceLeftPx(
+                intensity = fraction,
+                leftTravelPx = leftTravelPx,
+                rightTravelPx = rightTravelPx,
+                screenWidth = surfaceWidth,
+                curve = curve
+            ).toInt().coerceIn(0, (bitmap.width - surfaceWidth).coerceAtLeast(0))
             edgeOverScrollSrcRect.set(sourceLeft, 0, sourceLeft + surfaceWidth, bitmap.height)
             canvas.drawBitmap(bitmap, edgeOverScrollSrcRect, edgeOverScrollDstRect, paint)
         }

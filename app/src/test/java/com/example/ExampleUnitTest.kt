@@ -14,6 +14,7 @@ import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTrigger
+import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -25,6 +26,7 @@ import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.repository.WallpaperRepository
 import com.example.render.EdgeOverScrollController
+import com.example.render.EdgeOverScrollScaling
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
 import com.example.render.SwipeDirectionLock
@@ -987,18 +989,20 @@ class ExampleUnitTest {
         assertEquals(0f, controller.lockedEdgeOffset, 0.001f)
         assertEquals(-0.5f, controller.overScrollFraction, 0.01f)
 
-        // Release and verify smooth decay toward 0f, plus continuous re-grab mid-decay
+        // Release without reversing triggers gentle slow ease-out snap-back and supports mid-decay re-grab
         controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 300f + slop + 275f, 505f, width, slop, 0.7f, 0f, calib)
         assertFalse(controller.isTouchActive)
         assertFalse(controller.isOverScrollLocked)
-        controller.stepReleaseDecay(0.5f)
-        assertEquals(-0.25f, controller.overScrollFraction, 0.01f)
+        assertEquals(EdgeOverScrollController.SnapBackMode.SLOW, controller.snapBackMode)
+        controller.stepRelease(EdgeOverScrollController.SLOW_SNAP_BACK_DURATION_NANOS / 2L, 0.5f)
+        val midReturnFraction = controller.overScrollFraction
+        assertTrue(midReturnFraction < -0.05f && midReturnFraction > -0.45f)
 
-        // Mid-decay re-grab continues seamlessly from -0.25f without snapping
+        // Mid-decay re-grab continues seamlessly from current fraction without snapping
         controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 400f, 500f, width, slop, 0f, 0f, calib)
         assertTrue(controller.isTouchActive)
         assertTrue(controller.isOverScrollLocked)
-        assertEquals(-0.25f, controller.overScrollFraction, 0.01f)
+        assertEquals(midReturnFraction, controller.overScrollFraction, 0.01f)
         controller.reset()
 
         // 3. Left edge inward swipe (leftward) yields immediately to launcher offset scrolling
@@ -1024,6 +1028,136 @@ class ExampleUnitTest {
         assertTrue(controller.isOverScrollLocked)
         assertEquals(1f, controller.lockedEdgeOffset, 0.001f)
         assertEquals(0.5f, controller.overScrollFraction, 0.01f)
+    }
+
+    @Test
+    fun testEdgeOverScrollIntensityCombinesDistanceAndVelocity() {
+        val calib = CalibrationConfig(pageCount = 3, customOffsets = listOf(0f, 0.5f, 1f))
+        val width = 1000
+        val slop = 24
+
+        // Slow crawl of 120px over 600ms
+        val slowController = EdgeOverScrollController()
+        slowController.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 200f, 500f, width, slop, 0f, 0f, calib, 0L)
+        slowController.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 200f + 120f, 500f, width, slop, 0f, 0f, calib, 600L)
+        val slowIntensity = kotlin.math.abs(slowController.overScrollFraction)
+
+        // Fast flick of 120px in 40ms
+        val fastController = EdgeOverScrollController()
+        fastController.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 200f, 500f, width, slop, 0f, 0f, calib, 0L)
+        fastController.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 200f + 120f, 500f, width, slop, 0f, 0f, calib, 40L)
+        val fastIntensity = kotlin.math.abs(fastController.overScrollFraction)
+
+        assertTrue("Fast flick ($fastIntensity) should exceed slow drag ($slowIntensity)", fastIntensity > slowIntensity + 0.1f)
+    }
+
+    @Test
+    fun testEdgeOverScrollReversalsControlSnapBackModeAndYielding() {
+        val calib = CalibrationConfig(pageCount = 3, customOffsets = listOf(0f, 0.5f, 1f))
+        val controller = EdgeOverScrollController()
+        val width = 1000
+        val slop = 24
+
+        // Case 1: Swipe right +150px, then reverse left -100px (net +50px outward -> stays on Page 1, slow snap-back)
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 450f, 500f, width, slop, 0f, 0f, calib, 100L)
+        val peakFraction = controller.overScrollFraction
+        assertTrue(peakFraction < -0.15f)
+
+        val partialReversal = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 350f, 500f, width, slop, 0f, 0f, calib, 220L)
+        assertTrue(partialReversal.handled)
+        assertTrue(controller.isOverScrollLocked)
+        assertTrue("Partial reversal should still remain negative (outward)", controller.overScrollFraction < 0f)
+        assertTrue("Partial reversal should reduce magnitude", controller.overScrollFraction > peakFraction)
+
+        controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 350f, 500f, width, slop, 0f, 0f, calib, 240L)
+        assertEquals(EdgeOverScrollController.SnapBackMode.SLOW, controller.snapBackMode)
+        controller.stepRelease(EdgeOverScrollController.SLOW_SNAP_BACK_DURATION_NANOS, 0.5f)
+        assertEquals(0f, controller.overScrollFraction, 0.001f)
+
+        // Case 2: Swipe right +150px, then reverse left -180px (exceeds outward swipe -> yields for Page 2, fast snap-back)
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 450f, 500f, width, slop, 0f, 0f, calib, 100L)
+        val fullReversal = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 270f, 500f, width, slop, 0.1f, 0f, calib, 200L)
+        assertFalse(fullReversal.handled)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+        assertEquals(0f, controller.overScrollFraction, 0.001f)
+        assertEquals(EdgeOverScrollController.SnapBackMode.FAST, controller.snapBackMode)
+
+        // Case 3: Post-release promotion to FAST snap-back uses exponential smoothing
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 300f + slop + 275f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 300f + slop + 275f, 500f, width, slop, 0f, 0f, calib, 0L)
+        assertEquals(EdgeOverScrollController.SnapBackMode.SLOW, controller.snapBackMode)
+        controller.promoteToFastSnapBack()
+        assertEquals(EdgeOverScrollController.SnapBackMode.FAST, controller.snapBackMode)
+        controller.stepRelease(16_666_667L, 0.5f)
+        assertEquals(-0.25f, controller.overScrollFraction, 0.01f)
+    }
+
+    @Test
+    fun testEdgeOverScrollNonLinearParallaxScalingCurves() {
+        val screenWidth = 1000
+        val smallReachPx = 150   // 0.15 screen widths
+        val standardReachPx = 500 // 0.50 screen widths (2x screen wide centered)
+        val ultraWideReachPx = 1250 // 1.25 screen widths
+
+        // Default: Diminishing curve anchored to screen width, capped at reach
+        val dimUltraHalf = EdgeOverScrollScaling.computeTravelPx(
+            0.5f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+        )
+        val dimUltraFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+        )
+        val dimSmallFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, smallReachPx, screenWidth, EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED
+        )
+        assertTrue(dimUltraFull <= 720.5f && dimUltraFull < ultraWideReachPx)
+        assertTrue("Diminishing curve should give >50% of its travel by 50% intensity", dimUltraHalf > dimUltraFull * 0.55f)
+        assertEquals(smallReachPx.toFloat(), dimSmallFull, 0.5f)
+
+        // Logarithmic Boost: unlocks more of ultra-wide reach than default without exceeding reach
+        val logUltraFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.LOGARITHMIC_BOOST
+        )
+        val logSmallFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, smallReachPx, screenWidth, EdgeOverScrollCurve.LOGARITHMIC_BOOST
+        )
+        assertTrue("Logarithmic boost ($logUltraFull) should exceed diminishing cap ($dimUltraFull) on ultra-wide", logUltraFull > dimUltraFull)
+        assertTrue(logUltraFull < ultraWideReachPx)
+        assertTrue(logSmallFull <= smallReachPx)
+
+        // Power Fling: stays gentle at low intensity and reaches 100% of reach at full fling
+        val powerUltraQuarter = EdgeOverScrollScaling.computeTravelPx(
+            0.25f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
+        )
+        val powerUltraFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, ultraWideReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
+        )
+        val powerStdFull = EdgeOverScrollScaling.computeTravelPx(
+            1.0f, standardReachPx, screenWidth, EdgeOverScrollCurve.POWER_FLING
+        )
+        assertTrue("Power fling at 0.25 should stay conservative (<20% of reach)", powerUltraQuarter < ultraWideReachPx * 0.20f)
+        assertEquals(ultraWideReachPx.toFloat(), powerUltraFull, 0.5f)
+        assertEquals(standardReachPx.toFloat(), powerStdFull, 0.5f)
+    }
+
+    @Test
+    fun testEdgeOverScrollCurveStateRoundTripAndDefaultFallback() {
+        val state = WallpaperAppState(
+            pages = listOf(PageItem(0)),
+            calibration = CalibrationConfig(),
+            edgeOverScrollCurve = EdgeOverScrollCurve.LOGARITHMIC_BOOST
+        )
+        val restored = WallpaperAppState.fromJson(state.toJson())
+        assertEquals(EdgeOverScrollCurve.LOGARITHMIC_BOOST, restored.edgeOverScrollCurve)
+
+        val legacyJson = state.toJson().apply { remove("edgeOverScrollCurve") }
+        val fallbackState = WallpaperAppState.fromJson(legacyJson)
+        assertEquals(EdgeOverScrollCurve.DIMINISHING_SCREEN_ANCHORED, fallbackState.edgeOverScrollCurve)
     }
 }
 
