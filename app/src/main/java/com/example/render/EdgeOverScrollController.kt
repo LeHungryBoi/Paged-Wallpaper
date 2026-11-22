@@ -212,8 +212,9 @@ class EdgeOverScrollController {
                     val hadFraction = hasActiveFraction()
                     hasReversedPastOrigin = true
                     snapBackMode = SnapBackMode.FAST
-                    overScrollFraction = 0f
-                    releaseStartFraction = 0f
+                    // Keep the current fraction so the outgoing page's parallax eases out
+                    // instead of snapping to a full stop. stepRelease() decays it to zero.
+                    releaseStartFraction = overScrollFraction
                     releaseElapsedNanos = 0L
                     clearTouchOnly()
                     return TouchResult(handled = false, needsRedraw = hadFraction)

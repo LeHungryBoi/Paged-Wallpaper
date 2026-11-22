@@ -1076,16 +1076,24 @@ class ExampleUnitTest {
         controller.stepRelease(EdgeOverScrollController.SLOW_SNAP_BACK_DURATION_NANOS, 0.5f)
         assertEquals(0f, controller.overScrollFraction, 0.001f)
 
-        // Case 2: Swipe right +150px, then reverse left -180px (exceeds outward swipe -> yields for Page 2, fast snap-back)
+        // Case 2: Swipe right +150px, then reverse left -180px (exceeds outward swipe -> yields for Page 2, fast snap-back).
+        // The fraction must be retained so the outgoing page eases out over several frames
+        // instead of snapping to a full stop; the service overlaps incoming motion meanwhile.
         controller.reset()
         controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
         controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 450f, 500f, width, slop, 0f, 0f, calib, 100L)
+        val fractionAtReversal = controller.overScrollFraction
         val fullReversal = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 270f, 500f, width, slop, 0.1f, 0f, calib, 200L)
         assertFalse(fullReversal.handled)
         assertFalse(controller.isTouchActive)
         assertFalse(controller.isOverScrollLocked)
-        assertEquals(0f, controller.overScrollFraction, 0.001f)
+        assertEquals(fractionAtReversal, controller.overScrollFraction, 0.001f)
+        assertTrue("Reversal must keep a live fraction for smooth handoff", controller.hasActiveFraction())
         assertEquals(EdgeOverScrollController.SnapBackMode.FAST, controller.snapBackMode)
+        controller.stepRelease(16_666_667L, 0.5f)
+        assertTrue("FAST release should decay but not zero in one frame", controller.hasActiveFraction())
+        repeat(40) { controller.stepRelease(16_666_667L, 0.5f) }
+        assertEquals(0f, controller.overScrollFraction, 0.001f)
 
         // Case 3: Post-release promotion to FAST snap-back uses exponential smoothing
         controller.reset()

@@ -581,7 +581,12 @@ class MultiPageWallpaperService : WallpaperService() {
                 edgeOverScrollController.hasActiveFraction()
             if (wasResolvingEdgeOverScroll) {
                 edgeOverScrollController.stepRelease(elapsedNanos, smoothingFraction)
-            } else if (!edgeOverScrollController.isTouchActive) {
+            }
+            // Follow the launcher offset in the same frame as the over-scroll release.
+            // After a full reversal the outgoing page eases out via the fraction while the
+            // incoming page starts entering immediately, so the two motions overlap instead
+            // of leaving a still frame between them.
+            if (!edgeOverScrollController.isTouchActive) {
                 renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
                 if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
                     renderedXOffset = currentXOffset
