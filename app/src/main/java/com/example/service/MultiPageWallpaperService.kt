@@ -353,6 +353,18 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
 
+            // While the finger is held down on an edge page, ignore misleading launcher
+            // offsets once edge overscroll is locked so they cannot pull the incoming page
+            // in upon release.
+            if (edgeOverScrollController.isTouchActive) {
+                if (!edgeOverScrollController.isOverScrollLocked) {
+                    currentXOffset = xOffset.coerceIn(0f, 1f)
+                    currentYOffset = yOffset
+                    hasReceivedLauncherOffset = true
+                }
+                return
+            }
+
             // Real launcher offset from user swiping
             val previousXOffset = currentXOffset
             val nextXOffset = xOffset.coerceIn(0f, 1f)
@@ -365,16 +377,21 @@ class MultiPageWallpaperService : WallpaperService() {
             // Persist the last valid offset so it survives service recreation
             repository.saveLastKnownOffset(currentXOffset)
 
-            // While the finger is held down on an edge page, follow the touch signal exclusively
-            // until release so misleading launcher edge offsets do not hijack the gesture.
-            if (edgeOverScrollController.isTouchActive) {
-                return
-            }
-
             if (edgeOverScrollController.hasActiveFraction()) {
                 val anchor = edgeOverScrollController.lockedEdgeOffset
-                if (abs(nextXOffset - anchor) > abs(previousXOffset - anchor) + 0.01f) {
+                val switchConfirmThreshold = (edgeSegmentSpan(anchor, calib) * 0.25f)
+                    .coerceAtLeast(0.05f)
+                val isConfirmedMultiStepSwitch = abs(previousXOffset - anchor) > 0.01f &&
+                    abs(nextXOffset - anchor) > abs(previousXOffset - anchor) + 0.01f &&
+                    abs(nextXOffset - anchor) >= switchConfirmThreshold
+                if (isConfirmedMultiStepSwitch) {
                     edgeOverScrollController.promoteToFastSnapBack()
+                } else if (edgeOverScrollController.snapBackMode == EdgeOverScrollController.SnapBackMode.SLOW) {
+                    currentXOffset = anchor
+                    if (isVisible && isOffsetAnimationNeeded()) {
+                        scheduleOffsetAnimationFrame()
+                    }
+                    return
                 }
             }
 
@@ -411,6 +428,7 @@ class MultiPageWallpaperService : WallpaperService() {
             )
             if (edgeOverScrollController.isTouchActive) {
                 if (edgeOverScrollController.isOverScrollLocked) {
+                    currentXOffset = edgeOverScrollController.lockedEdgeOffset
                     renderedXOffset = edgeOverScrollController.lockedEdgeOffset
                     stopOffsetAnimation()
                     if (result.needsRedraw && isVisible) {
@@ -418,7 +436,12 @@ class MultiPageWallpaperService : WallpaperService() {
                     }
                 }
             } else if (wasTouchActive) {
-                if (abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON) {
+                val keepEdgeLocked = edgeOverScrollController.hasActiveFraction() &&
+                    edgeOverScrollController.snapBackMode == EdgeOverScrollController.SnapBackMode.SLOW
+                if (keepEdgeLocked) {
+                    currentXOffset = edgeOverScrollController.lockedEdgeOffset
+                    renderedXOffset = edgeOverScrollController.lockedEdgeOffset
+                } else if (abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON) {
                     offsetDirection = swipeDirectionLock.onOffsetChanged(
                         previousOffset = renderedXOffset,
                         nextOffset = currentXOffset,
@@ -580,9 +603,15 @@ class MultiPageWallpaperService : WallpaperService() {
             if (wasResolvingEdgeOverScroll) {
                 edgeOverScrollController.stepRelease(elapsedNanos, smoothingFraction)
             }
-            // Advance renderedXOffset in the same frame so outgoing overscroll recovery
-            // overlaps with the incoming page transition instead of pausing at the edge.
-            if (!edgeOverScrollController.isTouchActive) {
+            val holdEdgeAnchor = edgeOverScrollController.hasActiveFraction() &&
+                edgeOverScrollController.snapBackMode == EdgeOverScrollController.SnapBackMode.SLOW
+            if (holdEdgeAnchor) {
+                // Without a full reversal, keep renderedXOffset pinned on the edge page
+                // so the neighboring page never enters while overscroll eases back.
+                renderedXOffset = edgeOverScrollController.lockedEdgeOffset
+            } else if (!edgeOverScrollController.isTouchActive) {
+                // Advance renderedXOffset in the same frame so outgoing overscroll recovery
+                // overlaps with the incoming page transition instead of pausing at the edge.
                 renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
                 if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
                     renderedXOffset = currentXOffset
@@ -1220,6 +1249,23 @@ class MultiPageWallpaperService : WallpaperService() {
                 ?: 0f
             val tolerance = maxOf(STATIC_OFFSET_TOLERANCE, segmentTolerance)
             return anchors.any { abs(offset - it) <= tolerance }
+        }
+
+        private fun edgeSegmentSpan(anchor: Float, calib: CalibrationConfig): Float {
+            val count = calib.pageCount.coerceAtLeast(1)
+            if (count <= 1) return 1f
+            val anchors = if (calib.customOffsets.size >= count) {
+                calib.customOffsets.take(count)
+            } else {
+                List(count) { index ->
+                    index.toFloat() / (count - 1).toFloat()
+                }
+            }
+            return if (abs(anchor - anchors.first()) <= abs(anchor - anchors.last())) {
+                abs(anchors[1] - anchors[0]).coerceAtLeast(0.05f)
+            } else {
+                abs(anchors[count - 1] - anchors[count - 2]).coerceAtLeast(0.05f)
+            }
         }
 
         private fun setPageTransition(pageA: Int, pageB: Int, progress: Float) {

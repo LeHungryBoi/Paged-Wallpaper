@@ -135,7 +135,16 @@ class EdgeOverScrollUnitTest {
         }
         assertEquals(0f, controller.overScrollFraction, 0.001f)
 
-        // Case 3: Post-release FAST promotion uses time-capped exponential smoothing
+        // Case 3: Outward-only swipe with minor thumb twitch before lift stays SLOW (no reversal)
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 500f, 500f, width, slop, 0f, 0f, calib, 120L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 488f, 500f, width, slop, 0f, 0f, calib, 122L)
+        controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 488f, 500f, width, slop, 0f, 0f, calib, 124L)
+        assertEquals(EdgeOverScrollController.SnapBackMode.SLOW, controller.snapBackMode)
+        assertTrue(controller.overScrollFraction < -0.15f)
+
+        // Case 4: Post-release FAST promotion uses time-capped exponential smoothing
         controller.reset()
         controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
         controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 300f + slop + 275f, 500f, width, slop, 0f, 0f, calib, 0L)

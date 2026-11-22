@@ -260,7 +260,7 @@ class EdgeOverScrollController {
             MotionEvent.ACTION_POINTER_UP -> {
                 if (isTouchActive && pointerId == activePointerId) {
                     val wasLocked = isOverScrollLocked
-                    prepareRelease(surfaceWidth = safeWidth)
+                    prepareRelease()
                     clearTouchOnly()
                     return TouchResult(
                         handled = wasLocked,
@@ -275,7 +275,7 @@ class EdgeOverScrollController {
                 val wasActive = isTouchActive
                 val wasLocked = isOverScrollLocked
                 if (wasActive || wasLocked) {
-                    prepareRelease(surfaceWidth = safeWidth)
+                    prepareRelease()
                 }
                 clearTouchOnly()
                 return TouchResult(
@@ -372,11 +372,8 @@ class EdgeOverScrollController {
         lastEventTimeMs = eventTimeMs
     }
 
-    private fun prepareRelease(surfaceWidth: Int) {
-        val inwardFlingThreshold = surfaceWidth * INWARD_FLING_SCREEN_PER_SEC
-        val isSwitchingPages = hasReversedPastOrigin ||
-            outwardVelocityPxPerSec < -inwardFlingThreshold
-        snapBackMode = if (isSwitchingPages) SnapBackMode.FAST else SnapBackMode.SLOW
+    private fun prepareRelease() {
+        snapBackMode = if (hasReversedPastOrigin) SnapBackMode.FAST else SnapBackMode.SLOW
         releaseStartFraction = overScrollFraction
         releaseElapsedNanos = 0L
     }
@@ -449,6 +446,5 @@ class EdgeOverScrollController {
         private const val VELOCITY_INTENSITY_WEIGHT = 0.28f
         private const val VELOCITY_RESPONSE_EXPONENT = 0.70f
         private const val VELOCITY_RAMP_DISTANCE = 0.05f
-        private const val INWARD_FLING_SCREEN_PER_SEC = 1.1f
     }
 }
