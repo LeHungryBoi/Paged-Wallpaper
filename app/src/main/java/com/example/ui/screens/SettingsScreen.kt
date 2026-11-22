@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
@@ -109,53 +108,6 @@ internal fun AnimationFrameRateSetting(
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-internal fun EdgeOverScrollCurveSetting(
-    selectedCurve: EdgeOverScrollCurve,
-    onCurveSelected: (EdgeOverScrollCurve) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("edge_overscroll_curve_setting"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "Edge over-scroll parallax curve",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "Choose how swipe intensity scales into each wallpaper's edge parallax reach. Snap-back automatically slows down when staying on an edge page and stays fast when switching pages.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                EdgeOverScrollCurve.values().forEach { curveOption ->
-                    FilterChip(
-                        selected = selectedCurve == curveOption,
-                        onClick = { onCurveSelected(curveOption) },
-                        label = { Text(curveOption.displayName) },
-                        modifier = Modifier.testTag("edge_overscroll_curve_${curveOption.name}")
-                    )
-                }
-            }
-            Text(
-                text = selectedCurve.description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
         }
     }
 }

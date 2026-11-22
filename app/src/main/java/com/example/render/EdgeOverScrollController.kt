@@ -3,6 +3,7 @@ package com.example.render
 import android.view.MotionEvent
 import com.example.data.model.CalibrationConfig
 import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.pow
 
@@ -212,8 +213,9 @@ class EdgeOverScrollController {
                     val hadFraction = hasActiveFraction()
                     hasReversedPastOrigin = true
                     snapBackMode = SnapBackMode.FAST
-                    overScrollFraction = 0f
-                    releaseStartFraction = 0f
+                    // Retain the live overScrollFraction so the outgoing page blends
+                    // smoothly into the incoming page motion without pausing at rest.
+                    releaseStartFraction = overScrollFraction
                     releaseElapsedNanos = 0L
                     clearTouchOnly()
                     return TouchResult(handled = false, needsRedraw = hadFraction)
@@ -237,8 +239,9 @@ class EdgeOverScrollController {
                     1f
                 }
                 val velocityRamp = (distanceComponent / VELOCITY_RAMP_DISTANCE).coerceIn(0f, 1f)
+                val softenedVelocity = activeOutwardVelocityNorm.pow(VELOCITY_RESPONSE_EXPONENT)
                 val velocityBoost = VELOCITY_INTENSITY_WEIGHT *
-                    activeOutwardVelocityNorm *
+                    softenedVelocity *
                     (0.35f + 0.65f * distanceComponent) *
                     reversalAttenuation *
                     velocityRamp
@@ -299,7 +302,17 @@ class EdgeOverScrollController {
         }
         when (snapBackMode) {
             SnapBackMode.FAST -> {
-                overScrollFraction += (0f - overScrollFraction) * fastSmoothingFraction.coerceIn(0f, 1f)
+                val timeStep = (
+                    1.0 - exp(
+                        -elapsedNanos.coerceAtLeast(1L).toDouble() /
+                            FAST_SNAP_BACK_TAU_NANOS.toDouble()
+                    )
+                    ).toFloat()
+                val effectiveStep = minOf(
+                    fastSmoothingFraction.coerceIn(0f, FAST_MAX_STEP_FRACTION),
+                    timeStep.coerceIn(0f, FAST_MAX_STEP_FRACTION)
+                )
+                overScrollFraction += (0f - overScrollFraction) * effectiveStep
                 if (!hasActiveFraction()) {
                     overScrollFraction = 0f
                 }
@@ -421,9 +434,11 @@ class EdgeOverScrollController {
 
     companion object {
         const val FRACTION_EPSILON = 0.0005f
-        const val SLOW_SNAP_BACK_DURATION_NANOS = 420_000_000L
+        const val SLOW_SNAP_BACK_DURATION_NANOS = 350_000_000L
         private const val DEFAULT_FRAME_NANOS = 16_666_667L
-        private const val SLOW_EASE_OUT_POWER = 2.2f
+        private const val SLOW_EASE_OUT_POWER = 2.0f
+        private const val FAST_SNAP_BACK_TAU_NANOS = 45_000_000L
+        private const val FAST_MAX_STEP_FRACTION = 0.42f
         private const val STATIC_OFFSET_TOLERANCE = 0.002f
         private const val STATIC_SEGMENT_TOLERANCE_RATIO = 0.02f
         private const val DRAG_DISTANCE_SCREEN_FRACTION = 0.55f
@@ -431,8 +446,9 @@ class EdgeOverScrollController {
         private const val MAX_TRACKED_VELOCITY_PX_S = 12_000f
         private const val VELOCITY_SMOOTHING_TAU_MS = 45f
         private const val VELOCITY_REFERENCE_SCREEN_PER_SEC = 2.4f
-        private const val VELOCITY_INTENSITY_WEIGHT = 0.42f
-        private const val VELOCITY_RAMP_DISTANCE = 0.08f
+        private const val VELOCITY_INTENSITY_WEIGHT = 0.28f
+        private const val VELOCITY_RESPONSE_EXPONENT = 0.70f
+        private const val VELOCITY_RAMP_DISTANCE = 0.05f
         private const val INWARD_FLING_SCREEN_PER_SEC = 1.1f
     }
 }

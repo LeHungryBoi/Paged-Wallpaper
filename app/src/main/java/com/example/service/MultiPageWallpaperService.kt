@@ -26,7 +26,6 @@ import android.view.ViewConfiguration
 import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
-import com.example.data.model.EdgeOverScrollCurve
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.data.repository.WallpaperRepository
@@ -419,9 +418,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     }
                 }
             } else if (wasTouchActive) {
-                if (!edgeOverScrollController.hasActiveFraction() &&
-                    abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON
-                ) {
+                if (abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON) {
                     offsetDirection = swipeDirectionLock.onOffsetChanged(
                         previousOffset = renderedXOffset,
                         nextOffset = currentXOffset,
@@ -582,7 +579,10 @@ class MultiPageWallpaperService : WallpaperService() {
                 edgeOverScrollController.hasActiveFraction()
             if (wasResolvingEdgeOverScroll) {
                 edgeOverScrollController.stepRelease(elapsedNanos, smoothingFraction)
-            } else if (!edgeOverScrollController.isTouchActive) {
+            }
+            // Advance renderedXOffset in the same frame so outgoing overscroll recovery
+            // overlaps with the incoming page transition instead of pausing at the edge.
+            if (!edgeOverScrollController.isTouchActive) {
                 renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
                 if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
                     renderedXOffset = currentXOffset
@@ -906,8 +906,7 @@ class MultiPageWallpaperService : WallpaperService() {
                     bitmap = edgeBitmap,
                     leftTravelPx = edgeParallax?.leftTravelPx ?: 0,
                     rightTravelPx = edgeParallax?.rightTravelPx ?: 0,
-                    fraction = edgeOverScrollController.overScrollFraction,
-                    curve = state.edgeOverScrollCurve
+                    fraction = edgeOverScrollController.overScrollFraction
                 )
             } else {
                 val usesParallax = renderer.supportsParallax
@@ -949,6 +948,35 @@ class MultiPageWallpaperService : WallpaperService() {
                     null
                 }
 
+                val residualFraction = edgeOverScrollController.overScrollFraction
+                val lastPageIndex = (pageCount - 1).coerceAtLeast(0)
+                val pageAEdgeResidualPx = if (
+                    pageA == 0 &&
+                    residualFraction < -EdgeOverScrollController.FRACTION_EPSILON &&
+                    (pageAParallax?.leftTravelPx ?: 0) > 0
+                ) {
+                    -EdgeOverScrollScaling.computeTravelPx(
+                        absIntensity = -residualFraction,
+                        availableTravelPx = pageAParallax?.leftTravelPx ?: 0,
+                        screenWidth = surfaceWidth
+                    )
+                } else {
+                    0f
+                }
+                val pageBEdgeResidualPx = if (
+                    pageB == lastPageIndex &&
+                    residualFraction > EdgeOverScrollController.FRACTION_EPSILON &&
+                    (pageBParallax?.rightTravelPx ?: 0) > 0
+                ) {
+                    EdgeOverScrollScaling.computeTravelPx(
+                        absIntensity = residualFraction,
+                        availableTravelPx = pageBParallax?.rightTravelPx ?: 0,
+                        screenWidth = surfaceWidth
+                    )
+                } else {
+                    0f
+                }
+
                 if (usesParallax) {
                     renderer.drawWithParallax(
                         canvas = canvas,
@@ -965,7 +993,9 @@ class MultiPageWallpaperService : WallpaperService() {
                         slowImageMotionEnabled = slowImageMotionEnabled,
                         pageSwipeForward = swipeForward,
                         outgoingMotionRate = outgoingMotionRate,
-                        incomingMotionRate = incomingMotionRate
+                        incomingMotionRate = incomingMotionRate,
+                        pageAEdgeResidualPx = pageAEdgeResidualPx,
+                        pageBEdgeResidualPx = pageBEdgeResidualPx
                     )
                 } else {
                     renderer.draw(
@@ -1001,8 +1031,7 @@ class MultiPageWallpaperService : WallpaperService() {
             bitmap: Bitmap?,
             leftTravelPx: Int,
             rightTravelPx: Int,
-            fraction: Float,
-            curve: EdgeOverScrollCurve
+            fraction: Float
         ) {
             if (bitmap == null) return
             edgeOverScrollDstRect.set(0, 0, surfaceWidth, surfaceHeight)
@@ -1014,8 +1043,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 intensity = fraction,
                 leftTravelPx = leftTravelPx,
                 rightTravelPx = rightTravelPx,
-                screenWidth = surfaceWidth,
-                curve = curve
+                screenWidth = surfaceWidth
             ).toInt().coerceIn(0, (bitmap.width - surfaceWidth).coerceAtLeast(0))
             edgeOverScrollSrcRect.set(sourceLeft, 0, sourceLeft + surfaceWidth, bitmap.height)
             canvas.drawBitmap(bitmap, edgeOverScrollSrcRect, edgeOverScrollDstRect, paint)

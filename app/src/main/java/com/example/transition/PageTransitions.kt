@@ -42,7 +42,9 @@ interface PageTransitionRenderer {
         slowImageMotionEnabled: Boolean = false,
         pageSwipeForward: Boolean = true,
         outgoingMotionRate: Float = 1f,
-        incomingMotionRate: Float = 1f
+        incomingMotionRate: Float = 1f,
+        pageAEdgeResidualPx: Float = 0f,
+        pageBEdgeResidualPx: Float = 0f
     ) {
         draw(canvas, pageABitmap, pageBBitmap, progress, screenWidth, screenHeight, paint)
     }
@@ -146,7 +148,9 @@ open class ParallaxScrollTransition(
         slowImageMotionEnabled: Boolean,
         pageSwipeForward: Boolean,
         outgoingMotionRate: Float,
-        incomingMotionRate: Float
+        incomingMotionRate: Float,
+        pageAEdgeResidualPx: Float,
+        pageBEdgeResidualPx: Float
     ) {
         val p = progress.coerceIn(0f, 1f)
         val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
@@ -172,16 +176,20 @@ open class ParallaxScrollTransition(
             canvas.drawBitmap(bitmap, source, destination, paint)
         }
 
-        val pageASourceLeft = if (slowImageMotionEnabled) {
-            pageALeftTravelPx * (1f - pageARate * p)
-        } else {
-            pageALeftTravelPx + pageARightTravelPx * pageARate * p
-        }
-        val pageBSourceLeft = if (slowImageMotionEnabled || useClassicIncomingTravel) {
-            pageBLeftTravelPx + pageBRightTravelPx * pageBRate * (1f - p)
-        } else {
-            pageBLeftTravelPx * (1f - pageBRate * (1f - p))
-        }
+        val pageASourceLeft = (
+            if (slowImageMotionEnabled) {
+                pageALeftTravelPx * (1f - pageARate * p)
+            } else {
+                pageALeftTravelPx + pageARightTravelPx * pageARate * p
+            }
+            ) + pageAEdgeResidualPx
+        val pageBSourceLeft = (
+            if (slowImageMotionEnabled || useClassicIncomingTravel) {
+                pageBLeftTravelPx + pageBRightTravelPx * pageBRate * (1f - p)
+            } else {
+                pageBLeftTravelPx * (1f - pageBRate * (1f - p))
+            }
+            ) + pageBEdgeResidualPx
 
         drawPage(
             pageABitmap,
@@ -261,7 +269,9 @@ open class SwipeRevealTransition(
         slowImageMotionEnabled: Boolean,
         pageSwipeForward: Boolean,
         outgoingMotionRate: Float,
-        incomingMotionRate: Float
+        incomingMotionRate: Float,
+        pageAEdgeResidualPx: Float,
+        pageBEdgeResidualPx: Float
     ) {
         val p = progress.coerceIn(0f, 1f)
         val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
@@ -269,8 +279,12 @@ open class SwipeRevealTransition(
         val pageARate = if (pageSwipeForward) outgoingRate else incomingRate
         val pageBRate = if (pageSwipeForward) incomingRate else outgoingRate
 
-        val pageASourceLeft = (pageALeftTravelPx + pageARightTravelPx * pageARate * p).toInt()
-        val pageBSourceLeft = (pageBLeftTravelPx * (1f - pageBRate * (1f - p))).toInt()
+        val pageASourceLeft = (
+            pageALeftTravelPx + pageARightTravelPx * pageARate * p + pageAEdgeResidualPx
+            ).toInt()
+        val pageBSourceLeft = (
+            pageBLeftTravelPx * (1f - pageBRate * (1f - p)) + pageBEdgeResidualPx
+            ).toInt()
 
         fun drawPage(
             bitmap: Bitmap?,
