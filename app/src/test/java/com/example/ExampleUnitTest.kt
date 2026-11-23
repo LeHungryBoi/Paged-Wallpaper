@@ -540,7 +540,7 @@ class ExampleUnitTest {
             }
         )
 
-        assertFalse(restored.resumeFadeEnabled)
+        assertTrue(restored.resumeFadeEnabled)
         assertFalse(restored.showOffsetDebugOverlay)
         assertFalse(restored.showFrameDebugIndicator)
         assertTrue(restored.motionBlurEnabled)

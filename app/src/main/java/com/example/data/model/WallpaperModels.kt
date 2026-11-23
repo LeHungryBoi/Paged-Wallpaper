@@ -607,12 +607,12 @@ data class WallpaperAppState(
     val pages: List<PageItem>,
     val calibration: CalibrationConfig,
     val transitionType: String = "scroll",
-    val resumeFadeEnabled: Boolean = false,
+    val resumeFadeEnabled: Boolean = DEFAULT_ENTRY_ANIMATION_ENABLED,
     val entryZoomEnabled: Boolean = true,
     val entryZoomStartScale: Float = DEFAULT_ENTRY_ZOOM_START_SCALE,
     val entryBlackFadeEnabled: Boolean = true,
     val entryBlackFadeMaxAlpha: Float = DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA,
-    val entryBlurEnabled: Boolean = false,
+    val entryBlurEnabled: Boolean = true,
     val entryBlurStrength: Float = DEFAULT_ENTRY_BLUR_STRENGTH,
     val entryDurationMs: Int = DEFAULT_ENTRY_DURATION_MS,
     val darken: DarkenConfig = DarkenConfig(),
@@ -673,15 +673,16 @@ data class WallpaperAppState(
     }
 
     companion object {
-        const val DEFAULT_ANIMATION_FRAME_RATE = 60
+        const val DEFAULT_ANIMATION_FRAME_RATE = 165
         const val DEFAULT_MOTION_BLUR_STRENGTH_PERCENT = 100
         const val MAX_MOTION_BLUR_STRENGTH_PERCENT = 200
-        const val DEFAULT_ENTRY_ZOOM_START_SCALE = 0.86f
-        const val MIN_ENTRY_ZOOM_START_SCALE = 0.65f
-        const val MAX_ENTRY_ZOOM_START_SCALE = 0.98f
-        const val DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA = 0.75f
-        const val DEFAULT_ENTRY_BLUR_STRENGTH = 0.65f
-        const val DEFAULT_ENTRY_DURATION_MS = 420
+        const val DEFAULT_ENTRY_ANIMATION_ENABLED = true
+        const val DEFAULT_ENTRY_ZOOM_START_SCALE = 1.35f
+        const val MIN_ENTRY_ZOOM_START_SCALE = 1.02f
+        const val MAX_ENTRY_ZOOM_START_SCALE = 1.50f
+        const val DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA = 1.0f
+        const val DEFAULT_ENTRY_BLUR_STRENGTH = 1.0f
+        const val DEFAULT_ENTRY_DURATION_MS = 390
         const val MIN_ENTRY_DURATION_MS = 150
         const val MAX_ENTRY_DURATION_MS = 1200
         val supportedAnimationFrameRates = listOf(60, 90, 120, 144, 165)
@@ -732,22 +733,32 @@ data class WallpaperAppState(
             } else {
                 presetValues
             }
+            val rawZoomStartScale = json.optDouble(
+                "entryZoomStartScale",
+                DEFAULT_ENTRY_ZOOM_START_SCALE.toDouble()
+            ).toFloat()
+            val normalizedZoomStartScale = if (rawZoomStartScale in 0.4f..0.999f) {
+                1f + (1f - rawZoomStartScale)
+            } else {
+                rawZoomStartScale
+            }.coerceIn(MIN_ENTRY_ZOOM_START_SCALE, MAX_ENTRY_ZOOM_START_SCALE)
+
             return WallpaperAppState(
                 pages = finalPages,
                 calibration = calib,
                 transitionType = transitionType,
-                resumeFadeEnabled = json.optBoolean("resumeFadeEnabled", false),
+                resumeFadeEnabled = json.optBoolean(
+                    "resumeFadeEnabled",
+                    DEFAULT_ENTRY_ANIMATION_ENABLED
+                ),
                 entryZoomEnabled = json.optBoolean("entryZoomEnabled", true),
-                entryZoomStartScale = json.optDouble(
-                    "entryZoomStartScale",
-                    DEFAULT_ENTRY_ZOOM_START_SCALE.toDouble()
-                ).toFloat().coerceIn(MIN_ENTRY_ZOOM_START_SCALE, MAX_ENTRY_ZOOM_START_SCALE),
+                entryZoomStartScale = normalizedZoomStartScale,
                 entryBlackFadeEnabled = json.optBoolean("entryBlackFadeEnabled", true),
                 entryBlackFadeMaxAlpha = json.optDouble(
                     "entryBlackFadeMaxAlpha",
                     DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA.toDouble()
                 ).toFloat().coerceIn(0.1f, 1f),
-                entryBlurEnabled = json.optBoolean("entryBlurEnabled", false),
+                entryBlurEnabled = json.optBoolean("entryBlurEnabled", true),
                 entryBlurStrength = json.optDouble(
                     "entryBlurStrength",
                     DEFAULT_ENTRY_BLUR_STRENGTH.toDouble()

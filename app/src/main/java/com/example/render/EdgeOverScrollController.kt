@@ -61,7 +61,8 @@ class EdgeOverScrollController {
         touchSlop: Int,
         currentXOffset: Float,
         renderedXOffset: Float,
-        calibration: CalibrationConfig
+        calibration: CalibrationConfig,
+        surfaceHeight: Int = 0
     ): TouchResult {
         val actionMasked = event.actionMasked
         val pointerIndex = event.actionIndex
@@ -101,7 +102,8 @@ class EdgeOverScrollController {
             currentXOffset = currentXOffset,
             renderedXOffset = renderedXOffset,
             calibration = calibration,
-            eventTimeMs = event.eventTime
+            eventTimeMs = event.eventTime,
+            surfaceHeight = surfaceHeight
         )
     }
 
@@ -115,7 +117,8 @@ class EdgeOverScrollController {
         currentXOffset: Float,
         renderedXOffset: Float,
         calibration: CalibrationConfig,
-        eventTimeMs: Long = 0L
+        eventTimeMs: Long = 0L,
+        surfaceHeight: Int = 0
     ): TouchResult {
         val safeWidth = surfaceWidth.coerceAtLeast(1)
         val slop = touchSlop.coerceAtLeast(1).toFloat()
@@ -123,6 +126,14 @@ class EdgeOverScrollController {
 
         when (actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (surfaceHeight > 0 &&
+                    (y < surfaceHeight * TOP_GESTURE_EXCLUSION_FRACTION ||
+                        y > surfaceHeight * BOTTOM_GESTURE_EXCLUSION_FRACTION)
+                ) {
+                    clearTouchOnly()
+                    return TouchResult(handled = false, needsRedraw = false)
+                }
+
                 if (hasActiveFraction()) {
                     val existingEdge = if (overScrollFraction < 0f) EdgeSide.LEFT else EdgeSide.RIGHT
                     val anchors = resolveAnchors(calibration)
@@ -196,7 +207,7 @@ class EdgeOverScrollController {
                         clearTouchOnly()
                         return TouchResult(handled = false, needsRedraw = false)
                     }
-                    if (outwardRawDx > slop) {
+                    if (outwardRawDx > slop && outwardRawDx > abs(dy) * HORIZONTAL_LOCK_RATIO) {
                         isOverScrollLocked = true
                         peakOutwardRawPx = outwardRawDx
                     } else if (outwardRawDx < -slop) {
@@ -439,7 +450,10 @@ class EdgeOverScrollController {
         private const val STATIC_OFFSET_TOLERANCE = 0.002f
         private const val STATIC_SEGMENT_TOLERANCE_RATIO = 0.02f
         private const val DRAG_DISTANCE_SCREEN_FRACTION = 0.55f
-        private const val VERTICAL_REJECT_RATIO = 1.2f
+        private const val VERTICAL_REJECT_RATIO = 0.85f
+        private const val HORIZONTAL_LOCK_RATIO = 1.25f
+        private const val TOP_GESTURE_EXCLUSION_FRACTION = 0.05f
+        private const val BOTTOM_GESTURE_EXCLUSION_FRACTION = 0.86f
         private const val MAX_TRACKED_VELOCITY_PX_S = 12_000f
         private const val VELOCITY_SMOOTHING_TAU_MS = 45f
         private const val VELOCITY_REFERENCE_SCREEN_PER_SEC = 2.4f

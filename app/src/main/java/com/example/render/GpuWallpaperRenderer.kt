@@ -328,11 +328,7 @@ class GpuWallpaperRenderer(
             ensureMotionBlurTarget(frame.width, frame.height)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, motionBlurFramebuffer)
             GLES20.glViewport(0, 0, motionBlurWidth, motionBlurHeight)
-            renderWallpaper(
-                frame = frame,
-                targetWidth = motionBlurWidth,
-                targetHeight = motionBlurHeight
-            )
+            renderWallpaper(frame = frame)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, frame.width, frame.height)
             drawMotionBlur(frame)
@@ -340,11 +336,7 @@ class GpuWallpaperRenderer(
         } else {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, frame.width, frame.height)
-            renderWallpaper(
-                frame = frame,
-                targetWidth = frame.width,
-                targetHeight = frame.height
-            )
+            renderWallpaper(frame = frame)
         }
         if (frame.entryBlackFadeAlpha > 0.004f) {
             drawRect(
@@ -361,18 +353,10 @@ class GpuWallpaperRenderer(
         drawDebugIndicators(frame)
     }
 
-    private fun renderWallpaper(
-        frame: GpuFrameRequest,
-        targetWidth: Int,
-        targetHeight: Int
-    ) {
-        val entryScale = frame.entryScale.coerceIn(0.5f, 1f)
-        val isZoomedOutEntry = entryScale < 0.9995f
-        if (isZoomedOutEntry) {
-            GLES20.glClearColor(0f, 0f, 0f, 1f)
-        } else {
-            GLES20.glClearColor(18f / 255f, 22f / 255f, 34f / 255f, 1f)
-        }
+    private fun renderWallpaper(frame: GpuFrameRequest) {
+        val entryScale = frame.entryScale.coerceIn(1f, 2f)
+        val isZoomedEntry = entryScale > 1.0005f
+        GLES20.glClearColor(18f / 255f, 22f / 255f, 34f / 255f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val setting = frame.state.transitions.getOrNull(frame.pageA)
@@ -382,7 +366,7 @@ class GpuWallpaperRenderer(
             kotlin.math.abs(frame.edgeOverScrollFraction) > EdgeOverScrollController.FRACTION_EPSILON
         val pageCount = frame.state.calibration.pageCount.coerceAtLeast(1)
 
-        if (isZoomedOutEntry) {
+        if (isZoomedEntry) {
             GlMatrix.setIdentityM(sceneScaleMatrix, 0)
             GlMatrix.translateM(sceneScaleMatrix, 0, frame.width / 2f, frame.height / 2f, 0f)
             GlMatrix.scaleM(sceneScaleMatrix, 0, entryScale, entryScale, 1f)
@@ -393,41 +377,6 @@ class GpuWallpaperRenderer(
         }
 
         try {
-            val isFullStripScroll = !isEdgeOverScroll &&
-                (transition.id == "scroll" || transition.id == "parallax" || transition.id == "parallax_classic")
-
-            if (isZoomedOutEntry && pageCount > 1) {
-                val extraMargin = frame.width * (1f / entryScale - 1f) * 0.5f
-                if (isFullStripScroll) {
-                    for (k in 0 until pageCount) {
-                        val skipActivePair = if (frame.pageA == frame.pageB) {
-                            k == frame.pageA
-                        } else {
-                            k == frame.pageA || k == frame.pageB
-                        }
-                        if (!skipActivePair) {
-                            drawStripNeighborPage(frame, k, extraMargin, transition.supportsParallax)
-                        }
-                    }
-                } else {
-                    for (k in 0 until pageCount) {
-                        if (!isEdgeOverScroll || k != frame.pageA) {
-                            drawStripNeighborPage(frame, k, extraMargin, transition.supportsParallax)
-                        }
-                    }
-                }
-            }
-
-            val useCenterScissor = isZoomedOutEntry && !isFullStripScroll && !isEdgeOverScroll
-            if (useCenterScissor) {
-                val scissorX = ((1f - entryScale) * 0.5f * targetWidth).toInt().coerceIn(0, targetWidth)
-                val scissorY = ((1f - entryScale) * 0.5f * targetHeight).toInt().coerceIn(0, targetHeight)
-                val scissorW = (entryScale * targetWidth).toInt().coerceAtLeast(1)
-                val scissorH = (entryScale * targetHeight).toInt().coerceAtLeast(1)
-                GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
-                GLES20.glScissor(scissorX, scissorY, scissorW, scissorH)
-            }
-
             if (isEdgeOverScroll) {
                 val edgePage = getPageTexture(frame, frame.pageA, usesParallax = true)
                 drawEdgeOverScroll(frame, edgePage)
@@ -514,39 +463,20 @@ class GpuWallpaperRenderer(
                 }
             }
         } finally {
-            GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
             System.arraycopy(baseProjectionMatrix, 0, projectionMatrix, 0, 16)
         }
 
         if (frame.dimAmount > 0.01f) {
-            val stripTop = if (isZoomedOutEntry) (1f - entryScale) * frame.height * 0.5f else 0f
-            val stripHeight = if (isZoomedOutEntry) frame.height * entryScale else frame.height.toFloat()
             drawRect(
                 0f,
-                stripTop,
+                0f,
                 frame.width.toFloat(),
-                stripHeight,
+                frame.height.toFloat(),
                 0f,
                 0f,
                 0f,
                 frame.dimAmount.coerceIn(0f, 1f)
             )
-        }
-    }
-
-    private fun drawStripNeighborPage(
-        frame: GpuFrameRequest,
-        pageIndex: Int,
-        extraMargin: Float,
-        usesParallax: Boolean
-    ) {
-        val slotLeft = (pageIndex - frame.continuousPagePosition) * frame.width
-        if (slotLeft + frame.width <= -extraMargin || slotLeft >= frame.width + extraMargin) return
-        val page = getPageTexture(frame, pageIndex, usesParallax) ?: return
-        if (usesParallax && page.originalWidth > frame.width) {
-            drawPage(page, slotLeft.toInt(), page.leftTravelPx.toFloat(), frame, 1f)
-        } else {
-            drawFullPage(page, slotLeft.toInt(), frame, 1f)
         }
     }
 
@@ -1239,9 +1169,9 @@ class GpuWallpaperRenderer(
             signalCardLines = lines
             signalCardDensity = density
 
-            val cardWidth = minOf(320f * density, (frame.width - 24f * density).coerceAtLeast(160f))
-            val textSizePx = 11f * density
-            val lineHeightPx = 16f * density
+            val cardWidth = minOf(352f * density, (frame.width - 20f * density).coerceAtLeast(180f))
+            val textSizePx = 10.5f * density
+            val lineHeightPx = 15f * density
             val headerHeightPx = 22f * density
             val padPx = 12f * density
             val cardHeight = padPx * 2f + headerHeightPx + lines.size * lineHeightPx
@@ -1274,17 +1204,17 @@ class GpuWallpaperRenderer(
             )
             val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(125, 211, 252)
-                textSize = 12f * density
+                textSize = 11.5f * density
                 isFakeBoldText = true
             }
-            canvas.drawText("Live Signal Diagnostics", padPx, padPx + 12f * density, titlePaint)
+            canvas.drawText("Live Signal Diagnostics", padPx, padPx + 11.5f * density, titlePaint)
 
             val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(226, 232, 240)
                 textSize = textSizePx
                 typeface = android.graphics.Typeface.MONOSPACE
             }
-            var y = padPx + headerHeightPx + 11f * density
+            var y = padPx + headerHeightPx + 10.5f * density
             lines.forEachIndexed { index, line ->
                 linePaint.color = when {
                     index < 2 -> Color.rgb(167, 243, 208)
@@ -1298,7 +1228,7 @@ class GpuWallpaperRenderer(
             bmp.recycle()
         }
 
-        val top = if (frame.state.showOffsetDebugOverlay) 114f * density else 20f * density
+        val top = if (frame.state.showOffsetDebugOverlay) 186f * density else 96f * density
         val left = ((frame.width - signalCardWidthPx) / 2f).coerceAtLeast(8f * density)
         drawTextureModel(
             textureId = signalCardTexture,

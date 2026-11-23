@@ -378,7 +378,7 @@ private fun DisplayEntryAnimationCard(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Plays on visibility change when returning to the home screen. Side pages stay visible during zoom-in and blend smoothly if you swipe mid-animation.",
+                        text = "Plays on visibility change when returning to the home screen and blends smoothly if interrupted by a swipe.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -414,8 +414,8 @@ private fun DisplayEntryAnimationCard(
                     }
 
                     EntryElementSection(
-                        title = "Multi-page zoom in",
-                        description = "Starts zoomed out so neighboring pages peek in from the sides, then zooms into the active page.",
+                        title = "Zoom-out settle",
+                        description = "Starts zoomed in on the current page when becoming visible and eases back down to 100% scale.",
                         checked = appState.entryZoomEnabled,
                         onCheckedChange = onZoomEnabledChange,
                         switchTestTag = "toggle_entry_zoom"

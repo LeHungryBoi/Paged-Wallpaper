@@ -15,6 +15,9 @@ class EntryTransitionController {
     var isActive: Boolean = false
         private set
 
+    var isInterrupted: Boolean = false
+        private set
+
     var linearProgress: Float = 1f
         private set
 
@@ -25,21 +28,37 @@ class EntryTransitionController {
         durationNanos = durationMs.coerceIn(MIN_DURATION_MS, MAX_DURATION_MS) * 1_000_000L
         elapsedNanos = 0L
         linearProgress = 0f
+        isInterrupted = false
         isActive = true
+    }
+
+    fun interrupt() {
+        if (!isActive || isInterrupted) return
+        isInterrupted = true
     }
 
     fun step(deltaNanos: Long) {
         if (!isActive) return
-        elapsedNanos += deltaNanos.coerceAtLeast(1L)
-        linearProgress = (elapsedNanos.toFloat() / durationNanos.toFloat()).coerceIn(0f, 1f)
+        val dt = deltaNanos.coerceAtLeast(1L)
+        if (isInterrupted) {
+            val interruptDuration = minOf(durationNanos, INTERRUPT_BLEND_NANOS)
+            val interruptStep = dt.toFloat() / interruptDuration.toFloat()
+            linearProgress = (linearProgress + interruptStep).coerceIn(0f, 1f)
+            elapsedNanos = (linearProgress * durationNanos).toLong()
+        } else {
+            elapsedNanos += dt
+            linearProgress = (elapsedNanos.toFloat() / durationNanos.toFloat()).coerceIn(0f, 1f)
+        }
         if (linearProgress >= 1f) {
             linearProgress = 1f
+            isInterrupted = false
             isActive = false
         }
     }
 
     fun reset() {
         isActive = false
+        isInterrupted = false
         elapsedNanos = 0L
         linearProgress = 1f
     }
@@ -98,11 +117,12 @@ class EntryTransitionController {
     }
 
     companion object {
-        const val DEFAULT_DURATION_MS = 420
+        const val DEFAULT_DURATION_MS = 390
         const val MIN_DURATION_MS = 150
         const val MAX_DURATION_MS = 1200
-        const val MIN_START_SCALE = 0.65f
-        const val MAX_START_SCALE = 0.98f
+        const val MIN_START_SCALE = 1.02f
+        const val MAX_START_SCALE = 1.50f
+        private const val INTERRUPT_BLEND_NANOS = 140_000_000L
         private const val ZOOM_EASE_OUT_POWER = 3.5f
         private const val FADE_EASE_OUT_POWER = 2.4f
         private const val FADE_FINISH_FRACTION = 0.78f

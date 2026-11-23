@@ -183,4 +183,41 @@ class EdgeOverScrollUnitTest {
             0.5f
         )
     }
+
+    @Test
+    fun ignoresBottomSystemGestureZoneAndDiagonalRecentSwipes() {
+        val calib = CalibrationConfig(pageCount = 3, customOffsets = listOf(0f, 0.5f, 1f))
+        val controller = EdgeOverScrollController()
+        val width = 1000
+        val height = 2400
+        val slop = 24
+
+        // Bottom 14% gesture handle zone (y > 2064) must never engage edge tracking
+        controller.onTouchSignal(
+            MotionEvent.ACTION_DOWN, 0, 500f, 2250f, width, slop, 0f, 0f, calib, 0L, surfaceHeight = height
+        )
+        assertFalse(controller.isTouchActive)
+        controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 720f, 2050f, width, slop, 0f, 0f, calib, 40L, surfaceHeight = height
+        )
+        assertFalse(controller.isOverScrollLocked)
+
+        // Top 5% status bar / notification shade zone (y < 120) must never engage
+        controller.onTouchSignal(
+            MotionEvent.ACTION_DOWN, 0, 500f, 60f, width, slop, 0f, 0f, calib, 100L, surfaceHeight = height
+        )
+        assertFalse(controller.isTouchActive)
+
+        // Mid-screen touch with strong vertical/diagonal swipe-up (outward dx=120, dy=-130) must reject, not lock
+        controller.onTouchSignal(
+            MotionEvent.ACTION_DOWN, 0, 400f, 1200f, width, slop, 0f, 0f, calib, 200L, surfaceHeight = height
+        )
+        assertTrue(controller.isTouchActive)
+        val diagMove = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 520f, 1070f, width, slop, 0f, 0f, calib, 250L, surfaceHeight = height
+        )
+        assertFalse(diagMove.handled)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+    }
 }

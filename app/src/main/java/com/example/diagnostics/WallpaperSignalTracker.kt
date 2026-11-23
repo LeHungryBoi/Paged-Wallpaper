@@ -31,6 +31,7 @@ class WallpaperSignalTracker(
         private set
 
     private var lastLoggedZoom: Float? = null
+    private var lastDisplayZoom: Float? = null
     private var zoomSessionActive: Boolean = false
     private var lastLoggedOffsetKind: String? = null
 
@@ -96,16 +97,23 @@ class WallpaperSignalTracker(
             pushEvent("ZOOM", "$fromStr$toStr ($stateLabel)", timestampMillis)
             lastLoggedZoom = zoom
         }
-        return shouldLog
+        val displayChanged = lastDisplayZoom == null ||
+            abs(zoom - (lastDisplayZoom ?: 0f)) >= ZOOM_DISPLAY_EPSILON ||
+            shouldLog
+        if (displayChanged) {
+            lastDisplayZoom = zoom
+        }
+        return displayChanged
     }
 
     fun recordCommand(
         action: String?,
+        extrasSummary: String? = null,
         timestampMillis: Long = System.currentTimeMillis()
     ) {
         val safeAction = action ?: "null"
-        lastCommand = safeAction
-        pushEvent("CMD", safeAction, timestampMillis)
+        lastCommand = if (extrasSummary.isNullOrBlank()) safeAction else "$safeAction [$extrasSummary]"
+        pushEvent("CMD", lastCommand!!, timestampMillis)
     }
 
     fun recordSystemDialogClose(
@@ -113,6 +121,14 @@ class WallpaperSignalTracker(
         timestampMillis: Long = System.currentTimeMillis()
     ) {
         pushEvent("SYS_DLG", "reason=${reason ?: "none"}", timestampMillis)
+    }
+
+    fun recordTouchEvent(
+        tag: String,
+        detail: String,
+        timestampMillis: Long = System.currentTimeMillis()
+    ) {
+        pushEvent(tag, detail, timestampMillis)
     }
 
     fun recordOffsetSignal(
@@ -161,7 +177,7 @@ class WallpaperSignalTracker(
         lines += "VIS:$visText  KG:$kgText  SCR:$scrText"
         lines += "ZOOM:$zoomText  ENTRY:$entryText"
         lastCommand?.let { cmd ->
-            lines += "CMD:${cmd.take(28)}"
+            lines += "CMD:$cmd"
         }
         if (events.isEmpty()) {
             lines += "Waiting for signals..."
@@ -169,7 +185,7 @@ class WallpaperSignalTracker(
             val timeFormat = SimpleDateFormat("HH:mm:ss.S", Locale.US)
             events.forEach { event ->
                 val time = timeFormat.format(Date(event.timestampMillis))
-                lines += "$time ${event.tag} ${event.detail}".take(42)
+                lines += "$time ${event.tag} ${event.detail}".take(56)
             }
         }
         return lines
@@ -183,8 +199,9 @@ class WallpaperSignalTracker(
     }
 
     companion object {
-        private const val DEFAULT_MAX_HISTORY = 6
+        private const val DEFAULT_MAX_HISTORY = 8
         private const val ZOOM_ACTIVE_EPSILON = 0.01f
-        private const val ZOOM_SIGNIFICANT_DELTA = 0.35f
+        private const val ZOOM_DISPLAY_EPSILON = 0.05f
+        private const val ZOOM_SIGNIFICANT_DELTA = 0.25f
     }
 }

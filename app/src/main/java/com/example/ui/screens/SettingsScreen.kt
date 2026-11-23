@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,24 +26,33 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.diagnostics.WallpaperDiagnosticsResult
 import com.example.diagnostics.WallpaperDiagnosticsState
+import com.example.diagnostics.WallpaperSignalOverlayWindow
 import com.example.ui.WallpaperViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -481,32 +495,83 @@ private fun SignalDebugOverlaySetting(
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var canDrawOverlays by remember {
+        mutableStateOf(WallpaperSignalOverlayWindow.canDrawOverlays(context))
+    }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                canDrawOverlays = WallpaperSignalOverlayWindow.canDrawOverlays(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth().testTag("signal_debug_overlay_card"),
         shape = RoundedCornerShape(20.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Show live signal debug overlay",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Display live visibility, keyguard/unlock, screen power, launcher zoom (onZoomChanged), and system command events on the wallpaper.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Show live signal debug overlay",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Displays live visibility, keyguard/unlock, screen power, launcher zoom, and system commands. Grant overlay permission to float above Recents and other apps.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                    modifier = Modifier.testTag("toggle_signal_debug_overlay")
                 )
             }
-            Switch(
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                modifier = Modifier.testTag("toggle_signal_debug_overlay")
-            )
+
+            AnimatedVisibility(visible = enabled) {
+                if (canDrawOverlays) {
+                    Text(
+                        text = "Floating overlay active: visible over Recents and other apps.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Overlay permission not granted — currently shown on desktop wallpaper only.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("grant_signal_overlay_permission")
+                        ) {
+                            Text("Allow display over other apps")
+                        }
+                    }
+                }
+            }
         }
     }
 }
