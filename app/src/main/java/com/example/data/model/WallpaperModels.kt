@@ -608,11 +608,19 @@ data class WallpaperAppState(
     val calibration: CalibrationConfig,
     val transitionType: String = "scroll",
     val resumeFadeEnabled: Boolean = false,
+    val entryZoomEnabled: Boolean = true,
+    val entryZoomStartScale: Float = DEFAULT_ENTRY_ZOOM_START_SCALE,
+    val entryBlackFadeEnabled: Boolean = true,
+    val entryBlackFadeMaxAlpha: Float = DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA,
+    val entryBlurEnabled: Boolean = false,
+    val entryBlurStrength: Float = DEFAULT_ENTRY_BLUR_STRENGTH,
+    val entryDurationMs: Int = DEFAULT_ENTRY_DURATION_MS,
     val darken: DarkenConfig = DarkenConfig(),
     val backupFolderPath: String? = null,
     val autoBackupEnabled: Boolean = false,
     val showOffsetDebugOverlay: Boolean = false,
     val showFrameDebugIndicator: Boolean = false,
+    val showSignalDebugOverlay: Boolean = false,
     val motionBlurEnabled: Boolean = true,
     val motionBlurStrengthPercent: Int = DEFAULT_MOTION_BLUR_STRENGTH_PERCENT,
     val offsetEasingEnabled: Boolean = false,
@@ -637,11 +645,19 @@ data class WallpaperAppState(
         put("calibration", calibration.toJson())
         put("transitionType", transitionType)
         put("resumeFadeEnabled", resumeFadeEnabled)
+        put("entryZoomEnabled", entryZoomEnabled)
+        put("entryZoomStartScale", entryZoomStartScale.toDouble())
+        put("entryBlackFadeEnabled", entryBlackFadeEnabled)
+        put("entryBlackFadeMaxAlpha", entryBlackFadeMaxAlpha.toDouble())
+        put("entryBlurEnabled", entryBlurEnabled)
+        put("entryBlurStrength", entryBlurStrength.toDouble())
+        put("entryDurationMs", entryDurationMs)
         put("darken", darken.toJson())
         put("backupFolderPath", backupFolderPath ?: "")
         put("autoBackupEnabled", autoBackupEnabled)
         put("showOffsetDebugOverlay", showOffsetDebugOverlay)
         put("showFrameDebugIndicator", showFrameDebugIndicator)
+        put("showSignalDebugOverlay", showSignalDebugOverlay)
         put("motionBlurEnabled", motionBlurEnabled)
         put("motionBlurStrengthPercent", motionBlurStrengthPercent)
         put("offsetEasingEnabled", offsetEasingEnabled)
@@ -660,6 +676,14 @@ data class WallpaperAppState(
         const val DEFAULT_ANIMATION_FRAME_RATE = 60
         const val DEFAULT_MOTION_BLUR_STRENGTH_PERCENT = 100
         const val MAX_MOTION_BLUR_STRENGTH_PERCENT = 200
+        const val DEFAULT_ENTRY_ZOOM_START_SCALE = 0.86f
+        const val MIN_ENTRY_ZOOM_START_SCALE = 0.65f
+        const val MAX_ENTRY_ZOOM_START_SCALE = 0.98f
+        const val DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA = 0.75f
+        const val DEFAULT_ENTRY_BLUR_STRENGTH = 0.65f
+        const val DEFAULT_ENTRY_DURATION_MS = 420
+        const val MIN_ENTRY_DURATION_MS = 150
+        const val MAX_ENTRY_DURATION_MS = 1200
         val supportedAnimationFrameRates = listOf(60, 90, 120, 144, 165)
 
         fun fromJson(json: JSONObject): WallpaperAppState {
@@ -713,12 +737,32 @@ data class WallpaperAppState(
                 calibration = calib,
                 transitionType = transitionType,
                 resumeFadeEnabled = json.optBoolean("resumeFadeEnabled", false),
+                entryZoomEnabled = json.optBoolean("entryZoomEnabled", true),
+                entryZoomStartScale = json.optDouble(
+                    "entryZoomStartScale",
+                    DEFAULT_ENTRY_ZOOM_START_SCALE.toDouble()
+                ).toFloat().coerceIn(MIN_ENTRY_ZOOM_START_SCALE, MAX_ENTRY_ZOOM_START_SCALE),
+                entryBlackFadeEnabled = json.optBoolean("entryBlackFadeEnabled", true),
+                entryBlackFadeMaxAlpha = json.optDouble(
+                    "entryBlackFadeMaxAlpha",
+                    DEFAULT_ENTRY_BLACK_FADE_MAX_ALPHA.toDouble()
+                ).toFloat().coerceIn(0.1f, 1f),
+                entryBlurEnabled = json.optBoolean("entryBlurEnabled", false),
+                entryBlurStrength = json.optDouble(
+                    "entryBlurStrength",
+                    DEFAULT_ENTRY_BLUR_STRENGTH.toDouble()
+                ).toFloat().coerceIn(0.1f, 1f),
+                entryDurationMs = json.optInt(
+                    "entryDurationMs",
+                    DEFAULT_ENTRY_DURATION_MS
+                ).coerceIn(MIN_ENTRY_DURATION_MS, MAX_ENTRY_DURATION_MS),
                 darken = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
                     ?: DarkenConfig(),
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),
                 showFrameDebugIndicator = json.optBoolean("showFrameDebugIndicator", false),
+                showSignalDebugOverlay = json.optBoolean("showSignalDebugOverlay", false),
                 motionBlurEnabled = json.optBoolean("motionBlurEnabled", true),
                 motionBlurStrengthPercent = json.optInt(
                     "motionBlurStrengthPercent",

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -40,6 +41,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -50,6 +53,7 @@ import com.example.data.model.DarkenTrigger
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.WallpaperAppState
 import com.example.ui.WallpaperViewModel
+import kotlin.math.roundToInt
 
 @Composable
 fun EffectsScreen(
@@ -87,44 +91,18 @@ fun EffectsScreen(
             onFrameRateSelected = viewModel::setAnimationFrameRate
         )
 
-        // Section: Resume Animation Stability
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("resume_transition_card"),
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Smooth Resume Fade",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Gently cross-fades the wallpaper (250ms) when exiting full-screen apps like YouTube to eliminate abrupt visual pops.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Switch(
-                        checked = appState.resumeFadeEnabled,
-                        onCheckedChange = { viewModel.toggleResumeFade(it) },
-                        modifier = Modifier.testTag("toggle_resume_fade")
-                    )
-                }
-            }
-
-        }
+        // Section: Display Entry Animation
+        DisplayEntryAnimationCard(
+            appState = appState,
+            onEnabledChange = viewModel::toggleResumeFade,
+            onDurationChange = viewModel::setEntryDurationMs,
+            onZoomEnabledChange = viewModel::toggleEntryZoom,
+            onZoomStartScaleChange = viewModel::setEntryZoomStartScale,
+            onBlackFadeEnabledChange = viewModel::toggleEntryBlackFade,
+            onBlackFadeMaxAlphaChange = viewModel::setEntryBlackFadeMaxAlpha,
+            onBlurEnabledChange = viewModel::toggleEntryBlur,
+            onBlurStrengthChange = viewModel::setEntryBlurStrength
+        )
 
         // Section: Darken & Android Extra Dim
         Card(
@@ -338,6 +316,222 @@ fun EffectsScreen(
                 }
             }
 
+        }
+    }
+}
+
+@Composable
+private fun DisplayEntryAnimationCard(
+    appState: WallpaperAppState,
+    onEnabledChange: (Boolean) -> Unit,
+    onDurationChange: (Int) -> Unit,
+    onZoomEnabledChange: (Boolean) -> Unit,
+    onZoomStartScaleChange: (Float) -> Unit,
+    onBlackFadeEnabledChange: (Boolean) -> Unit,
+    onBlackFadeMaxAlphaChange: (Float) -> Unit,
+    onBlurEnabledChange: (Boolean) -> Unit,
+    onBlurStrengthChange: (Float) -> Unit
+) {
+    val durationSlider = remember(appState.entryDurationMs) {
+        mutableFloatStateOf(appState.entryDurationMs.toFloat())
+    }
+    val zoomScaleSlider = remember(appState.entryZoomStartScale) {
+        mutableFloatStateOf(appState.entryZoomStartScale)
+    }
+    val fadeAlphaSlider = remember(appState.entryBlackFadeMaxAlpha) {
+        mutableFloatStateOf(appState.entryBlackFadeMaxAlpha)
+    }
+    val blurStrengthSlider = remember(appState.entryBlurStrength) {
+        mutableFloatStateOf(appState.entryBlurStrength)
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("resume_transition_card"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Display Entry Animation",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Plays on visibility change when returning to the home screen. Side pages stay visible during zoom-in and blend smoothly if you swipe mid-animation.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Switch(
+                    checked = appState.resumeFadeEnabled,
+                    onCheckedChange = onEnabledChange,
+                    modifier = Modifier.testTag("toggle_resume_fade")
+                )
+            }
+
+            AnimatedVisibility(visible = appState.resumeFadeEnabled) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Duration: ${durationSlider.floatValue.roundToInt()} ms",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Slider(
+                            value = durationSlider.floatValue,
+                            onValueChange = { durationSlider.floatValue = it },
+                            onValueChangeFinished = {
+                                onDurationChange(durationSlider.floatValue.roundToInt())
+                            },
+                            valueRange = WallpaperAppState.MIN_ENTRY_DURATION_MS.toFloat()..
+                                WallpaperAppState.MAX_ENTRY_DURATION_MS.toFloat(),
+                            modifier = Modifier.testTag("entry_duration_slider")
+                        )
+                    }
+
+                    EntryElementSection(
+                        title = "Multi-page zoom in",
+                        description = "Starts zoomed out so neighboring pages peek in from the sides, then zooms into the active page.",
+                        checked = appState.entryZoomEnabled,
+                        onCheckedChange = onZoomEnabledChange,
+                        switchTestTag = "toggle_entry_zoom"
+                    ) {
+                        Text(
+                            text = "Starting scale: ${(zoomScaleSlider.floatValue * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Slider(
+                            value = zoomScaleSlider.floatValue,
+                            onValueChange = { zoomScaleSlider.floatValue = it },
+                            onValueChangeFinished = {
+                                onZoomStartScaleChange(zoomScaleSlider.floatValue)
+                            },
+                            valueRange = WallpaperAppState.MIN_ENTRY_ZOOM_START_SCALE..
+                                WallpaperAppState.MAX_ENTRY_ZOOM_START_SCALE,
+                            modifier = Modifier.testTag("entry_zoom_scale_slider")
+                        )
+                    }
+
+                    EntryElementSection(
+                        title = "Black fade",
+                        description = "Fades up from darkness as the wallpaper becomes visible.",
+                        checked = appState.entryBlackFadeEnabled,
+                        onCheckedChange = onBlackFadeEnabledChange,
+                        switchTestTag = "toggle_entry_black_fade"
+                    ) {
+                        Text(
+                            text = "Starting darkness: ${(fadeAlphaSlider.floatValue * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Slider(
+                            value = fadeAlphaSlider.floatValue,
+                            onValueChange = { fadeAlphaSlider.floatValue = it },
+                            onValueChangeFinished = {
+                                onBlackFadeMaxAlphaChange(fadeAlphaSlider.floatValue)
+                            },
+                            valueRange = 0.1f..1f,
+                            modifier = Modifier.testTag("entry_black_fade_slider")
+                        )
+                    }
+
+                    EntryElementSection(
+                        title = "Soft blur reveal",
+                        description = "Starts softly out of focus and sharpens as the entry settles.",
+                        checked = appState.entryBlurEnabled,
+                        onCheckedChange = onBlurEnabledChange,
+                        switchTestTag = "toggle_entry_blur"
+                    ) {
+                        Text(
+                            text = "Starting blur mix: ${(blurStrengthSlider.floatValue * 100).roundToInt()}%",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        Slider(
+                            value = blurStrengthSlider.floatValue,
+                            onValueChange = { blurStrengthSlider.floatValue = it },
+                            onValueChangeFinished = {
+                                onBlurStrengthChange(blurStrengthSlider.floatValue)
+                            },
+                            valueRange = 0.1f..1f,
+                            modifier = Modifier.testTag("entry_blur_slider")
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EntryElementSection(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    switchTestTag: String,
+    controls: @Composable () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = checked,
+                    onCheckedChange = onCheckedChange,
+                    modifier = Modifier.testTag(switchTestTag)
+                )
+            }
+            AnimatedVisibility(visible = checked) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    controls()
+                }
+            }
         }
     }
 }

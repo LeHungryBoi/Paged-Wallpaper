@@ -149,6 +149,10 @@ private fun DebugSettings(
             enabled = appState.showFrameDebugIndicator,
             onEnabledChange = viewModel::toggleFrameDebugIndicator
         )
+        SignalDebugOverlaySetting(
+            enabled = appState.showSignalDebugOverlay,
+            onEnabledChange = viewModel::toggleSignalDebugOverlay
+        )
 
         Card(
             modifier = Modifier.fillMaxWidth().testTag("wallpaper_diagnostics_card"),
@@ -467,6 +471,41 @@ private fun FrameSequenceIndicatorSetting(
                 checked = enabled,
                 onCheckedChange = onEnabledChange,
                 modifier = Modifier.testTag("toggle_frame_debug_indicator")
+            )
+        }
+    }
+}
+
+@Composable
+private fun SignalDebugOverlaySetting(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().testTag("signal_debug_overlay_card"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Show live signal debug overlay",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Display live visibility, keyguard/unlock, screen power, launcher zoom (onZoomChanged), and system command events on the wallpaper.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChange,
+                modifier = Modifier.testTag("toggle_signal_debug_overlay")
             )
         }
     }

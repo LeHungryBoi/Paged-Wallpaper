@@ -38,16 +38,20 @@ data class GpuFrameRequest(
     val pageB: Int,
     val progress: Float,
     val pagePosition: Float,
+    val continuousPagePosition: Float,
     val frameTimeNanos: Long,
     val fromOffsetUpdate: Boolean,
     val isVisible: Boolean,
     val swipeForward: Boolean,
-    val resumeFadeProgress: Float,
+    val entryScale: Float = 1f,
+    val entryBlackFadeAlpha: Float = 0f,
+    val entryBlurMix: Float = 0f,
     val motionBlurRadius: Int,
     val motionBlurDirection: Int,
     val dimAmount: Float,
     val receivedXOffset: Float?,
     val receivedYOffset: Float?,
+    val signalOverlayLines: List<String> = emptyList(),
     val density: Float,
     val frameDebugColor: Int,
     val edgeOverScrollFraction: Float = 0f
@@ -117,6 +121,11 @@ class GpuWallpaperRenderer(
     private var debugCardTexture = 0
     private var debugCircleTexture = 0
     private var debugTextureDensity = 0f
+    private var signalCardTexture = 0
+    private var signalCardLines: List<String> = emptyList()
+    private var signalCardDensity = 0f
+    private var signalCardWidthPx = 0
+    private var signalCardHeightPx = 0
     private var maxTextureSize = 0
     private var motionBlurTexture = 0
     private var motionBlurFramebuffer = 0
@@ -126,6 +135,8 @@ class GpuWallpaperRenderer(
     private val pageTextures = mutableMapOf<AssetSlot, PageTexture>()
     private val missingAssets = mutableMapOf<AssetSlot, MissingAsset>()
 
+    private val baseProjectionMatrix = FloatArray(16)
+    private val sceneScaleMatrix = FloatArray(16)
     private val projectionMatrix = FloatArray(16)
     private val modelMatrix = FloatArray(16)
     private val mvpMatrix = FloatArray(16)
@@ -287,7 +298,7 @@ class GpuWallpaperRenderer(
         }
         if (eglSurface == null) throw IllegalStateException("EGL surface was not created")
         GlMatrix.orthoM(
-            projectionMatrix,
+            baseProjectionMatrix,
             0,
             0f,
             width.toFloat(),
@@ -296,6 +307,7 @@ class GpuWallpaperRenderer(
             -1000f,
             1000f
         )
+        System.arraycopy(baseProjectionMatrix, 0, projectionMatrix, 0, 16)
         GLES20.glViewport(0, 0, width, height)
     }
 
@@ -316,18 +328,25 @@ class GpuWallpaperRenderer(
             ensureMotionBlurTarget(frame.width, frame.height)
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, motionBlurFramebuffer)
             GLES20.glViewport(0, 0, motionBlurWidth, motionBlurHeight)
-            renderWallpaper(frame, includeDebugIndicators = false)
+            renderWallpaper(
+                frame = frame,
+                targetWidth = motionBlurWidth,
+                targetHeight = motionBlurHeight
+            )
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, frame.width, frame.height)
             drawMotionBlur(frame)
             GLES20.glEnable(GLES20.GL_BLEND)
-            drawDebugIndicators(frame)
         } else {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, frame.width, frame.height)
-            renderWallpaper(frame, includeDebugIndicators = true)
+            renderWallpaper(
+                frame = frame,
+                targetWidth = frame.width,
+                targetHeight = frame.height
+            )
         }
-        if (frame.resumeFadeProgress < 1f) {
+        if (frame.entryBlackFadeAlpha > 0.004f) {
             drawRect(
                 0f,
                 0f,
@@ -336,13 +355,24 @@ class GpuWallpaperRenderer(
                 0f,
                 0f,
                 0f,
-                1f - frame.resumeFadeProgress.coerceIn(0f, 1f)
+                frame.entryBlackFadeAlpha.coerceIn(0f, 1f)
             )
         }
+        drawDebugIndicators(frame)
     }
 
-    private fun renderWallpaper(frame: GpuFrameRequest, includeDebugIndicators: Boolean) {
-        GLES20.glClearColor(18f / 255f, 22f / 255f, 34f / 255f, 1f)
+    private fun renderWallpaper(
+        frame: GpuFrameRequest,
+        targetWidth: Int,
+        targetHeight: Int
+    ) {
+        val entryScale = frame.entryScale.coerceIn(0.5f, 1f)
+        val isZoomedOutEntry = entryScale < 0.9995f
+        if (isZoomedOutEntry) {
+            GLES20.glClearColor(0f, 0f, 0f, 1f)
+        } else {
+            GLES20.glClearColor(18f / 255f, 22f / 255f, 34f / 255f, 1f)
+        }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         val setting = frame.state.transitions.getOrNull(frame.pageA)
@@ -350,106 +380,174 @@ class GpuWallpaperRenderer(
         val transition = TransitionRegistry.get(transitionId)
         val isEdgeOverScroll = frame.pageA == frame.pageB &&
             kotlin.math.abs(frame.edgeOverScrollFraction) > EdgeOverScrollController.FRACTION_EPSILON
+        val pageCount = frame.state.calibration.pageCount.coerceAtLeast(1)
 
-        if (isEdgeOverScroll) {
-            val edgePage = getPageTexture(frame, frame.pageA, usesParallax = true)
-            drawEdgeOverScroll(frame, edgePage)
+        if (isZoomedOutEntry) {
+            GlMatrix.setIdentityM(sceneScaleMatrix, 0)
+            GlMatrix.translateM(sceneScaleMatrix, 0, frame.width / 2f, frame.height / 2f, 0f)
+            GlMatrix.scaleM(sceneScaleMatrix, 0, entryScale, entryScale, 1f)
+            GlMatrix.translateM(sceneScaleMatrix, 0, -frame.width / 2f, -frame.height / 2f, 0f)
+            GlMatrix.multiplyMM(projectionMatrix, 0, baseProjectionMatrix, 0, sceneScaleMatrix, 0)
         } else {
-            val hasLeftEdgeResidual = frame.pageA == 0 &&
-                frame.edgeOverScrollFraction < -EdgeOverScrollController.FRACTION_EPSILON
-            val lastPageIndex = (frame.state.calibration.pageCount - 1).coerceAtLeast(0)
-            val hasRightEdgeResidual = frame.pageB == lastPageIndex &&
-                frame.edgeOverScrollFraction > EdgeOverScrollController.FRACTION_EPSILON
-            val pageA = getPageTexture(
-                frame,
-                frame.pageA,
-                transition.supportsParallax || hasLeftEdgeResidual
-            )
-            val pageB = if (frame.pageA == frame.pageB) {
-                null
-            } else {
-                getPageTexture(
-                    frame,
-                    frame.pageB,
-                    transition.supportsParallax || hasRightEdgeResidual
-                )
-            }
-            val pageAEdgeResidualPx = if (hasLeftEdgeResidual && pageA != null && pageA.leftTravelPx > 0) {
-                -EdgeOverScrollScaling.computeTravelPx(
-                    absIntensity = -frame.edgeOverScrollFraction,
-                    availableTravelPx = pageA.leftTravelPx,
-                    screenWidth = frame.width
-                )
-            } else {
-                0f
-            }
-            val pageBEdgeResidualPx = if (hasRightEdgeResidual && pageB != null && pageB.rightTravelPx > 0) {
-                EdgeOverScrollScaling.computeTravelPx(
-                    absIntensity = frame.edgeOverScrollFraction,
-                    availableTravelPx = pageB.rightTravelPx,
-                    screenWidth = frame.width
-                )
-            } else {
-                0f
-            }
-            val parallaxMotion = setting?.parallaxMotion(frame.swipeForward)
-            val slowImageMotionEnabled = parallaxMotion?.slowImageMotionEnabled ?: false
-            val parallaxOutgoingRate = parallaxMotion?.outgoingMotionRate?.coerceIn(0f, 1f) ?: 1f
-            val parallaxIncomingRate = parallaxMotion?.incomingMotionRate?.coerceIn(0f, 1f) ?: 1f
-            val revealRates = setting?.revealMotionRates(frame.swipeForward)
-            val revealOutgoingRate = revealRates?.outgoingRate ?: 0f
-            val revealIncomingRate = revealRates?.incomingRate ?: 0f
+            System.arraycopy(baseProjectionMatrix, 0, projectionMatrix, 0, 16)
+        }
 
-            when (transition.id) {
-                "parallax", "parallax_classic" -> drawParallax(
-                    frame,
-                    pageA,
-                    pageB,
-                    transition.id == "parallax_classic",
-                    slowImageMotionEnabled,
-                    parallaxOutgoingRate,
-                    parallaxIncomingRate,
-                    pageAEdgeResidualPx,
-                    pageBEdgeResidualPx
-                )
-                "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
-                    frame,
-                    pageA,
-                    pageB,
-                    transition.id == "swipe_reveal",
-                    revealOutgoingRate,
-                    revealIncomingRate,
-                    pageAEdgeResidualPx,
-                    pageBEdgeResidualPx
-                )
-                "fade" -> drawFade(frame, pageA, pageB)
-                "soft_blur" -> drawSoftBlur(frame, pageA, pageB)
-                "depth" -> drawDepth(frame, pageA, pageB)
-                "slide_over" -> drawSlideOver(
-                    frame,
-                    pageA,
-                    pageB,
-                    pageAEdgeResidualPx,
-                    pageBEdgeResidualPx
-                )
-                "cube" -> drawCube(frame, pageA, pageB)
-                else -> drawScroll(frame, pageA, pageB, pageAEdgeResidualPx, pageBEdgeResidualPx)
+        try {
+            val isFullStripScroll = !isEdgeOverScroll &&
+                (transition.id == "scroll" || transition.id == "parallax" || transition.id == "parallax_classic")
+
+            if (isZoomedOutEntry && pageCount > 1) {
+                val extraMargin = frame.width * (1f / entryScale - 1f) * 0.5f
+                if (isFullStripScroll) {
+                    for (k in 0 until pageCount) {
+                        val skipActivePair = if (frame.pageA == frame.pageB) {
+                            k == frame.pageA
+                        } else {
+                            k == frame.pageA || k == frame.pageB
+                        }
+                        if (!skipActivePair) {
+                            drawStripNeighborPage(frame, k, extraMargin, transition.supportsParallax)
+                        }
+                    }
+                } else {
+                    for (k in 0 until pageCount) {
+                        if (!isEdgeOverScroll || k != frame.pageA) {
+                            drawStripNeighborPage(frame, k, extraMargin, transition.supportsParallax)
+                        }
+                    }
+                }
             }
+
+            val useCenterScissor = isZoomedOutEntry && !isFullStripScroll && !isEdgeOverScroll
+            if (useCenterScissor) {
+                val scissorX = ((1f - entryScale) * 0.5f * targetWidth).toInt().coerceIn(0, targetWidth)
+                val scissorY = ((1f - entryScale) * 0.5f * targetHeight).toInt().coerceIn(0, targetHeight)
+                val scissorW = (entryScale * targetWidth).toInt().coerceAtLeast(1)
+                val scissorH = (entryScale * targetHeight).toInt().coerceAtLeast(1)
+                GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
+                GLES20.glScissor(scissorX, scissorY, scissorW, scissorH)
+            }
+
+            if (isEdgeOverScroll) {
+                val edgePage = getPageTexture(frame, frame.pageA, usesParallax = true)
+                drawEdgeOverScroll(frame, edgePage)
+            } else {
+                val hasLeftEdgeResidual = frame.pageA == 0 &&
+                    frame.edgeOverScrollFraction < -EdgeOverScrollController.FRACTION_EPSILON
+                val lastPageIndex = (pageCount - 1).coerceAtLeast(0)
+                val hasRightEdgeResidual = frame.pageB == lastPageIndex &&
+                    frame.edgeOverScrollFraction > EdgeOverScrollController.FRACTION_EPSILON
+                val pageA = getPageTexture(
+                    frame,
+                    frame.pageA,
+                    transition.supportsParallax || hasLeftEdgeResidual
+                )
+                val pageB = if (frame.pageA == frame.pageB) {
+                    null
+                } else {
+                    getPageTexture(
+                        frame,
+                        frame.pageB,
+                        transition.supportsParallax || hasRightEdgeResidual
+                    )
+                }
+                val pageAEdgeResidualPx = if (hasLeftEdgeResidual && pageA != null && pageA.leftTravelPx > 0) {
+                    -EdgeOverScrollScaling.computeTravelPx(
+                        absIntensity = -frame.edgeOverScrollFraction,
+                        availableTravelPx = pageA.leftTravelPx,
+                        screenWidth = frame.width
+                    )
+                } else {
+                    0f
+                }
+                val pageBEdgeResidualPx = if (hasRightEdgeResidual && pageB != null && pageB.rightTravelPx > 0) {
+                    EdgeOverScrollScaling.computeTravelPx(
+                        absIntensity = frame.edgeOverScrollFraction,
+                        availableTravelPx = pageB.rightTravelPx,
+                        screenWidth = frame.width
+                    )
+                } else {
+                    0f
+                }
+                val parallaxMotion = setting?.parallaxMotion(frame.swipeForward)
+                val slowImageMotionEnabled = parallaxMotion?.slowImageMotionEnabled ?: false
+                val parallaxOutgoingRate = parallaxMotion?.outgoingMotionRate?.coerceIn(0f, 1f) ?: 1f
+                val parallaxIncomingRate = parallaxMotion?.incomingMotionRate?.coerceIn(0f, 1f) ?: 1f
+                val revealRates = setting?.revealMotionRates(frame.swipeForward)
+                val revealOutgoingRate = revealRates?.outgoingRate ?: 0f
+                val revealIncomingRate = revealRates?.incomingRate ?: 0f
+
+                when (transition.id) {
+                    "parallax", "parallax_classic" -> drawParallax(
+                        frame,
+                        pageA,
+                        pageB,
+                        transition.id == "parallax_classic",
+                        slowImageMotionEnabled,
+                        parallaxOutgoingRate,
+                        parallaxIncomingRate,
+                        pageAEdgeResidualPx,
+                        pageBEdgeResidualPx
+                    )
+                    "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
+                        frame,
+                        pageA,
+                        pageB,
+                        transition.id == "swipe_reveal",
+                        revealOutgoingRate,
+                        revealIncomingRate,
+                        pageAEdgeResidualPx,
+                        pageBEdgeResidualPx
+                    )
+                    "fade" -> drawFade(frame, pageA, pageB)
+                    "soft_blur" -> drawSoftBlur(frame, pageA, pageB)
+                    "depth" -> drawDepth(frame, pageA, pageB)
+                    "slide_over" -> drawSlideOver(
+                        frame,
+                        pageA,
+                        pageB,
+                        pageAEdgeResidualPx,
+                        pageBEdgeResidualPx
+                    )
+                    "cube" -> drawCube(frame, pageA, pageB)
+                    else -> drawScroll(frame, pageA, pageB, pageAEdgeResidualPx, pageBEdgeResidualPx)
+                }
+            }
+        } finally {
+            GLES20.glDisable(GLES20.GL_SCISSOR_TEST)
+            System.arraycopy(baseProjectionMatrix, 0, projectionMatrix, 0, 16)
         }
 
         if (frame.dimAmount > 0.01f) {
+            val stripTop = if (isZoomedOutEntry) (1f - entryScale) * frame.height * 0.5f else 0f
+            val stripHeight = if (isZoomedOutEntry) frame.height * entryScale else frame.height.toFloat()
             drawRect(
                 0f,
-                0f,
+                stripTop,
                 frame.width.toFloat(),
-                frame.height.toFloat(),
+                stripHeight,
                 0f,
                 0f,
                 0f,
                 frame.dimAmount.coerceIn(0f, 1f)
             )
         }
-        if (includeDebugIndicators) drawDebugIndicators(frame)
+    }
+
+    private fun drawStripNeighborPage(
+        frame: GpuFrameRequest,
+        pageIndex: Int,
+        extraMargin: Float,
+        usesParallax: Boolean
+    ) {
+        val slotLeft = (pageIndex - frame.continuousPagePosition) * frame.width
+        if (slotLeft + frame.width <= -extraMargin || slotLeft >= frame.width + extraMargin) return
+        val page = getPageTexture(frame, pageIndex, usesParallax) ?: return
+        if (usesParallax && page.originalWidth > frame.width) {
+            drawPage(page, slotLeft.toInt(), page.leftTravelPx.toFloat(), frame, 1f)
+        } else {
+            drawFullPage(page, slotLeft.toInt(), frame, 1f)
+        }
     }
 
     private fun drawEdgeOverScroll(frame: GpuFrameRequest, page: PageTexture?) {
@@ -574,10 +672,10 @@ class GpuWallpaperRenderer(
     private fun drawDepth(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
         val p = frame.progress.coerceIn(0f, 1f)
         if (pageA != null && p < 1f) {
-            drawTexture(pageA.textureId, frame, 1f - 0.22f * p, 1f - p)
+            drawTexture(pageA.textureId, frame, 1f - 0.22f * p, 1f - p, pageA.blurredTextureId)
         }
         if (pageB != null && p > 0f) {
-            drawTexture(pageB.textureId, frame, 1.15f - 0.15f * p, p)
+            drawTexture(pageB.textureId, frame, 1.15f - 0.15f * p, p, pageB.blurredTextureId)
         }
     }
 
@@ -634,7 +732,7 @@ class GpuWallpaperRenderer(
     private fun drawCube(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
         val p = frame.progress.coerceIn(0f, 1f)
         if (pageA != null && p < 1f) {
-            drawCubeFace(pageA.textureId, frame, -90f * p, frame.width.toFloat())
+            drawCubeFace(pageA.textureId, frame, -90f * p, frame.width.toFloat(), pageA.blurredTextureId)
             drawRect(
                 0f,
                 0f,
@@ -647,7 +745,7 @@ class GpuWallpaperRenderer(
             )
         }
         if (pageB != null && p > 0f) {
-            drawCubeFace(pageB.textureId, frame, 90f * (1f - p), 0f)
+            drawCubeFace(pageB.textureId, frame, 90f * (1f - p), 0f, pageB.blurredTextureId)
             drawRect(
                 0f,
                 0f,
@@ -661,7 +759,13 @@ class GpuWallpaperRenderer(
         }
     }
 
-    private fun drawCubeFace(textureId: Int, frame: GpuFrameRequest, rotation: Float, pivotX: Float) {
+    private fun drawCubeFace(
+        textureId: Int,
+        frame: GpuFrameRequest,
+        rotation: Float,
+        pivotX: Float,
+        blurredTextureId: Int = 0
+    ) {
         cubeCamera.save()
         cubeCamera.rotateY(rotation)
         graphicsMatrix.reset()
@@ -681,6 +785,10 @@ class GpuWallpaperRenderer(
         )
         GlMatrix.multiplyMM(modelMatrix, 0, cubeMatrix, 0, cubeScaleMatrix, 0)
         drawTexturedQuad(textureId, 0f, 0f, 1f, 1f, 1f)
+        if (frame.entryBlurMix > 0.004f && blurredTextureId != 0) {
+            val mix = frame.entryBlurMix.coerceIn(0f, 1f)
+            drawTexturedQuad(blurredTextureId, 0f, 0f, 1f, 1f, mix, mix, mix, mix)
+        }
     }
 
     private fun graphicsMatrixToGl(values: FloatArray, output: FloatArray) {
@@ -836,6 +944,22 @@ class GpuWallpaperRenderer(
             uvOffsetX = uvOffsetX,
             uvScaleX = uvScaleX
         )
+        if (frame.entryBlurMix > 0.004f && page.blurredTextureId != 0) {
+            val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
+            drawTextureModel(
+                textureId = page.blurredTextureId,
+                left = left.toFloat(),
+                top = 0f,
+                width = frame.width.toFloat(),
+                height = frame.height.toFloat(),
+                alpha = mix,
+                uvOffsetX = uvOffsetX,
+                uvScaleX = uvScaleX,
+                red = mix,
+                green = mix,
+                blue = mix
+            )
+        }
     }
 
     private fun drawFullPage(
@@ -852,9 +976,29 @@ class GpuWallpaperRenderer(
             height = frame.height.toFloat(),
             alpha = alpha
         )
+        if (frame.entryBlurMix > 0.004f && page.blurredTextureId != 0) {
+            val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
+            drawTextureModel(
+                textureId = page.blurredTextureId,
+                left = left.toFloat(),
+                top = 0f,
+                width = frame.width.toFloat(),
+                height = frame.height.toFloat(),
+                alpha = mix,
+                red = mix,
+                green = mix,
+                blue = mix
+            )
+        }
     }
 
-    private fun drawTexture(textureId: Int, frame: GpuFrameRequest, scale: Float, alpha: Float) {
+    private fun drawTexture(
+        textureId: Int,
+        frame: GpuFrameRequest,
+        scale: Float,
+        alpha: Float,
+        blurredTextureId: Int = 0
+    ) {
         val width = frame.width * scale
         val height = frame.height * scale
         drawTextureModel(
@@ -865,6 +1009,20 @@ class GpuWallpaperRenderer(
             height,
             alpha
         )
+        if (frame.entryBlurMix > 0.004f && blurredTextureId != 0) {
+            val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
+            drawTextureModel(
+                blurredTextureId,
+                (frame.width - width) / 2f,
+                (frame.height - height) / 2f,
+                width,
+                height,
+                mix,
+                red = mix,
+                green = mix,
+                blue = mix
+            )
+        }
     }
 
     private fun drawTextureModel(
@@ -875,12 +1033,15 @@ class GpuWallpaperRenderer(
         height: Float,
         alpha: Float,
         uvOffsetX: Float = 0f,
-        uvScaleX: Float = 1f
+        uvScaleX: Float = 1f,
+        red: Float = 1f,
+        green: Float = 1f,
+        blue: Float = 1f
     ) {
         GlMatrix.setIdentityM(modelMatrix, 0)
         GlMatrix.translateM(modelMatrix, 0, left, top, 0f)
         GlMatrix.scaleM(modelMatrix, 0, width, height, 1f)
-        drawTexturedQuad(textureId, uvOffsetX, 0f, uvScaleX, 1f, alpha)
+        drawTexturedQuad(textureId, uvOffsetX, 0f, uvScaleX, 1f, alpha, red, green, blue)
     }
 
     private fun drawTexturedQuad(
@@ -1026,10 +1187,14 @@ class GpuWallpaperRenderer(
     private fun drawDebugIndicators(frame: GpuFrameRequest) {
         val showsOffsetOverlay = frame.state.showOffsetDebugOverlay
         val showsFrameIndicator = frame.state.showFrameDebugIndicator && frame.isVisible
-        if (!showsOffsetOverlay && !showsFrameIndicator) return
-        ensureDebugTextures(frame.density)
+        val showsSignalOverlay = frame.state.showSignalDebugOverlay && frame.signalOverlayLines.isNotEmpty()
+        if (!showsOffsetOverlay && !showsFrameIndicator && !showsSignalOverlay) return
+        if (showsOffsetOverlay || showsFrameIndicator) {
+            ensureDebugTextures(frame.density)
+        }
         if (showsOffsetOverlay) drawOffsetDebugOverlay(frame)
-        if (frame.state.showFrameDebugIndicator && frame.isVisible) {
+        if (showsSignalOverlay) drawSignalDebugOverlay(frame)
+        if (showsFrameIndicator) {
             val density = frame.density
             val size = 28f * density
             val margin = 20f * density
@@ -1060,6 +1225,89 @@ class GpuWallpaperRenderer(
                 1f
             )
         }
+    }
+
+    private fun drawSignalDebugOverlay(frame: GpuFrameRequest) {
+        val lines = frame.signalOverlayLines
+        if (lines.isEmpty()) return
+        val density = frame.density
+        if (signalCardTexture == 0 || signalCardLines != lines || signalCardDensity != density) {
+            if (signalCardTexture != 0) {
+                GLES20.glDeleteTextures(1, intArrayOf(signalCardTexture), 0)
+                signalCardTexture = 0
+            }
+            signalCardLines = lines
+            signalCardDensity = density
+
+            val cardWidth = minOf(320f * density, (frame.width - 24f * density).coerceAtLeast(160f))
+            val textSizePx = 11f * density
+            val lineHeightPx = 16f * density
+            val headerHeightPx = 22f * density
+            val padPx = 12f * density
+            val cardHeight = padPx * 2f + headerHeightPx + lines.size * lineHeightPx
+            val bmpW = ceil(cardWidth).toInt().coerceAtLeast(1)
+            val bmpH = ceil(cardHeight).toInt().coerceAtLeast(1)
+            signalCardWidthPx = bmpW
+            signalCardHeightPx = bmpH
+
+            val bmp = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(228, 15, 23, 42)
+            }
+            canvas.drawRoundRect(
+                RectF(0f, 0f, bmpW.toFloat(), bmpH.toFloat()),
+                14f * density,
+                14f * density,
+                bgPaint
+            )
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(140, 56, 189, 248)
+                style = Paint.Style.STROKE
+                strokeWidth = 1.5f * density
+            }
+            canvas.drawRoundRect(
+                RectF(density, density, bmpW - density, bmpH - density),
+                14f * density,
+                14f * density,
+                borderPaint
+            )
+            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(125, 211, 252)
+                textSize = 12f * density
+                isFakeBoldText = true
+            }
+            canvas.drawText("Live Signal Diagnostics", padPx, padPx + 12f * density, titlePaint)
+
+            val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(226, 232, 240)
+                textSize = textSizePx
+                typeface = android.graphics.Typeface.MONOSPACE
+            }
+            var y = padPx + headerHeightPx + 11f * density
+            lines.forEachIndexed { index, line ->
+                linePaint.color = when {
+                    index < 2 -> Color.rgb(167, 243, 208)
+                    index == 2 && line.startsWith("CMD:") -> Color.rgb(253, 230, 138)
+                    else -> Color.rgb(226, 232, 240)
+                }
+                canvas.drawText(line, padPx, y, linePaint)
+                y += lineHeightPx
+            }
+            signalCardTexture = uploadBitmap(bmp)
+            bmp.recycle()
+        }
+
+        val top = if (frame.state.showOffsetDebugOverlay) 114f * density else 20f * density
+        val left = ((frame.width - signalCardWidthPx) / 2f).coerceAtLeast(8f * density)
+        drawTextureModel(
+            textureId = signalCardTexture,
+            left = left,
+            top = top,
+            width = signalCardWidthPx.toFloat(),
+            height = signalCardHeightPx.toFloat(),
+            alpha = 1f
+        )
     }
 
     private fun ensureDebugTextures(density: Float) {
@@ -1237,6 +1485,7 @@ class GpuWallpaperRenderer(
             releasePageTextures()
             releaseMotionBlurTarget()
             glDeleteTextures(debugCardTexture, debugCircleTexture)
+            if (signalCardTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(signalCardTexture), 0)
             if (whiteTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(whiteTexture), 0)
             if (textureProgram != 0) GLES20.glDeleteProgram(textureProgram)
             if (blurProgram != 0) GLES20.glDeleteProgram(blurProgram)
@@ -1244,6 +1493,9 @@ class GpuWallpaperRenderer(
         debugCardTexture = 0
         debugCircleTexture = 0
         debugTextureDensity = 0f
+        signalCardTexture = 0
+        signalCardLines = emptyList()
+        signalCardDensity = 0f
         whiteTexture = 0
         textureProgram = 0
         blurProgram = 0

@@ -1,6 +1,6 @@
 package com.example.service
 
-import android.animation.ValueAnimator
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,10 +12,12 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.Choreographer
@@ -23,14 +25,16 @@ import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.ViewConfiguration
-import android.view.animation.LinearInterpolator
 import com.example.darken.ExtraDimDetector
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
+import com.example.diagnostics.WallpaperSignalTracker
 import com.example.data.repository.WallpaperRepository
 import com.example.render.EdgeOverScrollController
 import com.example.render.EdgeOverScrollScaling
+import com.example.render.EntryRenderState
+import com.example.render.EntryTransitionController
 import com.example.render.GpuFrameRequest
 import com.example.render.GpuWallpaperRenderer
 import com.example.render.HorizontalMotionBlur
@@ -116,8 +120,10 @@ class MultiPageWallpaperService : WallpaperService() {
         private var awaitingResumeOffset = false
         private var recoveringFromZeroOffset = false
         private var sawZeroOffsetWhileHidden = false
-        private var resumeFadeAnimator: ValueAnimator? = null
-        private var resumeFadeProgress = 1f
+        private val entryTransitionController = EntryTransitionController()
+        private val signalTracker = WallpaperSignalTracker(
+            zoomSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+        )
         private val choreographer by lazy { Choreographer.getInstance() }
         private var animationFramePosted = false
         private var lastAnimationFrameTimeNanos = 0L
@@ -154,6 +160,9 @@ class MultiPageWallpaperService : WallpaperService() {
                 edgeOverScrollController.reset()
                 stopOffsetAnimation()
             }
+            if (!repository.appState.value.resumeFadeEnabled) {
+                entryTransitionController.reset()
+            }
             if (!repository.appState.value.motionBlurEnabled) {
                 releaseMotionBlurBuffer()
             }
@@ -188,8 +197,7 @@ class MultiPageWallpaperService : WallpaperService() {
             super.onDestroy()
             stopOffsetAnimation()
             releaseMotionBlurBuffer()
-            resumeFadeAnimator?.cancel()
-            resumeFadeAnimator = null
+            entryTransitionController.reset()
             repository.removeChangeListener(repoChangeListener)
             ExtraDimDetector.unregisterObserver(applicationContext, extraDimObserver)
             extraDimObserver = null
@@ -201,8 +209,14 @@ class MultiPageWallpaperService : WallpaperService() {
             val wasVisible = isVisible
             isVisible = visible
             WallpaperDiagnosticsRecorder.recordVisibilityChanged(visible)
+            signalTracker.recordVisibility(
+                visible = visible,
+                keyguardLocked = isKeyguardLockedOrNull(),
+                screenInteractive = isScreenInteractiveOrNull()
+            )
             if (visible) {
-                val calib = repository.appState.value.calibration
+                val state = repository.appState.value
+                val calib = state.calibration
                 val homeOffset = calib.getHomeOffset()
 
                 // If resuming from an app (e.g. YouTube, PiP) or screen sleep where Android
@@ -222,35 +236,50 @@ class MultiPageWallpaperService : WallpaperService() {
                     awaitingResumeOffset = calib.homePageIndex != 0
                     recoveringFromZeroOffset = sawZeroOffsetWhileHidden
                     sawZeroOffsetWhileHidden = false
-                    startResumeFadeIfEnabled()
+                    triggerEntryTransitionIfEnabled(state)
                 }
                 drawFrame()
+                if (isOffsetAnimationNeeded()) {
+                    scheduleOffsetAnimationFrame()
+                }
             } else {
                 edgeOverScrollController.reset()
                 stopOffsetAnimation()
                 releaseMotionBlurBuffer()
-                resumeFadeAnimator?.cancel()
-                resumeFadeAnimator = null
-                resumeFadeProgress = 1f
+                entryTransitionController.reset()
             }
         }
 
-        private fun startResumeFadeIfEnabled() {
-            resumeFadeAnimator?.cancel()
-            resumeFadeAnimator = null
-            resumeFadeProgress = 1f
-            if (!repository.appState.value.resumeFadeEnabled) return
-
-            resumeFadeProgress = 0f
-            resumeFadeAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = 250L
-                interpolator = LinearInterpolator()
-                addUpdateListener {
-                    resumeFadeProgress = it.animatedValue as Float
-                    drawFrame()
-                }
-                start()
+        override fun onZoomChanged(zoom: Float) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                super.onZoomChanged(zoom)
             }
+            val logged = signalTracker.recordZoom(zoom)
+            if (logged && isVisible && repository.appState.value.showSignalDebugOverlay) {
+                drawFrame()
+            }
+        }
+
+        private fun triggerEntryTransitionIfEnabled(state: WallpaperAppState) {
+            if (!state.resumeFadeEnabled) {
+                entryTransitionController.reset()
+                return
+            }
+            entryTransitionController.trigger(state.entryDurationMs)
+        }
+
+        private fun isKeyguardLockedOrNull(): Boolean? = try {
+            (applicationContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)
+                ?.isKeyguardLocked
+        } catch (_: Exception) {
+            null
+        }
+
+        private fun isScreenInteractiveOrNull(): Boolean? = try {
+            (applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                ?.isInteractive
+        } catch (_: Exception) {
+            null
         }
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
@@ -293,6 +322,7 @@ class MultiPageWallpaperService : WallpaperService() {
         ) {
             super.onOffsetsChanged(xOffset, yOffset, xOffsetStep, yOffsetStep, xPixelOffset, yPixelOffset)
             WallpaperDiagnosticsRecorder.recordOffsetUpdate(xOffset, isVisible)
+            val loggedOffsetSignal = signalTracker.recordOffsetSignal(xOffset, xOffsetStep, isVisible)
             receivedXOffset = xOffset
             receivedYOffset = yOffset
             val calib = repository.appState.value.calibration
@@ -406,8 +436,10 @@ class MultiPageWallpaperService : WallpaperService() {
                     scheduleOffsetAnimationFrame()
                 } else {
                     stopOffsetAnimation()
-                    if (offsetChanged || yOffsetChanged) {
-                        drawFrame(fromOffsetUpdate = true)
+                    if (offsetChanged || yOffsetChanged ||
+                        (loggedOffsetSignal && repository.appState.value.showSignalDebugOverlay)
+                    ) {
+                        drawFrame(fromOffsetUpdate = offsetChanged || yOffsetChanged)
                     }
                 }
             }
@@ -466,6 +498,7 @@ class MultiPageWallpaperService : WallpaperService() {
             extras: Bundle?,
             resultRequested: Boolean
         ): Bundle? {
+            signalTracker.recordCommand(action)
             if (action == "android.home" || action == "android.wallpaper.waking_up") {
                 val calib = repository.appState.value.calibration
                 if (action == "android.home") {
@@ -482,7 +515,11 @@ class MultiPageWallpaperService : WallpaperService() {
                     if (isVisible) {
                         drawFrame()
                     }
+                    return super.onCommand(action, x, y, z, extras, resultRequested)
                 }
+            }
+            if (isVisible && repository.appState.value.showSignalDebugOverlay) {
+                drawFrame()
             }
             return super.onCommand(action, x, y, z, extras, resultRequested)
         }
@@ -492,12 +529,15 @@ class MultiPageWallpaperService : WallpaperService() {
                 val filter = IntentFilter().apply {
                     addAction(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)
                     addAction(Intent.ACTION_USER_PRESENT)
+                    addAction(Intent.ACTION_SCREEN_ON)
+                    addAction(Intent.ACTION_SCREEN_OFF)
                 }
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
                         when (intent?.action) {
                             Intent.ACTION_CLOSE_SYSTEM_DIALOGS -> {
                                 val reason = intent.getStringExtra("reason")
+                                signalTracker.recordSystemDialogClose(reason)
                                 if (reason == "homekey") {
                                     // User swiped or tapped home button to return to launcher
                                     val calib = repository.appState.value.calibration
@@ -513,10 +553,13 @@ class MultiPageWallpaperService : WallpaperService() {
                                     if (isVisible) {
                                         drawFrame()
                                     }
+                                } else if (isVisible && repository.appState.value.showSignalDebugOverlay) {
+                                    drawFrame()
                                 }
                             }
                             Intent.ACTION_USER_PRESENT -> {
                                 // Device unlocked
+                                signalTracker.recordUserPresent(isKeyguardLockedOrNull())
                                 val calib = repository.appState.value.calibration
                                 if (!hasReceivedLauncherOffset ||
                                     (currentXOffset <= 0.001f && lastLauncherXOffsetStep <= 0f && calib.homePageIndex != 0)
@@ -530,6 +573,15 @@ class MultiPageWallpaperService : WallpaperService() {
                                 if (isVisible) {
                                     drawFrame()
                                 }
+                            }
+                            Intent.ACTION_SCREEN_ON -> {
+                                signalTracker.recordScreenPower(true, isKeyguardLockedOrNull())
+                                if (isVisible && repository.appState.value.showSignalDebugOverlay) {
+                                    drawFrame()
+                                }
+                            }
+                            Intent.ACTION_SCREEN_OFF -> {
+                                signalTracker.recordScreenPower(false, isKeyguardLockedOrNull())
                             }
                         }
                     }
@@ -571,7 +623,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
         private fun isOffsetAnimationNeeded(): Boolean =
             abs(currentXOffset - renderedXOffset) > OFFSET_EPSILON ||
-                (!edgeOverScrollController.isTouchActive && edgeOverScrollController.hasActiveFraction())
+                (!edgeOverScrollController.isTouchActive && edgeOverScrollController.hasActiveFraction()) ||
+                (entryTransitionController.isActive && repository.appState.value.resumeFadeEnabled)
 
         private fun drawSmoothedOffsetFrame(frameTimeNanos: Long) {
             if (!isVisible) {
@@ -603,6 +656,7 @@ class MultiPageWallpaperService : WallpaperService() {
             if (wasResolvingEdgeOverScroll) {
                 edgeOverScrollController.stepRelease(elapsedNanos, smoothingFraction)
             }
+            var offsetChangedInStep = false
             val holdEdgeAnchor = edgeOverScrollController.hasActiveFraction() &&
                 edgeOverScrollController.snapBackMode == EdgeOverScrollController.SnapBackMode.SLOW
             if (holdEdgeAnchor) {
@@ -612,13 +666,23 @@ class MultiPageWallpaperService : WallpaperService() {
             } else if (!edgeOverScrollController.isTouchActive) {
                 // Advance renderedXOffset in the same frame so outgoing overscroll recovery
                 // overlaps with the incoming page transition instead of pausing at the edge.
+                val prevRendered = renderedXOffset
                 renderedXOffset += (currentXOffset - renderedXOffset) * smoothingFraction
                 if (abs(currentXOffset - renderedXOffset) <= OFFSET_EPSILON) {
                     renderedXOffset = currentXOffset
                 }
+                offsetChangedInStep = abs(renderedXOffset - prevRendered) > 0f
             }
 
-            drawFrame(fromOffsetUpdate = true)
+            if (entryTransitionController.isActive) {
+                if (repository.appState.value.resumeFadeEnabled) {
+                    entryTransitionController.step(elapsedNanos)
+                } else {
+                    entryTransitionController.reset()
+                }
+            }
+
+            drawFrame(fromOffsetUpdate = offsetChangedInStep || wasResolvingEdgeOverScroll)
             lastAnimationFrameTimeNanos = frameTimeNanos
             val elapsedIntervals =
                 (frameTimeNanos - nextAnimationFrameDeadlineNanos) / frameIntervalNanos + 1L
@@ -671,7 +735,8 @@ class MultiPageWallpaperService : WallpaperService() {
             val holder = surfaceHolder ?: return
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
-            val pagePosition = getPagePosition(renderedXOffset, state) +
+            val continuousPagePosition = getPagePosition(renderedXOffset, state)
+            val pagePosition = continuousPagePosition +
                 edgeOverScrollController.overScrollFraction * 0.5f
             val pageDelta = if (
                 state.motionBlurEnabled &&
@@ -699,7 +764,22 @@ class MultiPageWallpaperService : WallpaperService() {
                 else -> 0
             }
             val shouldBlur = physicalBlurRadius > 0 && smearDirection != 0 &&
-                state.motionBlurEnabled && isVisible && resumeFadeProgress >= 1f
+                state.motionBlurEnabled && isVisible
+
+            val entryState = entryTransitionController.evaluate(
+                enabled = state.resumeFadeEnabled,
+                zoomEnabled = state.entryZoomEnabled,
+                zoomStartScale = state.entryZoomStartScale,
+                blackFadeEnabled = state.entryBlackFadeEnabled,
+                blackFadeMaxAlpha = state.entryBlackFadeMaxAlpha,
+                blurEnabled = state.entryBlurEnabled,
+                blurMaxMix = state.entryBlurStrength
+            )
+            val signalLines = if (state.showSignalDebugOverlay) {
+                signalTracker.buildOverlayLines(entryState.progress, entryState.isActive)
+            } else {
+                emptyList()
+            }
 
             computePageTransition(renderedXOffset, state.calibration)
             val pageA = transitionPageA
@@ -718,16 +798,20 @@ class MultiPageWallpaperService : WallpaperService() {
                 pageB = pageB,
                 progress = progress,
                 pagePosition = pagePosition,
+                continuousPagePosition = continuousPagePosition,
                 frameTimeNanos = frameTimeNanos,
                 fromOffsetUpdate = fromOffsetUpdate,
                 isVisible = isVisible,
                 swipeForward = offsetDirection >= 0,
-                resumeFadeProgress = resumeFadeProgress,
+                entryScale = entryState.scale,
+                entryBlackFadeAlpha = entryState.blackFadeAlpha,
+                entryBlurMix = entryState.blurMix,
                 motionBlurRadius = if (shouldBlur) physicalBlurRadius else 0,
                 motionBlurDirection = if (shouldBlur) smearDirection else 0,
                 dimAmount = calculateEffectiveDim(state, pageA, pageB, progress),
                 receivedXOffset = receivedXOffset,
                 receivedYOffset = receivedYOffset,
+                signalOverlayLines = signalLines,
                 density = resources.displayMetrics.density,
                 frameDebugColor = frameDebugColors[frameDebugSequenceIndex],
                 edgeOverScrollFraction = edgeOverScrollController.overScrollFraction
@@ -751,26 +835,16 @@ class MultiPageWallpaperService : WallpaperService() {
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
-                    if (request.resumeFadeProgress < 1f) {
-                        canvas.drawColor(Color.BLACK)
-                        val layer = canvas.saveLayerAlpha(
-                            0f,
-                            0f,
-                            surfaceWidth.toFloat(),
-                            surfaceHeight.toFloat(),
-                            (request.resumeFadeProgress * 255).toInt().coerceIn(0, 255)
-                        )
-                        renderWallpaper(canvas, state)
-                        canvas.restoreToCount(layer)
-                    } else if (request.motionBlurRadius > 0) {
+                    if (request.motionBlurRadius > 0) {
                         renderMotionBlurredWallpaper(
                             canvas = canvas,
                             state = state,
                             physicalBlurRadius = request.motionBlurRadius,
-                            smearDirection = request.motionBlurDirection
+                            smearDirection = request.motionBlurDirection,
+                            request = request
                         )
                     } else {
-                        renderWallpaper(canvas, state)
+                        renderWallpaper(canvas, state, request = request)
                     }
                 }
             } catch (e: Exception) {
@@ -823,7 +897,8 @@ class MultiPageWallpaperService : WallpaperService() {
             canvas: Canvas,
             state: WallpaperAppState,
             physicalBlurRadius: Int,
-            smearDirection: Int
+            smearDirection: Int,
+            request: GpuFrameRequest? = null
         ) {
             val bufferWidth = (surfaceWidth / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
             val bufferHeight = (surfaceHeight / MOTION_BLUR_DOWNSAMPLE_FACTOR).coerceAtLeast(1)
@@ -837,7 +912,12 @@ class MultiPageWallpaperService : WallpaperService() {
                     bufferWidth.toFloat() / surfaceWidth,
                     bufferHeight.toFloat() / surfaceHeight
                 )
-                renderWallpaper(offscreenCanvas, state, includeDebugIndicators = false)
+                renderWallpaper(
+                    offscreenCanvas,
+                    state,
+                    includeDebugIndicators = false,
+                    request = request?.copy(entryBlackFadeAlpha = 0f)
+                )
             } finally {
                 offscreenCanvas.restoreToCount(saveCount)
             }
@@ -848,7 +928,12 @@ class MultiPageWallpaperService : WallpaperService() {
             motionBlur.apply(bitmap, scaledRadius, smearDirection)
             motionBlurDestination.set(0, 0, surfaceWidth, surfaceHeight)
             canvas.drawBitmap(bitmap, null, motionBlurDestination, paint)
-            drawDebugIndicators(canvas, state)
+            if (request != null && request.entryBlackFadeAlpha > 0.004f) {
+                dimPaint.color = Color.BLACK
+                dimPaint.alpha = (request.entryBlackFadeAlpha.coerceIn(0f, 1f) * 255).toInt()
+                canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), dimPaint)
+            }
+            drawDebugIndicators(canvas, state, request?.signalOverlayLines ?: emptyList())
         }
 
         private fun ensureMotionBlurBuffer(width: Int, height: Int) {
@@ -906,7 +991,8 @@ class MultiPageWallpaperService : WallpaperService() {
         private fun renderWallpaper(
             canvas: Canvas,
             state: WallpaperAppState,
-            includeDebugIndicators: Boolean = true
+            includeDebugIndicators: Boolean = true,
+            request: GpuFrameRequest? = null
         ) {
             val calib = state.calibration
             val pageCount = calib.pageCount.coerceAtLeast(1)
@@ -925,7 +1011,49 @@ class MultiPageWallpaperService : WallpaperService() {
             val isEdgeOverScroll = pageA == pageB &&
                 abs(edgeOverScrollController.overScrollFraction) > EdgeOverScrollController.FRACTION_EPSILON
 
-            canvas.drawColor(android.graphics.Color.rgb(18, 22, 34))
+            val entryScale = (request?.entryScale ?: 1f).coerceIn(0.5f, 1f)
+            val isZoomedOutEntry = entryScale < 0.9995f
+            val continuousPos = request?.continuousPagePosition ?: getPagePosition(renderedXOffset, state)
+            canvas.drawColor(
+                if (isZoomedOutEntry) Color.BLACK else Color.rgb(18, 22, 34)
+            )
+            val sceneSaveCount = if (isZoomedOutEntry) {
+                canvas.save().also {
+                    canvas.scale(entryScale, entryScale, surfaceWidth / 2f, surfaceHeight / 2f)
+                    if (pageCount > 1) {
+                        val extraMargin = surfaceWidth * (1f / entryScale - 1f) * 0.5f
+                        val isFullStripScroll = !isEdgeOverScroll &&
+                            (renderer.id == "scroll" || renderer.id == "parallax" || renderer.id == "parallax_classic")
+                        for (k in 0 until pageCount) {
+                            val skip = if (isFullStripScroll) {
+                                if (pageA == pageB) k == pageA else (k == pageA || k == pageB)
+                            } else {
+                                isEdgeOverScroll && k == pageA
+                            }
+                            if (!skip) {
+                                val slotLeft = (k - continuousPos) * surfaceWidth
+                                if (slotLeft + surfaceWidth > -extraMargin && slotLeft < surfaceWidth + extraMargin) {
+                                    val neighborBitmap = repository.getCroppedBitmap(k, surfaceWidth, surfaceHeight)
+                                    if (neighborBitmap != null) {
+                                        edgeOverScrollDstRect.set(
+                                            slotLeft.toInt(),
+                                            0,
+                                            slotLeft.toInt() + surfaceWidth,
+                                            surfaceHeight
+                                        )
+                                        canvas.drawBitmap(neighborBitmap, null, edgeOverScrollDstRect, paint)
+                                    }
+                                }
+                            }
+                        }
+                        if (!isFullStripScroll && !isEdgeOverScroll) {
+                            canvas.clipRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat())
+                        }
+                    }
+                }
+            } else {
+                null
+            }
             if (isEdgeOverScroll) {
                 val edgeParallax = repository.getParallaxBitmap(pageA, surfaceWidth, surfaceHeight)
                 val edgeBitmap = edgeParallax?.bitmap
@@ -1039,20 +1167,35 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
 
+            if (sceneSaveCount != null) {
+                canvas.restoreToCount(sceneSaveCount)
+            }
+
             val effectiveDim = calculateEffectiveDim(state, pageA, pageB, progress)
             if (effectiveDim > 0.01f) {
                 val alpha = (effectiveDim.coerceIn(0f, 1f) * 255).toInt()
                 dimPaint.color = Color.BLACK
                 dimPaint.alpha = alpha
+                val stripTop = if (isZoomedOutEntry) (1f - entryScale) * surfaceHeight * 0.5f else 0f
+                val stripBottom = if (isZoomedOutEntry) stripTop + surfaceHeight * entryScale else surfaceHeight.toFloat()
                 canvas.drawRect(
-                    0f, 0f,
+                    0f, stripTop,
                     surfaceWidth.toFloat(),
-                    surfaceHeight.toFloat(),
+                    stripBottom,
                     dimPaint
                 )
             }
 
-            if (includeDebugIndicators) drawDebugIndicators(canvas, state)
+            val entryBlackFadeAlpha = request?.entryBlackFadeAlpha ?: 0f
+            if (entryBlackFadeAlpha > 0.004f) {
+                dimPaint.color = Color.BLACK
+                dimPaint.alpha = (entryBlackFadeAlpha.coerceIn(0f, 1f) * 255).toInt()
+                canvas.drawRect(0f, 0f, surfaceWidth.toFloat(), surfaceHeight.toFloat(), dimPaint)
+            }
+
+            if (includeDebugIndicators) {
+                drawDebugIndicators(canvas, state, request?.signalOverlayLines ?: emptyList())
+            }
         }
 
         private fun drawEdgeOverScroll(
@@ -1095,9 +1238,16 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
-        private fun drawDebugIndicators(canvas: Canvas, state: WallpaperAppState) {
+        private fun drawDebugIndicators(
+            canvas: Canvas,
+            state: WallpaperAppState,
+            signalLines: List<String> = emptyList()
+        ) {
             if (state.showOffsetDebugOverlay) {
                 drawOffsetDebugOverlay(canvas)
+            }
+            if (state.showSignalDebugOverlay && signalLines.isNotEmpty()) {
+                drawSignalDebugOverlay(canvas, state, signalLines)
             }
             if (state.showFrameDebugIndicator) {
                 if (!frameDebugIndicatorEnabled) {
@@ -1109,6 +1259,47 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
             frameDebugIndicatorEnabled = state.showFrameDebugIndicator
+        }
+
+        private fun drawSignalDebugOverlay(
+            canvas: Canvas,
+            state: WallpaperAppState,
+            lines: List<String>
+        ) {
+            val density = resources.displayMetrics.density
+            val cardWidth = minOf(320f * density, (surfaceWidth - 24f * density).coerceAtLeast(160f))
+            val lineHeightPx = 16f * density
+            val headerHeightPx = 22f * density
+            val padPx = 12f * density
+            val cardHeight = padPx * 2f + headerHeightPx + lines.size * lineHeightPx
+            val left = ((surfaceWidth - cardWidth) / 2f).coerceAtLeast(8f * density)
+            val top = if (state.showOffsetDebugOverlay) 114f * density else 20f * density
+            offsetOverlayBounds.set(left, top, left + cardWidth, top + cardHeight)
+
+            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(228, 15, 23, 42)
+            }
+            canvas.drawRoundRect(offsetOverlayBounds, 14f * density, 14f * density, bgPaint)
+            val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(125, 211, 252)
+                textSize = 12f * density
+                isFakeBoldText = true
+            }
+            canvas.drawText("Live Signal Diagnostics", left + padPx, top + padPx + 12f * density, titlePaint)
+            val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textSize = 11f * density
+                typeface = Typeface.MONOSPACE
+            }
+            var y = top + padPx + headerHeightPx + 11f * density
+            lines.forEachIndexed { index, line ->
+                linePaint.color = when {
+                    index < 2 -> Color.rgb(167, 243, 208)
+                    index == 2 && line.startsWith("CMD:") -> Color.rgb(253, 230, 138)
+                    else -> Color.rgb(226, 232, 240)
+                }
+                canvas.drawText(line, left + padPx, y, linePaint)
+                y += lineHeightPx
+            }
         }
 
         private fun drawFrameSequenceIndicator(canvas: android.graphics.Canvas, sequenceIndex: Int) {

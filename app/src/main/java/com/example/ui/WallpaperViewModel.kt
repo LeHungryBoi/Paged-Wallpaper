@@ -243,12 +243,62 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState { it.copy(resumeFadeEnabled = enabled) }
     }
 
+    fun toggleEntryZoom(enabled: Boolean) {
+        repository.updateState { it.copy(entryZoomEnabled = enabled) }
+    }
+
+    fun setEntryZoomStartScale(scale: Float) {
+        repository.updateState {
+            it.copy(
+                entryZoomStartScale = scale.coerceIn(
+                    WallpaperAppState.MIN_ENTRY_ZOOM_START_SCALE,
+                    WallpaperAppState.MAX_ENTRY_ZOOM_START_SCALE
+                )
+            )
+        }
+    }
+
+    fun toggleEntryBlackFade(enabled: Boolean) {
+        repository.updateState { it.copy(entryBlackFadeEnabled = enabled) }
+    }
+
+    fun setEntryBlackFadeMaxAlpha(alpha: Float) {
+        repository.updateState {
+            it.copy(entryBlackFadeMaxAlpha = alpha.coerceIn(0.1f, 1f))
+        }
+    }
+
+    fun toggleEntryBlur(enabled: Boolean) {
+        repository.updateState { it.copy(entryBlurEnabled = enabled) }
+    }
+
+    fun setEntryBlurStrength(strength: Float) {
+        repository.updateState {
+            it.copy(entryBlurStrength = strength.coerceIn(0.1f, 1f))
+        }
+    }
+
+    fun setEntryDurationMs(durationMs: Int) {
+        repository.updateState {
+            it.copy(
+                entryDurationMs = durationMs.coerceIn(
+                    WallpaperAppState.MIN_ENTRY_DURATION_MS,
+                    WallpaperAppState.MAX_ENTRY_DURATION_MS
+                )
+            )
+        }
+    }
+
     fun toggleOffsetDebugOverlay(enabled: Boolean) {
         repository.updateState { it.copy(showOffsetDebugOverlay = enabled) }
     }
 
     fun toggleFrameDebugIndicator(enabled: Boolean) {
         repository.updateState { it.copy(showFrameDebugIndicator = enabled) }
+    }
+
+    fun toggleSignalDebugOverlay(enabled: Boolean) {
+        repository.updateState { it.copy(showSignalDebugOverlay = enabled) }
     }
 
     fun toggleMotionBlur(enabled: Boolean) {
