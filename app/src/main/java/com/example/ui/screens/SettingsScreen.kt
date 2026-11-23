@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -15,19 +16,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -47,12 +55,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.model.BatterySaverConfig
+import com.example.data.model.BatterySaverTrigger
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.WallpaperAppState
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.diagnostics.WallpaperDiagnosticsResult
 import com.example.diagnostics.WallpaperDiagnosticsState
 import com.example.diagnostics.WallpaperSignalOverlayWindow
+import com.example.power.BatterySaverPolicy
+import com.example.power.PowerSnapshot
 import com.example.ui.WallpaperViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -62,6 +74,8 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(viewModel: WallpaperViewModel) {
     val diagnostics by WallpaperDiagnosticsRecorder.state.collectAsState()
+    val appState by viewModel.appState.collectAsState()
+    val powerSnapshot by viewModel.powerSnapshot.collectAsState()
 
     Column(
         modifier = Modifier
@@ -70,6 +84,15 @@ fun SettingsScreen(viewModel: WallpaperViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
+        SettingsSection(title = "Battery") {
+            BatterySaverSetting(
+                config = appState.batterySaver,
+                normalFrameRate = appState.animationFrameRate,
+                powerSnapshot = powerSnapshot,
+                onConfigChange = viewModel::updateBatterySaverConfig
+            )
+        }
+
         SettingsSection(title = "Calibration") {
             CalibrationScreen(viewModel = viewModel)
         }
@@ -80,6 +103,281 @@ fun SettingsScreen(viewModel: WallpaperViewModel) {
 
         SettingsSection(title = "Debug") {
             DebugSettings(viewModel, diagnostics)
+        }
+    }
+}
+
+@Composable
+internal fun BatterySaverSetting(
+    config: BatterySaverConfig,
+    normalFrameRate: Int,
+    powerSnapshot: PowerSnapshot,
+    onConfigChange: (BatterySaverConfig) -> Unit
+) {
+    val thresholdSlider = remember(config.thresholdPercent) {
+        mutableFloatStateOf(config.thresholdPercent.toFloat())
+    }
+    val isSaverActive = BatterySaverPolicy.isBatterySaverActive(config, powerSnapshot)
+    val effectiveFps = BatterySaverPolicy.effectiveFrameRate(normalFrameRate, config, powerSnapshot)
+    val batteryLabel = powerSnapshot.batteryPercent?.let { "$it%" } ?: "--%"
+    val statusText = when {
+        isSaverActive -> "$batteryLabel · Saving $effectiveFps FPS"
+        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
+            "$batteryLabel · Charging ($normalFrameRate FPS)"
+        config.enabled -> "$batteryLabel · Normal ($normalFrameRate FPS)"
+        else -> "$batteryLabel · Off"
+    }
+    val statusContainerColor = when {
+        isSaverActive -> MaterialTheme.colorScheme.tertiaryContainer
+        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
+            MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val statusContentColor = when {
+        isSaverActive -> MaterialTheme.colorScheme.onTertiaryContainer
+        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
+            MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("battery_saver_card"),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (powerSnapshot.isCharging) {
+                            Icons.Default.BatteryChargingFull
+                        } else {
+                            Icons.Default.BatterySaver
+                        },
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Battery-saving mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = statusContainerColor
+                ) {
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = statusContentColor,
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                            .testTag("battery_saver_status_badge")
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Reduce wallpaper refresh rate on low power",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Passively reacts to Android battery and Battery Saver broadcast callbacks without polling.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = config.enabled,
+                    onCheckedChange = { onConfigChange(config.copy(enabled = it)) },
+                    modifier = Modifier.testTag("toggle_battery_saver")
+                )
+            }
+
+            AnimatedVisibility(visible = config.enabled) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "Activation trigger",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        BatterySaverTrigger.values().forEach { mode ->
+                            val isSelected = config.triggerMode == mode
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        onConfigChange(config.copy(triggerMode = mode))
+                                    }
+                                    .testTag("battery_saver_trigger_${mode.name}"),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.secondaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = mode.displayName,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = mode.description,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = {
+                                            onConfigChange(config.copy(triggerMode = mode))
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = config.triggerMode != BatterySaverTrigger.SYSTEM_BATTERY_SAVER
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Activate below battery level",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${thresholdSlider.floatValue.roundToInt()}%",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Slider(
+                                value = thresholdSlider.floatValue,
+                                onValueChange = { thresholdSlider.floatValue = it },
+                                onValueChangeFinished = {
+                                    onConfigChange(
+                                        config.copy(
+                                            thresholdPercent = thresholdSlider.floatValue.roundToInt()
+                                        )
+                                    )
+                                },
+                                valueRange = BatterySaverConfig.MIN_THRESHOLD_PERCENT.toFloat()..
+                                    BatterySaverConfig.MAX_THRESHOLD_PERCENT.toFloat(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("battery_saver_threshold_slider")
+                            )
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Reduced refresh rate",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            BatterySaverConfig.supportedReducedFrameRates.forEach { fps ->
+                                FilterChip(
+                                    selected = config.reducedFrameRate == fps,
+                                    onClick = {
+                                        onConfigChange(config.copy(reducedFrameRate = fps))
+                                    },
+                                    label = { Text("$fps FPS") },
+                                    modifier = Modifier.testTag("battery_saver_fps_$fps")
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Pause while charging",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Keep your normal $normalFrameRate FPS whenever the device is plugged in.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = config.pauseWhileCharging,
+                                onCheckedChange = {
+                                    onConfigChange(config.copy(pauseWhileCharging = it))
+                                },
+                                modifier = Modifier.testTag("toggle_battery_saver_pause_charging")
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

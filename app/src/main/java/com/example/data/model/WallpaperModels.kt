@@ -11,6 +11,69 @@ enum class DarkenTrigger(val displayName: String, val description: String) {
     ALWAYS("Always Dim", "Keep dimming filter always active")
 }
 
+enum class BatterySaverTrigger(val displayName: String, val description: String) {
+    BATTERY_PERCENTAGE(
+        "Battery percentage",
+        "Reduce refresh rate when battery drops below your configured level"
+    ),
+    SYSTEM_BATTERY_SAVER(
+        "System Battery Saver",
+        "Follow Android's system Battery Saver toggle"
+    ),
+    EITHER(
+        "Percentage or System Saver",
+        "Activate when battery is below threshold or system Battery Saver is on"
+    );
+
+    companion object {
+        fun fromName(name: String): BatterySaverTrigger =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: BATTERY_PERCENTAGE
+    }
+}
+
+data class BatterySaverConfig(
+    val enabled: Boolean = true,
+    val triggerMode: BatterySaverTrigger = BatterySaverTrigger.BATTERY_PERCENTAGE,
+    val thresholdPercent: Int = DEFAULT_THRESHOLD_PERCENT,
+    val reducedFrameRate: Int = DEFAULT_REDUCED_FRAME_RATE,
+    val pauseWhileCharging: Boolean = true
+) {
+    fun normalized(): BatterySaverConfig = copy(
+        thresholdPercent = thresholdPercent.coerceIn(MIN_THRESHOLD_PERCENT, MAX_THRESHOLD_PERCENT),
+        reducedFrameRate = reducedFrameRate.takeIf { it in supportedReducedFrameRates }
+            ?: DEFAULT_REDUCED_FRAME_RATE
+    )
+
+    fun toJson(): JSONObject = JSONObject().apply {
+        val safe = normalized()
+        put("enabled", safe.enabled)
+        put("triggerMode", safe.triggerMode.name)
+        put("thresholdPercent", safe.thresholdPercent)
+        put("reducedFrameRate", safe.reducedFrameRate)
+        put("pauseWhileCharging", safe.pauseWhileCharging)
+    }
+
+    companion object {
+        const val DEFAULT_THRESHOLD_PERCENT = 20
+        const val MIN_THRESHOLD_PERCENT = 5
+        const val MAX_THRESHOLD_PERCENT = 50
+        const val DEFAULT_REDUCED_FRAME_RATE = 60
+        val supportedReducedFrameRates = listOf(30, 60)
+
+        fun fromJson(json: JSONObject): BatterySaverConfig = BatterySaverConfig(
+            enabled = json.optBoolean("enabled", true),
+            triggerMode = BatterySaverTrigger.fromName(
+                json.optString("triggerMode", BatterySaverTrigger.BATTERY_PERCENTAGE.name)
+            ),
+            thresholdPercent = json.optInt("thresholdPercent", DEFAULT_THRESHOLD_PERCENT)
+                .coerceIn(MIN_THRESHOLD_PERCENT, MAX_THRESHOLD_PERCENT),
+            reducedFrameRate = json.optInt("reducedFrameRate", DEFAULT_REDUCED_FRAME_RATE)
+                .takeIf { it in supportedReducedFrameRates } ?: DEFAULT_REDUCED_FRAME_RATE,
+            pauseWhileCharging = json.optBoolean("pauseWhileCharging", true)
+        )
+    }
+}
+
 enum class OffsetEasingStyle(val displayName: String) {
     SYMMETRIC("Symmetric ease in/out"),
     FAST_START_SLOW_END("Fast start, slow end");
@@ -628,6 +691,7 @@ data class WallpaperAppState(
     val offsetEasingLinearZonePercent: Int = 60,
     val offsetEasingStrength: Int = 50,
     val animationFrameRate: Int = DEFAULT_ANIMATION_FRAME_RATE,
+    val batterySaver: BatterySaverConfig = BatterySaverConfig(),
     val presets: List<WallpaperPreset> = listOf(
         WallpaperPreset("default", "Default", pages, List((pages.size - 1).coerceAtLeast(0)) { PageTransitionSetting(transitionType, transitionType) })
     ),
@@ -665,6 +729,7 @@ data class WallpaperAppState(
         put("offsetEasingLinearZonePercent", offsetEasingLinearZonePercent)
         put("offsetEasingStrength", offsetEasingStrength)
         put("animationFrameRate", animationFrameRate)
+        put("batterySaver", batterySaver.toJson())
         put("schemaVersion", 5)
         put("activePresetId", activePresetId)
         put("presetNeedsSave", presetNeedsSave)
@@ -789,6 +854,8 @@ data class WallpaperAppState(
                 ).coerceIn(0, 100),
                 offsetEasingStrength = json.optInt("offsetEasingStrength", 50).coerceIn(0, 100),
                 animationFrameRate = animationFrameRate,
+                batterySaver = json.optJSONObject("batterySaver")?.let { BatterySaverConfig.fromJson(it) }
+                    ?: BatterySaverConfig(),
                 presets = presets,
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
                 transitions = migratedTransitions,

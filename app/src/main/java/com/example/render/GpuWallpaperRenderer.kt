@@ -63,7 +63,8 @@ class GpuWallpaperRenderer(
     private data class PendingFrame(
         val request: GpuFrameRequest,
         val onSubmitted: (GpuFrameRequest) -> Unit,
-        val onFailure: () -> Unit
+        val onFailure: () -> Unit,
+        val onRetryNeeded: () -> Unit
     )
 
     private data class AssetKey(
@@ -113,8 +114,12 @@ class GpuWallpaperRenderer(
     private var released = false
 
     private var eglDisplay: EGLDisplay? = null
+    private var eglConfig: EGLConfig? = null
     private var eglContext: EGLContext? = null
     private var eglSurface: EGLSurface? = null
+    private var boundWindowSurface: Surface? = null
+    private var consecutiveGlFailures = 0
+    private var missingConfiguredTextureInFrame = false
     private var textureProgram = 0
     private var blurProgram = 0
     private var whiteTexture = 0
@@ -185,11 +190,12 @@ class GpuWallpaperRenderer(
     fun render(
         request: GpuFrameRequest,
         onSubmitted: (GpuFrameRequest) -> Unit,
-        onFailure: () -> Unit
+        onFailure: () -> Unit,
+        onRetryNeeded: () -> Unit = {}
     ) {
         if (released) return
         val shouldSchedule = synchronized(frameLock) {
-            pendingFrame = PendingFrame(request, onSubmitted, onFailure)
+            pendingFrame = PendingFrame(request, onSubmitted, onFailure, onRetryNeeded)
             if (renderScheduled) {
                 false
             } else {
@@ -220,22 +226,43 @@ class GpuWallpaperRenderer(
         }
         if (frame == null || released) return
         val surface = windowSurface ?: return
+        if (!surface.isValid) return
         try {
             ensureGlReady(surface, frame.request.width, frame.request.height)
+            missingConfiguredTextureInFrame = false
             drawFrame(frame.request)
             val display = eglDisplay ?: throw IllegalStateException("EGL display is unavailable")
             val drawSurface = eglSurface ?: throw IllegalStateException("EGL surface is unavailable")
             if (!EGL14.eglSwapBuffers(display, drawSurface)) {
                 throw IllegalStateException("eglSwapBuffers failed: 0x${EGL14.eglGetError().toString(16)}")
             }
+            consecutiveGlFailures = 0
+            val needsAssetRetry = missingConfiguredTextureInFrame
             mainHandler.post {
                 if (!released) frame.onSubmitted(frame.request)
             }
+            if (needsAssetRetry) {
+                mainHandler.postDelayed({
+                    if (!released && windowSurface?.isValid == true) {
+                        frame.onRetryNeeded()
+                    }
+                }, ASSET_RETRY_DELAY_MS)
+            }
         } catch (error: Throwable) {
-            Log.e(TAG, "GPU wallpaper rendering failed; using software fallback", error)
+            Log.e(TAG, "GPU wallpaper rendering error; resetting GL state", error)
             destroyGl()
-            mainHandler.post {
-                if (!released && windowSurface != null) frame.onFailure()
+            if (!surface.isValid || released) return
+            consecutiveGlFailures++
+            if (consecutiveGlFailures >= MAX_CONSECUTIVE_GL_FAILURES) {
+                mainHandler.post {
+                    if (!released && windowSurface != null) frame.onFailure()
+                }
+            } else {
+                mainHandler.postDelayed({
+                    if (!released && windowSurface?.isValid == true) {
+                        frame.onRetryNeeded()
+                    }
+                }, TRANSIENT_RETRY_DELAY_MS)
             }
         }
     }
@@ -267,9 +294,11 @@ class GpuWallpaperRenderer(
             ) {
                 throw IllegalStateException("No OpenGL ES 2.0 configuration")
             }
+            val chosenConfig = configs[0] ?: throw IllegalStateException("Missing EGL config")
+            eglConfig = chosenConfig
             val context = EGL14.eglCreateContext(
                 display,
-                configs[0],
+                chosenConfig,
                 EGL14.EGL_NO_CONTEXT,
                 intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE),
                 0
@@ -281,7 +310,7 @@ class GpuWallpaperRenderer(
 
             val window = EGL14.eglCreateWindowSurface(
                 display,
-                configs[0],
+                chosenConfig,
                 surface,
                 intArrayOf(EGL14.EGL_NONE),
                 0
@@ -290,11 +319,41 @@ class GpuWallpaperRenderer(
                 throw IllegalStateException("eglCreateWindowSurface failed")
             }
             eglSurface = window
+            boundWindowSurface = surface
             if (!EGL14.eglMakeCurrent(display, window, window, context)) {
                 throw IllegalStateException("eglMakeCurrent failed")
             }
             EGL14.eglSwapInterval(display, 1)
             initializeGlResources()
+        } else if (surface !== boundWindowSurface || eglSurface == null) {
+            val display = requireNotNull(eglDisplay)
+            val context = requireNotNull(eglContext)
+            val config = eglConfig ?: throw IllegalStateException("EGL config unavailable")
+            EGL14.eglMakeCurrent(
+                display,
+                EGL14.EGL_NO_SURFACE,
+                EGL14.EGL_NO_SURFACE,
+                EGL14.EGL_NO_CONTEXT
+            )
+            eglSurface?.let { EGL14.eglDestroySurface(display, it) }
+            eglSurface = null
+            boundWindowSurface = null
+            val window = EGL14.eglCreateWindowSurface(
+                display,
+                config,
+                surface,
+                intArrayOf(EGL14.EGL_NONE),
+                0
+            )
+            if (window == null || window == EGL14.EGL_NO_SURFACE) {
+                throw IllegalStateException("eglCreateWindowSurface failed on surface rebind")
+            }
+            eglSurface = window
+            boundWindowSurface = surface
+            if (!EGL14.eglMakeCurrent(display, window, window, context)) {
+                throw IllegalStateException("eglMakeCurrent failed on surface rebind")
+            }
+            EGL14.eglSwapInterval(display, 1)
         }
         if (eglSurface == null) throw IllegalStateException("EGL surface was not created")
         GlMatrix.orthoM(
@@ -742,6 +801,8 @@ class GpuWallpaperRenderer(
     ): PageTexture? {
         val slot = AssetSlot(pageIndex, usesParallax)
         val page = frame.state.pages.find { it.pageIndex == pageIndex }
+        val isIntentionallyBlank = page == null || page.isBlank ||
+            (page.originalId == null && page.croppedFileName == null)
         val key = AssetKey(
             repository.bitmapGeneration,
             page,
@@ -753,7 +814,10 @@ class GpuWallpaperRenderer(
         pageTextures[slot]?.let { if (it.key == key) return it }
         val now = System.nanoTime()
         missingAssets[slot]?.let {
-            if (it.key == key && now < it.retryAfterNanos) return null
+            if (it.key == key && now < it.retryAfterNanos) {
+                if (!isIntentionallyBlank) missingConfiguredTextureInFrame = true
+                return null
+            }
         }
 
         val parallax = if (usesParallax) {
@@ -765,7 +829,13 @@ class GpuWallpaperRenderer(
         }
         val bitmap = parallax?.bitmap
         if (bitmap == null || bitmap.isRecycled) {
-            missingAssets[slot] = MissingAsset(key, now + 2_000_000_000L)
+            val retryDelayNanos = if (isIntentionallyBlank) {
+                BLANK_ASSET_RETRY_NANOS
+            } else {
+                missingConfiguredTextureInFrame = true
+                TRANSIENT_ASSET_RETRY_NANOS
+            }
+            missingAssets[slot] = MissingAsset(key, now + retryDelayNanos)
             return null
         }
         val textureId = uploadBitmap(bitmap)
@@ -792,7 +862,8 @@ class GpuWallpaperRenderer(
             texture
         } catch (error: Throwable) {
             glDeleteTextures(textureId, blurredTextureId)
-            missingAssets[slot] = MissingAsset(key, now + 2_000_000_000L)
+            missingConfiguredTextureInFrame = true
+            missingAssets[slot] = MissingAsset(key, now + TRANSIENT_ASSET_RETRY_NANOS)
             throw error
         }
     }
@@ -1435,7 +1506,9 @@ class GpuWallpaperRenderer(
             EGL14.eglTerminate(display)
         }
         eglSurface = null
+        boundWindowSurface = null
         eglContext = null
+        eglConfig = null
         eglDisplay = null
     }
 
@@ -1443,6 +1516,11 @@ class GpuWallpaperRenderer(
         private const val TAG = "GpuWallpaperRenderer"
         private const val MAX_BLUR_RADIUS = 511
         private const val MAX_BLUR_TAPS = 32
+        private const val MAX_CONSECUTIVE_GL_FAILURES = 3
+        private const val ASSET_RETRY_DELAY_MS = 110L
+        private const val TRANSIENT_RETRY_DELAY_MS = 16L
+        private const val TRANSIENT_ASSET_RETRY_NANOS = 100_000_000L
+        private const val BLANK_ASSET_RETRY_NANOS = 2_000_000_000L
         private const val TEXTURE_VERTEX_SHADER = """
             uniform mat4 uMvp;
             attribute vec2 aPosition;

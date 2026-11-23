@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.darken.ExtraDimDetector
+import com.example.data.model.BatterySaverConfig
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.DarkenConfig
 import com.example.data.model.OffsetEasingStyle
@@ -19,6 +20,8 @@ import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperAppState
 import com.example.data.repository.WallpaperRepository
+import com.example.power.BatterySaverMonitor
+import com.example.power.PowerSnapshot
 import com.example.service.MultiPageWallpaperService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,8 +58,21 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
 
+    private val _powerSnapshot = MutableStateFlow(PowerSnapshot())
+    val powerSnapshot: StateFlow<PowerSnapshot> = _powerSnapshot.asStateFlow()
+
+    private val batterySaverMonitor = BatterySaverMonitor(application) { snapshot ->
+        _powerSnapshot.value = snapshot
+    }
+
     init {
         checkStatus()
+        batterySaverMonitor.start()
+    }
+
+    override fun onCleared() {
+        batterySaverMonitor.stop()
+        super.onCleared()
     }
 
     fun checkStatus() {
@@ -341,6 +357,11 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
             "Unsupported animation frame rate: $frameRate"
         }
         repository.updateState { it.copy(animationFrameRate = frameRate) }
+    }
+
+    fun updateBatterySaverConfig(config: BatterySaverConfig) {
+        val normalized = config.normalized()
+        repository.updateState { it.copy(batterySaver = normalized) }
     }
 
     fun updateDarkenConfig(darkenConfig: DarkenConfig) {
