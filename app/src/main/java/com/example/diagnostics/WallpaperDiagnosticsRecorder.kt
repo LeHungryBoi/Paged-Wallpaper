@@ -220,6 +220,15 @@ object WallpaperDiagnosticsRecorder {
         }
     }
 
+    fun clearHistory() {
+        synchronized(lock) {
+            preferences?.edit()
+                ?.remove(HISTORY_KEY)
+                ?.apply()
+            mutableState.value = mutableState.value.copy(history = emptyList())
+        }
+    }
+
     fun recordOffsetUpdate(xOffset: Float, isVisible: Boolean) {
         if (activeSession == null) return
         synchronized(lock) {

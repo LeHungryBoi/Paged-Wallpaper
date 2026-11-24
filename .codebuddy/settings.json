@@ -1,0 +1,9 @@
+{
+  "subagents": {
+    "agents": {
+      "code-explorer": {
+        "model": "Hy4 flash"
+      }
+    }
+  }
+}

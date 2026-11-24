@@ -278,7 +278,60 @@ class DarkenControlsTest {
     }
 
     @Test
-    fun effectsScreenProvidesThreeTriggerChoicesAndCustomScheduleWithoutCacheUi() {
+    fun batterySaverDarkenTriggerAndSupplementalToggleEvaluateAndRoundTripJson() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        val batteryOnly = DarkenConfig(
+            enabled = true,
+            triggerMode = DarkenTriggerMode.BATTERY_SAVER_ONLY
+        )
+        assertTrue(batteryOnly.useBatterySaver)
+        assertFalse(batteryOnly.useDarkMode)
+        assertFalse(batteryOnly.useSchedule)
+        assertFalse(
+            ExtraDimDetector.isDimConditionActive(
+                context,
+                batteryOnly,
+                isDarkModeOverride = true,
+                isBatterySaverActive = false
+            )
+        )
+        assertTrue(
+            ExtraDimDetector.isDimConditionActive(
+                context,
+                batteryOnly,
+                isDarkModeOverride = false,
+                isBatterySaverActive = true
+            )
+        )
+
+        val supplemental = DarkenConfig(
+            enabled = true,
+            triggerMode = DarkenTriggerMode.DARK_MODE_ONLY,
+            darkenOnBatterySaver = true
+        )
+        assertTrue(supplemental.useBatterySaver)
+        assertTrue(
+            ExtraDimDetector.isDimConditionActive(
+                context,
+                supplemental,
+                isDarkModeOverride = false,
+                isBatterySaverActive = true
+            )
+        )
+
+        val roundTrip = DarkenConfig.fromJson(supplemental.toJson())
+        assertEquals(DarkenTriggerMode.DARK_MODE_ONLY, roundTrip.triggerMode)
+        assertTrue(roundTrip.darkenOnBatterySaver)
+        assertTrue(roundTrip.enabled)
+
+        val batteryOnlyRoundTrip = DarkenConfig.fromJson(batteryOnly.toJson())
+        assertEquals(DarkenTriggerMode.BATTERY_SAVER_ONLY, batteryOnlyRoundTrip.triggerMode)
+        assertTrue(batteryOnlyRoundTrip.useBatterySaver)
+    }
+
+    @Test
+    fun effectsScreenProvidesTriggerChoicesBatterySaverConsolidationAndPopupCancelConfirm() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val viewModel = WallpaperViewModel(app)
         viewModel.updateDarkenConfig(
@@ -298,27 +351,41 @@ class DarkenControlsTest {
             }
         }
 
-        // Enable Darken Controls master switch
-        composeRule.onNodeWithTag("toggle_darken_enabled").performScrollTo().performClick()
-        assertTrue(viewModel.appState.value.darken.enabled)
-
-        // Verify no cache-related copy or global dim slider is exposed in EffectsScreen
+        // Verify no cache-related copy or global dim slider is exposed on dashboard
         assertEquals(0, composeRule.onAllNodesWithText("cache", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         assertEquals(0, composeRule.onAllNodesWithText("Pre-generate", substring = true, ignoreCase = true).fetchSemanticsNodes().size)
         composeRule.onNodeWithTag("dim_factor_slider").assertDoesNotExist()
+        // Toggles are not exposed inline while scrolling
+        composeRule.onNodeWithTag("toggle_darken_enabled").assertDoesNotExist()
 
-        // Choice 1: Scheduled Time Only
+        // Open consolidated Darken & Battery conditions editor popup, toggle on, then Cancel -> state stays disabled
+        composeRule.onNodeWithTag("darken_settings_card_edit_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("darken_conditions_editor_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("toggle_darken_enabled").performScrollTo().performClick()
+        composeRule.onNodeWithTag("editor_cancel_button").performClick()
+        composeRule.waitForIdle()
+        assertFalse(viewModel.appState.value.darken.enabled)
+
+        // Re-open editor popup, enable darken, verify consolidated controls & 4 trigger choices
+        composeRule.onNodeWithTag("darken_settings_card_edit_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("toggle_darken_enabled").performScrollTo().performClick()
+
+        // Choice 1: Battery Saver Only & consolidated Battery Saver section
+        composeRule.onNodeWithTag("darken_mode_battery_saver_only").performScrollTo().performClick()
+        composeRule.onNodeWithTag("toggle_battery_saver").performScrollTo().assertIsDisplayed()
+
+        // Choice 2: Scheduled Time Only
         composeRule.onNodeWithTag("darken_mode_schedule_only").performScrollTo().performClick()
-        assertEquals(DarkenTriggerMode.SCHEDULE_ONLY, viewModel.appState.value.darken.triggerMode)
         composeRule.onNodeWithTag("darken_schedule_start_button").performScrollTo().assertIsDisplayed()
 
-        // Choice 2: System Dark Mode Only
+        // Choice 3: System Dark Mode Only
         composeRule.onNodeWithTag("darken_mode_dark_mode_only").performScrollTo().performClick()
-        assertEquals(DarkenTriggerMode.DARK_MODE_ONLY, viewModel.appState.value.darken.triggerMode)
+        composeRule.onNodeWithTag("toggle_darken_on_battery_saver").performScrollTo().performClick()
 
-        // Choice 3: Both (Either Triggers)
+        // Choice 4: Both (Either Triggers)
         composeRule.onNodeWithTag("darken_mode_both_or").performScrollTo().performClick()
-        assertEquals(DarkenTriggerMode.BOTH_OR, viewModel.appState.value.darken.triggerMode)
 
         // Open Start time dialog, switch to keyboard input, enter 21:45, and confirm
         composeRule.onNodeWithTag("darken_schedule_start_button").performScrollTo().performClick()
@@ -328,10 +395,18 @@ class DarkenControlsTest {
         composeRule.onNodeWithTag("darken_time_picker_confirm").performClick()
         composeRule.waitForIdle()
 
+        // Confirm editor popup
+        composeRule.onNodeWithTag("editor_confirm_button").performClick()
+        composeRule.waitForIdle()
+
         val updated = viewModel.appState.value.darken
+        assertTrue(updated.enabled)
+        assertEquals(DarkenTriggerMode.BOTH_OR, updated.triggerMode)
+        assertTrue(updated.darkenOnBatterySaver)
         assertEquals(21, updated.scheduleStartHour)
         assertEquals(45, updated.scheduleStartMinute)
-        composeRule.onNodeWithText("21:45").assertIsDisplayed()
+        composeRule.onNodeWithTag("darken_settings_card").performScrollTo()
+        composeRule.onNodeWithText("21:45 – 07:00").assertIsDisplayed()
     }
 
     @Test

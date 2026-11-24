@@ -57,8 +57,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -75,13 +77,13 @@ fun MediaLibraryScreen(
             Tab(
                 selected = selectedLibraryTab == 0,
                 onClick = { selectedLibraryTab = 0 },
-                text = { Text("Media") },
+                text = { Text(stringResource(R.string.library_tab_media)) },
                 modifier = Modifier.testTag("library_media_tab")
             )
             Tab(
                 selected = selectedLibraryTab == 1,
                 onClick = { selectedLibraryTab = 1 },
-                text = { Text("App icon") },
+                text = { Text(stringResource(R.string.library_tab_app_icon)) },
                 modifier = Modifier.testTag("library_app_icon_tab")
             )
         }
@@ -140,12 +142,12 @@ private fun OriginalMediaLibraryContent(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Media Library", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.library_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 }
                 Text("${originals.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-                "Original image copies are kept here. Cropping, fill, and parallax settings belong to each preset page.",
+                stringResource(R.string.library_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -157,7 +159,7 @@ private fun OriginalMediaLibraryContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Text("Importing…", modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.library_importing), modifier = Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
                 }
             }
 
@@ -170,7 +172,7 @@ private fun OriginalMediaLibraryContent(
                             modifier = Modifier.size(48.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
-                        Text("Media Library is empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.library_empty), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Button(
                             onClick = {
                                 photoPickerLauncher.launch(
@@ -179,7 +181,7 @@ private fun OriginalMediaLibraryContent(
                             },
                             modifier = Modifier.testTag("empty_state_import_button")
                         ) {
-                            Text("Import media")
+                            Text(stringResource(R.string.library_import_btn))
                         }
                     }
                 }
@@ -209,7 +211,7 @@ private fun OriginalMediaLibraryContent(
                                     if (thumbnail != null) {
                                         Image(
                                             bitmap = thumbnail.asImageBitmap(),
-                                            contentDescription = "Media preview",
+                                            contentDescription = stringResource(R.string.library_media_preview_cd),
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
@@ -223,7 +225,10 @@ private fun OriginalMediaLibraryContent(
                                     ) {
                                         Icon(
                                             if (media.isDarkDetected) Icons.Default.DarkMode else Icons.Default.LightMode,
-                                            contentDescription = if (media.isDarkDetected) "Dark original" else "Original image",
+                                            contentDescription = stringResource(
+                                                if (media.isDarkDetected) R.string.library_dark_original_cd
+                                                else R.string.library_original_cd
+                                            ),
                                             tint = if (media.isDarkDetected) Color.Yellow else Color.White,
                                             modifier = Modifier.padding(6.dp).size(16.dp)
                                         )
@@ -240,16 +245,21 @@ private fun OriginalMediaLibraryContent(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            "Original image copy",
+                                            stringResource(R.string.library_original_copy),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                     IconButton(
                                         onClick = { viewModel.deleteOriginal(media.id) },
-                                        modifier = Modifier.size(36.dp).testTag("delete_media_${media.id}")
+                                        modifier = Modifier.size(48.dp).testTag("delete_media_${media.id}")
                                     ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete media", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = stringResource(R.string.library_delete_media_cd),
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
                                     }
                                 }
                                 Spacer(Modifier.height(4.dp))
@@ -270,7 +280,7 @@ private fun OriginalMediaLibraryContent(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).testTag("import_fab"),
                 containerColor = MaterialTheme.colorScheme.primary
             ) {
-                Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Import media")
+                Icon(Icons.Default.AddPhotoAlternate, contentDescription = stringResource(R.string.library_import_btn))
             }
         }
     }

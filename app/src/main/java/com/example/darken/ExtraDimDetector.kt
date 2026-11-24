@@ -52,7 +52,8 @@ object ExtraDimDetector {
         config: DarkenConfig,
         isDarkModeOverride: Boolean? = null,
         hourOfDay: Int? = null,
-        minute: Int? = null
+        minute: Int? = null,
+        isBatterySaverActive: Boolean = false
     ): Boolean {
         if (!config.enabled) return false
         val darkModeActive = config.triggerMode.usesDarkMode &&
@@ -63,11 +64,13 @@ object ExtraDimDetector {
             } else {
                 isScheduledActive(config)
             }
-        return when (config.triggerMode) {
+        val modeTriggered = when (config.triggerMode) {
             DarkenTriggerMode.SCHEDULE_ONLY -> scheduleActive
             DarkenTriggerMode.DARK_MODE_ONLY -> darkModeActive
             DarkenTriggerMode.BOTH_OR -> darkModeActive || scheduleActive
+            DarkenTriggerMode.BATTERY_SAVER_ONLY -> isBatterySaverActive
         }
+        return modeTriggered || (config.darkenOnBatterySaver && isBatterySaverActive)
     }
 
     /**

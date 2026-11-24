@@ -48,8 +48,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.data.model.OriginalMedia
 import com.example.ui.WallpaperViewModel
 import kotlinx.coroutines.Dispatchers
@@ -97,14 +99,14 @@ fun MediaPickerScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Text(
-                        "Choose for Screen ${pageIndex + 1}",
+                        stringResource(R.string.picker_title, pageIndex + 1),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, enabled = !isAssigning, modifier = Modifier.testTag("media_picker_back")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -118,9 +120,9 @@ fun MediaPickerScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(44.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("No media yet", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.picker_empty), style = MaterialTheme.typography.titleMedium)
                     Button(onClick = onOpenLibrary, enabled = !isAssigning) {
-                        Text("Open Media Library")
+                        Text(stringResource(R.string.picker_open_library))
                     }
                 }
             }
@@ -154,7 +156,7 @@ fun MediaPickerScreen(
                                     } else {
                                         Image(
                                             bitmap = thumbnail.asImageBitmap(),
-                                            contentDescription = "Select media",
+                                            contentDescription = stringResource(R.string.picker_select_media_cd),
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )

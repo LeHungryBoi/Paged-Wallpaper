@@ -1,12 +1,11 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,46 +19,46 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,18 +69,23 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.ParallaxMotionSettings
 import com.example.data.model.RevealMotionRates
 import com.example.transition.TransitionRegistry
 import com.example.ui.WallpaperViewModel
+import com.example.ui.localizedTransitionName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private enum class PresetAction {
+    CREATE,
     DUPLICATE,
     RENAME
 }
@@ -96,7 +100,6 @@ private fun TransitionSelector(
     onSelect: (String) -> Unit
 ) {
     var expanded by remember(boundaryIndex, itemName) { mutableStateOf(false) }
-    val selectedTransition = TransitionRegistry.transitions.firstOrNull { it.id == selectedId }
 
     Box {
         Surface(
@@ -130,13 +133,16 @@ private fun TransitionSelector(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(label, style = MaterialTheme.typography.labelSmall)
                     Text(
-                        selectedTransition?.displayName ?: selectedId,
+                        localizedTransitionName(selectedId),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2
                     )
                 }
-                Icon(Icons.Default.ExpandMore, contentDescription = "Choose animation")
+                Icon(
+                    Icons.Default.ExpandMore,
+                    contentDescription = stringResource(R.string.studio_choose_animation_cd)
+                )
             }
         }
 
@@ -146,7 +152,7 @@ private fun TransitionSelector(
         ) {
             TransitionRegistry.transitions.forEach { transition ->
                 DropdownMenuItem(
-                    text = { Text(transition.displayName) },
+                    text = { Text(localizedTransitionName(transition.id)) },
                     onClick = {
                         onSelect(transition.id)
                         expanded = false
@@ -176,7 +182,7 @@ private fun ParallaxMotionControls(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                "Slow image motion",
+                stringResource(R.string.studio_slow_image_motion),
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.weight(1f)
             )
@@ -189,7 +195,10 @@ private fun ParallaxMotionControls(
             )
         }
         Text(
-            "Outgoing motion rate: ${(settings.outgoingMotionRate * 100).roundToInt()}%",
+            stringResource(
+                R.string.studio_outgoing_motion_rate,
+                (settings.outgoingMotionRate * 100).roundToInt()
+            ),
             style = MaterialTheme.typography.labelSmall
         )
         Slider(
@@ -199,7 +208,10 @@ private fun ParallaxMotionControls(
             modifier = Modifier.testTag("parallax_outgoing_motion_rate_${boundaryIndex}_$itemName")
         )
         Text(
-            "Incoming motion rate: ${(settings.incomingMotionRate * 100).roundToInt()}%",
+            stringResource(
+                R.string.studio_incoming_motion_rate,
+                (settings.incomingMotionRate * 100).roundToInt()
+            ),
             style = MaterialTheme.typography.labelSmall
         )
         Slider(
@@ -209,7 +221,7 @@ private fun ParallaxMotionControls(
             modifier = Modifier.testTag("parallax_incoming_motion_rate_${boundaryIndex}_$itemName")
         )
         Text(
-            "100% travels each image's full parallax reach.",
+            stringResource(R.string.studio_parallax_reach_hint),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -228,7 +240,10 @@ private fun RevealMotionRateControls(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Text(
-            "Outgoing reveal motion rate: ${(rates.outgoingRate * 100).roundToInt()}%",
+            stringResource(
+                R.string.studio_reveal_outgoing_rate,
+                (rates.outgoingRate * 100).roundToInt()
+            ),
             style = MaterialTheme.typography.labelSmall
         )
         Slider(
@@ -238,7 +253,10 @@ private fun RevealMotionRateControls(
             modifier = Modifier.testTag("reveal_outgoing_motion_rate_${boundaryIndex}_$itemName")
         )
         Text(
-            "Incoming reveal motion rate: ${(rates.incomingRate * 100).roundToInt()}%",
+            stringResource(
+                R.string.studio_reveal_incoming_rate,
+                (rates.incomingRate * 100).roundToInt()
+            ),
             style = MaterialTheme.typography.labelSmall
         )
         Slider(
@@ -248,7 +266,7 @@ private fun RevealMotionRateControls(
             modifier = Modifier.testTag("reveal_incoming_motion_rate_${boundaryIndex}_$itemName")
         )
         Text(
-            "100% travels each image's full parallax reach.",
+            stringResource(R.string.studio_parallax_reach_hint),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -274,7 +292,11 @@ private fun PageTransitionControls(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "Page ${boundaryIndex + 1} / ${boundaryIndex + 2}",
+                text = stringResource(
+                    R.string.studio_boundary_title,
+                    boundaryIndex + 1,
+                    boundaryIndex + 2
+                ),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -285,7 +307,7 @@ private fun PageTransitionControls(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "Separate directions",
+                    text = stringResource(R.string.studio_separate_directions),
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.weight(1f)
                 )
@@ -316,7 +338,7 @@ private fun PageTransitionControls(
                 TransitionSelector(
                     boundaryIndex = boundaryIndex,
                     itemName = "right",
-                    label = "Next page",
+                    label = stringResource(R.string.studio_next_page),
                     selectedId = setting.rightTransitionId,
                     icon = Icons.AutoMirrored.Filled.ArrowForward,
                     onSelect = { onUpdate(setting.copy(rightTransitionId = it)) }
@@ -342,7 +364,7 @@ private fun PageTransitionControls(
                 TransitionSelector(
                     boundaryIndex = boundaryIndex,
                     itemName = "left",
-                    label = "Previous page",
+                    label = stringResource(R.string.studio_previous_page),
                     selectedId = setting.leftTransitionId,
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     onSelect = { onUpdate(setting.copy(leftTransitionId = it)) }
@@ -369,7 +391,7 @@ private fun PageTransitionControls(
                 TransitionSelector(
                     boundaryIndex = boundaryIndex,
                     itemName = "universal",
-                    label = "Both directions",
+                    label = stringResource(R.string.studio_both_directions),
                     selectedId = setting.universalTransitionId,
                     icon = Icons.Default.SwapHoriz,
                     onSelect = { onUpdate(setting.copy(universalTransitionId = it)) }
@@ -403,8 +425,7 @@ private fun PageTransitionControls(
 fun StudioScreen(
     viewModel: WallpaperViewModel,
     onChooseMediaForPage: (Int) -> Unit,
-    onEditPage: (Int) -> Unit,
-    onNavigateToCalibration: () -> Unit
+    onEditPage: (Int) -> Unit
 ) {
     val appState by viewModel.appState.collectAsState()
     val originals by viewModel.originals.collectAsState()
@@ -435,22 +456,57 @@ fun StudioScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
             Column(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Presets", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        stringResource(R.string.studio_presets_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    val defaultNewPresetName = stringResource(
+                        R.string.studio_preset_default_name,
+                        appState.presets.size + 1
+                    )
+                    FilledTonalButton(
+                        onClick = {
+                            presetActionId = null
+                            presetName = defaultNewPresetName.take(40)
+                            presetAction = PresetAction.CREATE
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("create_preset_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            stringResource(R.string.studio_new_preset),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     appState.presets.forEach { preset ->
                         var menuExpanded by remember(preset.id) { mutableStateOf(false) }
+                        val copySuffix = stringResource(R.string.studio_preset_copy_suffix, preset.name)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            androidx.compose.material3.FilterChip(
+                            FilterChip(
                                 selected = preset.id == appState.activePresetId,
                                 onClick = {
                                     if (preset.id != appState.activePresetId) {
@@ -464,29 +520,39 @@ fun StudioScreen(
                                 IconButton(
                                     onClick = { menuExpanded = true },
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(48.dp)
                                         .testTag("preset_menu_${preset.id}")
                                 ) {
-                                    Icon(Icons.Default.MoreVert, contentDescription = "${preset.name} actions")
+                                    Icon(
+                                        Icons.Default.MoreVert,
+                                        contentDescription = stringResource(
+                                            R.string.studio_preset_actions_cd,
+                                            preset.name
+                                        )
+                                    )
                                 }
                                 DropdownMenu(
                                     expanded = menuExpanded,
                                     onDismissRequest = { menuExpanded = false }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Duplicate") },
-                                        leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null) },
+                                        text = { Text(stringResource(R.string.studio_preset_duplicate)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = null)
+                                        },
                                         onClick = {
                                             presetActionId = preset.id
                                             presetAction = PresetAction.DUPLICATE
-                                            presetName = "${preset.name} copy".take(40)
+                                            presetName = copySuffix.take(40)
                                             menuExpanded = false
                                         },
                                         modifier = Modifier.testTag("duplicate_preset_${preset.id}")
                                     )
                                     DropdownMenuItem(
-                                        text = { Text("Rename") },
-                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                        text = { Text(stringResource(R.string.studio_preset_rename)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.Edit, contentDescription = null)
+                                        },
                                         onClick = {
                                             presetActionId = preset.id
                                             presetAction = PresetAction.RENAME
@@ -497,7 +563,7 @@ fun StudioScreen(
                                     )
                                     if (appState.presets.size > 1) {
                                         DropdownMenuItem(
-                                            text = { Text("Delete") },
+                                            text = { Text(stringResource(R.string.action_delete)) },
                                             leadingIcon = {
                                                 Icon(
                                                     Icons.Default.Delete,
@@ -517,283 +583,270 @@ fun StudioScreen(
                         }
                     }
                 }
-                Text(
-                    "Changes to pages and effects are saved automatically to the selected preset.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
 
-        // Section: Multi-Screen Carousel
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "Launcher Pages (${appState.calibration.pageCount} Screens)",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Tap a screen to choose its wallpaper",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        Column(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                appState.pages.forEachIndexed { index, page ->
+                    val isHome = index == appState.calibration.homePageIndex
+                    val bmp = pageBitmaps[index]
+                    val hasEditableOriginal = originals.any { it.id == page.originalId }
 
-                FilledTonalButton(
-                    onClick = onNavigateToCalibration,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.testTag("quick_calibrate_button")
-                ) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Calibrate", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-
-            Column(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    appState.pages.forEachIndexed { index, page ->
-                        val isHome = index == appState.calibration.homePageIndex
-                        val bmp = pageBitmaps[index]
-                        val hasEditableOriginal = originals.any { it.id == page.originalId }
-
-                        Card(
-                            modifier = Modifier
-                                .width(180.dp)
-                                .testTag("page_card_$index"),
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-                            ),
-                            border = if (isHome) {
-                                androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                            } else null
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                // Phone Screen Frame Thumbnail
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(9f / 17f)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color.Black)
-                                        .clickable {
-                                            if (hasEditableOriginal) onEditPage(index)
-                                            else onChooseMediaForPage(index)
-                                        }
-                                        .testTag("page_preview_$index"),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (bmp != null) {
-                                        Image(
-                                            bitmap = bmp.asImageBitmap(),
-                                            contentDescription = "Page ${index + 1}",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Text(
-                                            text = if (page.isBlank) {
-                                                "Empty page"
-                                            } else if (page.originalId != null) {
-                                                "Preview unavailable"
-                                            } else {
-                                                "Built-in wallpaper"
-                                            },
-                                            color = Color.White.copy(alpha = 0.6f),
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
+                    Card(
+                        modifier = Modifier
+                            .width(180.dp)
+                            .testTag("page_card_$index"),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        ),
+                        border = if (isHome) {
+                            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                        } else {
+                            null
+                        }
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(9f / 17f)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color.Black)
+                                    .clickable {
+                                        if (hasEditableOriginal) onEditPage(index)
+                                        else onChooseMediaForPage(index)
                                     }
-
-                                    // Home badge
-                                    if (isHome) {
-                                        Surface(
-                                            shape = RoundedCornerShape(bottomEnd = 10.dp),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.align(Alignment.TopStart)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(Icons.Filled.Home, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(12.dp))
-                                                Text("HOME", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    } else {
-                                        Surface(
-                                            onClick = { viewModel.setHomePage(index) },
-                                            shape = RoundedCornerShape(bottomEnd = 10.dp),
-                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                                            modifier = Modifier
-                                                .align(Alignment.TopStart)
-                                                .testTag("set_home_${index}_button")
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Filled.Home,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                                Text(
-                                                    "MAKE HOME",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    // Dark icon badge
-                                    if (page.isAlreadyDark) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color.Black.copy(alpha = 0.6f),
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .padding(6.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.DarkMode,
-                                                contentDescription = "Already Dark",
-                                                tint = Color.Yellow,
-                                                modifier = Modifier
-                                                    .padding(4.dp)
-                                                    .size(14.dp)
-                                            )
-                                        }
-                                    }
-
-                                    if (hasEditableOriginal) {
-                                        Surface(
-                                            modifier = Modifier
-                                                .align(Alignment.BottomCenter)
-                                                .fillMaxWidth()
-                                                .clickable { onEditPage(index) }
-                                                .testTag("edit_page_${index}_preview_action"),
-                                            color = Color.Black.copy(alpha = 0.72f),
-                                            shape = RoundedCornerShape(
-                                                bottomStart = 14.dp,
-                                                bottomEnd = 14.dp
-                                            )
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp, vertical = 7.dp),
-                                                horizontalArrangement = Arrangement.Center,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Edit,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(14.dp),
-                                                    tint = Color.White
-                                                )
-                                                Spacer(Modifier.width(5.dp))
-                                                Text(
-                                                    "Edit page settings",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = Color.White,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
+                                    .testTag("page_preview_$index"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = stringResource(
+                                            R.string.studio_page_title,
+                                            index + 1
+                                        ),
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
                                     Text(
-                                        text = "Screen ${index + 1}",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.Bold
+                                        text = if (page.isBlank) {
+                                            stringResource(R.string.studio_source_empty)
+                                        } else if (page.originalId != null) {
+                                            stringResource(R.string.studio_preview_unavailable)
+                                        } else {
+                                            stringResource(R.string.studio_source_builtin)
+                                        },
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        style = MaterialTheme.typography.bodySmall
                                     )
                                 }
 
-                                Text(
-                                    text = if (originals.any { it.id == page.originalId }) {
-                                        "Assigned from media library"
-                                    } else if (page.isBlank) {
-                                        "Empty page"
-                                    } else {
-                                        "Built-in wallpaper"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-
-                                Text(
-                                    text = if (isHome) "Home Screen (Center)" else "Offset: ${String.format("%.2f", appState.calibration.customOffsets.getOrNull(index) ?: 0f)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-
-                                Button(
-                                    onClick = { onChooseMediaForPage(index) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .testTag("replace_page_${index}_button"),
-                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Icon(Icons.Default.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Choose image", style = MaterialTheme.typography.labelLarge)
+                                if (isHome) {
+                                    Surface(
+                                        shape = RoundedCornerShape(bottomEnd = 10.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.align(Alignment.TopStart)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Home,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Text(
+                                                stringResource(R.string.studio_home_badge),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Surface(
+                                        onClick = { viewModel.setHomePage(index) },
+                                        shape = RoundedCornerShape(bottomEnd = 10.dp),
+                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .testTag("set_home_${index}_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Home,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Text(
+                                                stringResource(R.string.studio_make_home),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
                                 }
 
+                                if (page.isAlreadyDark) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color.Black.copy(alpha = 0.6f),
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .padding(6.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.DarkMode,
+                                            contentDescription = stringResource(R.string.studio_already_dark_cd),
+                                            tint = Color.Yellow,
+                                            modifier = Modifier
+                                                .padding(4.dp)
+                                                .size(14.dp)
+                                        )
+                                    }
+                                }
+
+                                if (hasEditableOriginal) {
+                                    Surface(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .fillMaxWidth()
+                                            .clickable { onEditPage(index) }
+                                            .testTag("edit_page_${index}_preview_action"),
+                                        color = Color.Black.copy(alpha = 0.72f),
+                                        shape = RoundedCornerShape(
+                                            bottomStart = 14.dp,
+                                            bottomEnd = 14.dp
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 7.dp),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp),
+                                                tint = Color.White
+                                            )
+                                            Spacer(Modifier.width(5.dp))
+                                            Text(
+                                                stringResource(R.string.studio_edit_page_settings),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = stringResource(R.string.studio_screen_title, index + 1),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                text = if (originals.any { it.id == page.originalId }) {
+                                    stringResource(R.string.studio_source_library)
+                                } else if (page.isBlank) {
+                                    stringResource(R.string.studio_source_empty)
+                                } else {
+                                    stringResource(R.string.studio_source_builtin)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            Text(
+                                text = if (isHome) {
+                                    stringResource(R.string.studio_home_center)
+                                } else {
+                                    stringResource(
+                                        R.string.studio_offset_value,
+                                        String.format(
+                                            Locale.US,
+                                            "%.2f",
+                                            appState.calibration.customOffsets.getOrNull(index) ?: 0f
+                                        )
+                                    )
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            Button(
+                                onClick = { onChooseMediaForPage(index) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("replace_page_${index}_button"),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.PhotoLibrary,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    stringResource(R.string.studio_choose_image),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
                         }
                     }
                 }
+            }
 
-                if (appState.transitions.isNotEmpty()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Spacer(modifier = Modifier.width(83.dp))
-                        appState.transitions.forEachIndexed { boundaryIndex, setting ->
-                            PageTransitionControls(
-                                boundaryIndex = boundaryIndex,
-                                setting = setting,
-                                onUpdate = { viewModel.updatePageTransition(boundaryIndex, it) }
-                            )
-                        }
+            if (appState.transitions.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Spacer(modifier = Modifier.width(83.dp))
+                    appState.transitions.forEachIndexed { boundaryIndex, setting ->
+                        PageTransitionControls(
+                            boundaryIndex = boundaryIndex,
+                            setting = setting,
+                            onUpdate = { viewModel.updatePageTransition(boundaryIndex, it) }
+                        )
                     }
                 }
             }
         }
 
-        if (presetAction != null && presetActionId != null) {
+        presetAction?.let { action ->
             AlertDialog(
                 onDismissRequest = { presetAction = null },
                 title = {
                     Text(
-                        if (presetAction == PresetAction.DUPLICATE) {
-                            "Duplicate preset"
-                        } else {
-                            "Rename preset"
+                        when (action) {
+                            PresetAction.CREATE -> stringResource(R.string.studio_preset_new_title)
+                            PresetAction.DUPLICATE -> stringResource(R.string.studio_preset_duplicate_title)
+                            PresetAction.RENAME -> stringResource(R.string.studio_preset_rename_title)
                         }
                     )
                 },
@@ -801,7 +854,7 @@ fun StudioScreen(
                     OutlinedTextField(
                         value = presetName,
                         onValueChange = { presetName = it.take(40) },
-                        label = { Text("Name") },
+                        label = { Text(stringResource(R.string.studio_preset_name_label)) },
                         singleLine = true,
                         modifier = Modifier.testTag("preset_name_field")
                     )
@@ -809,37 +862,53 @@ fun StudioScreen(
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            val succeeded = presetActionId?.let { id ->
-                                when (presetAction) {
-                                    PresetAction.DUPLICATE ->
-                                        viewModel.duplicatePreset(id, presetName) != null
-                                    PresetAction.RENAME -> viewModel.renamePreset(id, presetName)
-                                    null -> false
-                                }
-                            } ?: false
+                            val succeeded = when (action) {
+                                PresetAction.CREATE -> viewModel.createDefaultPreset(presetName) != null
+                                PresetAction.DUPLICATE -> presetActionId?.let { id ->
+                                    viewModel.duplicatePreset(id, presetName) != null
+                                } ?: false
+                                PresetAction.RENAME -> presetActionId?.let { id ->
+                                    viewModel.renamePreset(id, presetName)
+                                } ?: false
+                            }
                             if (succeeded) presetAction = null
                         },
                         enabled = presetName.isNotBlank(),
                         modifier = Modifier.testTag("confirm_preset_action")
                     ) {
-                        Text(if (presetAction == PresetAction.DUPLICATE) "Duplicate" else "Rename")
+                        Text(
+                            when (action) {
+                                PresetAction.CREATE -> stringResource(R.string.studio_preset_create)
+                                PresetAction.DUPLICATE -> stringResource(R.string.studio_preset_duplicate)
+                                PresetAction.RENAME -> stringResource(R.string.studio_preset_rename)
+                            }
+                        )
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { presetAction = null }) { Text("Cancel") }
+                    TextButton(onClick = { presetAction = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
                 }
             )
         }
+
         presetToDelete?.let { (presetId, presetNameToDelete) ->
             AlertDialog(
                 onDismissRequest = { presetToDelete = null },
-                title = { Text("Delete preset?") },
+                title = { Text(stringResource(R.string.studio_preset_delete_title)) },
                 text = {
                     Text(
                         if (presetId == appState.activePresetId) {
-                            "Delete \"$presetNameToDelete\"? Another preset will become active. This cannot be undone."
+                            stringResource(
+                                R.string.studio_preset_delete_active_message,
+                                presetNameToDelete
+                            )
                         } else {
-                            "Delete \"$presetNameToDelete\"? This cannot be undone."
+                            stringResource(
+                                R.string.studio_preset_delete_message,
+                                presetNameToDelete
+                            )
                         }
                     )
                 },
@@ -849,10 +918,17 @@ fun StudioScreen(
                             viewModel.deletePreset(presetId)
                             presetToDelete = null
                         }
-                    ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    ) {
+                        Text(
+                            stringResource(R.string.action_delete),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = { presetToDelete = null }) { Text("Cancel") }
+                    TextButton(onClick = { presetToDelete = null }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
                 }
             )
         }

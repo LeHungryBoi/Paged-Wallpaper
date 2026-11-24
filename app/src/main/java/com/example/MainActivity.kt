@@ -1,11 +1,13 @@
 package com.example
 
+import android.content.Context
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,14 +19,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Wallpaper
-import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,37 +46,45 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
+import com.example.ui.AppLocaleHelper
+import com.example.ui.ProvideAppLocale
 import com.example.ui.WallpaperViewModel
 import com.example.ui.screens.EffectsScreen
-import com.example.ui.screens.MediaLibraryScreen
 import com.example.ui.screens.MediaEditorScreen
+import com.example.ui.screens.MediaLibraryScreen
 import com.example.ui.screens.MediaPickerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StudioScreen
 import com.example.ui.theme.MyApplicationTheme
 
 enum class AppTab(
-    val title: String,
+    @StringRes val titleRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
-    STUDIO("Studio", Icons.Filled.Wallpaper, Icons.Outlined.Wallpaper, "tab_studio"),
-    EFFECTS("Effects", Icons.Filled.Layers, Icons.Outlined.Layers, "tab_effects"),
-    MEDIA("Library", Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary, "tab_media"),
-    SETTINGS("Settings", Icons.Filled.Settings, Icons.Outlined.Settings, "tab_settings")
+    STUDIO(R.string.tab_studio, Icons.Filled.Wallpaper, Icons.Outlined.Wallpaper, "tab_studio"),
+    BEHAVIOR(R.string.tab_behavior, Icons.Filled.Tune, Icons.Outlined.Tune, "tab_behavior"),
+    MEDIA(R.string.tab_library, Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary, "tab_media"),
+    SETTINGS(R.string.tab_settings, Icons.Filled.Settings, Icons.Outlined.Settings, "tab_settings")
 }
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: WallpaperViewModel by viewModels()
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocaleHelper.wrapContext(newBase))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,9 +104,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScaffold(viewModel: WallpaperViewModel) {
+    val appState by viewModel.appState.collectAsState()
+    ProvideAppLocale(languageTag = appState.appLanguage) {
+        MainAppScaffoldContent(viewModel = viewModel)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
     val context = LocalContext.current
     var selectedTab by remember { mutableStateOf(AppTab.STUDIO) }
     var selectingMediaForPage by remember { mutableStateOf<Int?>(null) }
@@ -129,7 +148,11 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                     if (success) {
                         editingPageIndex = null
                     } else {
-                        Toast.makeText(context, "Could not save page settings.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.toast_save_page_failed),
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -150,7 +173,11 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                         if (success) {
                             selectingMediaForPage = null
                         } else {
-                            Toast.makeText(context, "Could not assign this media.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.toast_assign_media_failed),
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     }
                 }
@@ -168,7 +195,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                 CenterAlignedTopAppBar(
                     title = {
                         Text(
-                            text = "PaperPages",
+                            text = stringResource(R.string.app_name),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -177,17 +204,22 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                         containerColor = MaterialTheme.colorScheme.surface
                     ),
                     actions = {
+                        val actionLabel = if (isWallpaperActive) {
+                            stringResource(R.string.cd_preview_wallpaper_settings)
+                        } else {
+                            stringResource(R.string.cd_apply_live_wallpaper)
+                        }
                         Surface(
-                            shape = androidx.compose.foundation.shape.CircleShape,
-                            color = if (isWallpaperActive) androidx.compose.ui.graphics.Color(0xFF10B981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.primaryContainer,
+                            shape = CircleShape,
+                            color = if (isWallpaperActive) {
+                                Color(0xFF10B981).copy(alpha = 0.2f)
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
                             modifier = Modifier
                                 .padding(end = 12.dp)
                                 .clickable(
-                                    onClickLabel = if (isWallpaperActive) {
-                                        "Preview wallpaper settings"
-                                    } else {
-                                        "Apply live wallpaper"
-                                    },
+                                    onClickLabel = actionLabel,
                                     role = Role.Button
                                 ) {
                                     viewModel.applyWallpaperIntent(context)
@@ -195,11 +227,19 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                                 .testTag("apply_wallpaper_button")
                         ) {
                             Text(
-                                text = if (isWallpaperActive) "Active" else "Apply",
+                                text = if (isWallpaperActive) {
+                                    stringResource(R.string.status_active)
+                                } else {
+                                    stringResource(R.string.action_apply)
+                                },
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isWallpaperActive) androidx.compose.ui.graphics.Color(0xFF047857) else MaterialTheme.colorScheme.primary
+                                color = if (isWallpaperActive) {
+                                    Color(0xFF047857)
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                }
                             )
                         }
                     }
@@ -211,6 +251,7 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                 ) {
                     AppTab.values().forEach { tab ->
                         val isSelected = selectedTab == tab
+                        val tabTitle = stringResource(tab.titleRes)
                         NavigationBarItem(
                             selected = isSelected,
                             onClick = {
@@ -219,13 +260,13 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                             icon = {
                                 Icon(
                                     if (isSelected) tab.selectedIcon else tab.unselectedIcon,
-                                    contentDescription = tab.title,
+                                    contentDescription = tabTitle,
                                     modifier = Modifier.size(24.dp)
                                 )
                             },
                             label = {
                                 Text(
-                                    text = tab.title,
+                                    text = tabTitle,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                 )
@@ -254,15 +295,10 @@ fun MainAppScaffold(viewModel: WallpaperViewModel) {
                             },
                             onEditPage = { pageIndex ->
                                 editingPageIndex = pageIndex
-                            },
-                            onNavigateToCalibration = {
-                                selectedTab = AppTab.SETTINGS
                             }
                         )
-                        AppTab.EFFECTS -> EffectsScreen(viewModel = viewModel)
-                        AppTab.MEDIA -> MediaLibraryScreen(
-                            viewModel = viewModel
-                        )
+                        AppTab.BEHAVIOR -> EffectsScreen(viewModel = viewModel)
+                        AppTab.MEDIA -> MediaLibraryScreen(viewModel = viewModel)
                         AppTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
                     }
                 }

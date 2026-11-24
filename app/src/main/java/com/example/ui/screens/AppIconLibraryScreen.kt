@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.MainActivity
@@ -118,7 +119,7 @@ fun AppIconLibraryScreen() {
         panX = saved.panX
         panY = saved.panY
         if (saved.bitmap == null) {
-            error = "Could not read the saved icon image. Choose another image to continue."
+            error = context.getString(R.string.app_icon_err_read)
         }
         isReady = true
     }
@@ -142,7 +143,8 @@ fun AppIconLibraryScreen() {
                     panY = 0f
                     persistFraming(context, zoom, panX, panY)
                 } catch (e: Exception) {
-                    error = "Could not load this image: ${e.localizedMessage ?: "unknown error"}"
+                    val detail = e.localizedMessage ?: context.getString(R.string.app_icon_err_unknown)
+                    error = context.getString(R.string.app_icon_err_load, detail)
                 } finally {
                     isWorking = false
                 }
@@ -162,9 +164,9 @@ fun AppIconLibraryScreen() {
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text("App icon", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.app_icon_title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(
-                "Choose a photo, then drag or pinch it freely behind the three windows.",
+                stringResource(R.string.app_icon_subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -224,12 +226,15 @@ fun AppIconLibraryScreen() {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (hasCustomImage) "Custom image" else "PaperPages artwork",
+                            stringResource(
+                                if (hasCustomImage) R.string.app_icon_custom_image
+                                else R.string.app_icon_default_artwork
+                            ),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            "One image and its framing settings",
+                            stringResource(R.string.app_icon_framing_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -244,7 +249,7 @@ fun AppIconLibraryScreen() {
                         modifier = Modifier.testTag("choose_app_icon_image")
                     ) {
                         Icon(Icons.Default.AddPhotoAlternate, contentDescription = null)
-                        Text("Choose")
+                        Text(stringResource(R.string.app_icon_choose))
                     }
                 }
 
@@ -253,7 +258,7 @@ fun AppIconLibraryScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Zoom ${(zoom * 100f).roundToInt()}%",
+                        stringResource(R.string.app_icon_zoom, (zoom * 100f).roundToInt()),
                         style = MaterialTheme.typography.labelLarge
                     )
                     Spacer(Modifier.weight(1f))
@@ -265,7 +270,7 @@ fun AppIconLibraryScreen() {
                         enabled = isReady && source != null && zoom > MIN_ICON_ZOOM,
                         modifier = Modifier.testTag("app_icon_zoom_out")
                     ) {
-                        Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out")
+                        Icon(Icons.Default.ZoomOut, contentDescription = stringResource(R.string.app_icon_zoom_out_cd))
                     }
                     IconButton(
                         onClick = {
@@ -275,7 +280,7 @@ fun AppIconLibraryScreen() {
                         enabled = isReady && source != null && zoom < MAX_ICON_ZOOM,
                         modifier = Modifier.testTag("app_icon_zoom_in")
                     ) {
-                        Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in")
+                        Icon(Icons.Default.ZoomIn, contentDescription = stringResource(R.string.app_icon_zoom_in_cd))
                     }
                 }
                 OutlinedButton(
@@ -289,7 +294,7 @@ fun AppIconLibraryScreen() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.RestartAlt, contentDescription = null)
-                    Text("Reset framing")
+                    Text(stringResource(R.string.app_icon_reset_framing))
                 }
             }
         }
@@ -324,7 +329,8 @@ fun AppIconLibraryScreen() {
                         }
                         status = applyHomeScreenIcon(context, icon)
                     } catch (e: Exception) {
-                        error = "Could not apply the icon: ${e.localizedMessage ?: "unknown error"}"
+                        val detail = e.localizedMessage ?: context.getString(R.string.app_icon_err_unknown)
+                        error = context.getString(R.string.app_icon_err_apply, detail)
                     } finally {
                         isWorking = false
                     }
@@ -337,11 +343,11 @@ fun AppIconLibraryScreen() {
                 CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.size(8.dp))
             }
-            Text("Save & set home screen icon")
+            Text(stringResource(R.string.app_icon_save_btn))
         }
 
         Text(
-            "Android does not let apps replace their installed launcher icon at runtime. This creates or updates a PaperPages home-screen shortcut with your image.",
+            stringResource(R.string.app_icon_shortcut_note),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -520,7 +526,7 @@ private fun applyHomeScreenIcon(context: Context, bitmap: Bitmap): String {
     val shortcutManager = context.getSystemService(ShortcutManager::class.java)
         ?: throw IOException("Home-screen shortcuts are not available.")
     val shortcut = ShortcutInfo.Builder(context, APP_ICON_SHORTCUT_ID)
-        .setShortLabel("PaperPages")
+        .setShortLabel(context.getString(R.string.app_name))
         .setIntent(
             Intent(context, MainActivity::class.java)
                 .setAction(Intent.ACTION_VIEW)
@@ -533,7 +539,7 @@ private fun applyHomeScreenIcon(context: Context, bitmap: Bitmap): String {
         if (!shortcutManager.updateShortcuts(listOf(shortcut))) {
             throw IOException("The launcher did not accept the updated icon.")
         }
-        return "Home screen icon updated."
+        return context.getString(R.string.app_icon_updated)
     } else {
         if (!shortcutManager.isRequestPinShortcutSupported) {
             throw IOException("This launcher does not support adding home-screen shortcuts.")
@@ -541,6 +547,6 @@ private fun applyHomeScreenIcon(context: Context, bitmap: Bitmap): String {
         if (!shortcutManager.requestPinShortcut(shortcut, null)) {
             throw IOException("The launcher could not add the home-screen icon.")
         }
-        return "Follow your launcher prompt to add the home-screen icon."
+        return context.getString(R.string.app_icon_pinned)
     }
 }

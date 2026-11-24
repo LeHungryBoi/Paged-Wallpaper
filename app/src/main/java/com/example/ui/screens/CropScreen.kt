@@ -95,20 +95,28 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
+import com.example.ui.blurRainbowStyleLabelRes
+import com.example.ui.blurStyleDescRes
+import com.example.ui.blurStyleShortLabelRes
+import com.example.ui.blurTintModeLabelRes
+import com.example.ui.cropFillModeLabelRes
 import com.example.util.ImageProcessingUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private fun calculatePreviewTravel(
@@ -256,9 +264,9 @@ fun MediaEditorScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Edit page", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.crop_edit_page_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            "Settings are saved with this preset · ${media.width} × ${media.height}",
+                            stringResource(R.string.crop_edit_page_subtitle, media.width, media.height),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -266,7 +274,7 @@ fun MediaEditorScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = onDismiss, enabled = !isSaving, modifier = Modifier.testTag("crop_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -292,7 +300,7 @@ fun MediaEditorScreen(
                         modifier = Modifier.weight(1f).height(50.dp).testTag("crop_cancel_button"),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text("Cancel")
+                        Text(stringResource(R.string.action_cancel))
                     }
                     Button(
                         onClick = {
@@ -323,7 +331,7 @@ fun MediaEditorScreen(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(if (isSaving) "Saving…" else "Save page settings")
+                        Text(stringResource(if (isSaving) R.string.crop_saving else R.string.crop_save_settings))
                     }
                 }
             }
@@ -519,7 +527,7 @@ fun MediaEditorScreen(
                             }
                         }
                     } else {
-                        Text("Unable to load image", color = Color.White)
+                        Text(stringResource(R.string.crop_unable_to_load), color = Color.White)
                     }
                     if (showDarkenedPreview) {
                         Surface(
@@ -531,7 +539,10 @@ fun MediaEditorScreen(
                             color = Color.Black.copy(alpha = 0.72f)
                         ) {
                             Text(
-                                text = "Darkened preview · ${(dimFactor * 100f).roundToInt()}%",
+                                text = stringResource(
+                                    R.string.crop_darkened_preview_badge,
+                                    (dimFactor * 100f).roundToInt()
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -543,7 +554,7 @@ fun MediaEditorScreen(
 
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Full image: static page and parallax reach",
+                    stringResource(R.string.crop_full_image_title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -700,18 +711,18 @@ fun MediaEditorScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Static page",
+                        stringResource(R.string.crop_legend_static),
                         color = Color(0xFF50DCFF),
                         style = MaterialTheme.typography.labelSmall
                     )
                     Text(
-                        "Maximum parallax reach",
+                        stringResource(R.string.crop_legend_reach),
                         color = Color(0xFFFFB400),
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
                 Text(
-                    "Edge reach is also used for edge over-scroll.",
+                    stringResource(R.string.crop_edge_reach_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -726,7 +737,7 @@ fun MediaEditorScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("Image fit", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.crop_image_fit), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             CropFillMode.values().forEach { mode ->
                                 FilterChip(
@@ -743,7 +754,7 @@ fun MediaEditorScreen(
                                             blurStyle = BlurStyle.WIN7_AERO
                                         }
                                     },
-                                    label = { Text(mode.displayName, style = MaterialTheme.typography.labelSmall) },
+                                    label = { Text(stringResource(cropFillModeLabelRes(mode)), style = MaterialTheme.typography.labelSmall) },
                                     modifier = Modifier
                                         .weight(1f)
                                         .testTag("crop_fill_${mode.name.lowercase()}")
@@ -752,7 +763,7 @@ fun MediaEditorScreen(
                         }
                         if (cropFillMode != CropFillMode.CROP) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("Blur style", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.crop_blur_style), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -781,20 +792,20 @@ fun MediaEditorScreen(
                                                     modifier = Modifier.size(16.dp)
                                                 )
                                             },
-                                            label = { Text(style.shortLabel, style = MaterialTheme.typography.labelSmall) },
+                                            label = { Text(stringResource(blurStyleShortLabelRes(style)), style = MaterialTheme.typography.labelSmall) },
                                             modifier = Modifier.testTag("blur_style_${style.name.lowercase()}")
                                         )
                                     }
                                 }
                                 Text(
-                                    text = blurStyle.description,
+                                    text = stringResource(blurStyleDescRes(blurStyle)),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Background blur: ${(blurAmount * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                                Text(stringResource(R.string.crop_bg_blur, (blurAmount * 100).toInt()), style = MaterialTheme.typography.labelMedium)
                                 Slider(
                                     value = blurAmount,
                                     onValueChange = { blurAmount = it },
@@ -815,7 +826,7 @@ fun MediaEditorScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                     Text(
-                                        "Color tinting",
+                                        stringResource(R.string.crop_color_tinting),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
@@ -825,7 +836,7 @@ fun MediaEditorScreen(
                                         FilterChip(
                                             selected = blurTintMode == mode,
                                             onClick = { blurTintMode = mode },
-                                            label = { Text(mode.displayName, style = MaterialTheme.typography.labelSmall) },
+                                            label = { Text(stringResource(blurTintModeLabelRes(mode)), style = MaterialTheme.typography.labelSmall) },
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .testTag("tint_mode_${mode.name.lowercase()}")
@@ -842,6 +853,8 @@ fun MediaEditorScreen(
                                                 android.graphics.Color.colorToHSV(blurTintColor, it)
                                             }
                                         }
+                                        val selectTintColorCd = stringResource(R.string.crop_tint_swatch_cd)
+                                        val selectedTintColorCd = stringResource(R.string.crop_tint_selected_cd)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -857,7 +870,7 @@ fun MediaEditorScreen(
                                                         .clip(CircleShape)
                                                         .clickable(
                                                             role = Role.RadioButton,
-                                                            onClickLabel = "Select tint color"
+                                                            onClickLabel = selectTintColorCd
                                                         ) { blurTintColor = swatchColor }
                                                         .testTag("tint_swatch_$idx"),
                                                     contentAlignment = Alignment.Center
@@ -877,7 +890,7 @@ fun MediaEditorScreen(
                                                         if (selected) {
                                                             Icon(
                                                                 Icons.Default.Check,
-                                                                contentDescription = "Selected tint color",
+                                                                contentDescription = selectedTintColorCd,
                                                                 tint = if (Color(swatchColor).luminanceCompat() > 0.6f) Color.Black else Color.White,
                                                                 modifier = Modifier.size(16.dp)
                                                             )
@@ -898,7 +911,7 @@ fun MediaEditorScreen(
                                                     .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
                                             )
                                             Text(
-                                                "Custom hue",
+                                                stringResource(R.string.crop_custom_hue),
                                                 style = MaterialTheme.typography.labelSmall
                                             )
                                             Box(
@@ -934,7 +947,7 @@ fun MediaEditorScreen(
                                             modifier = Modifier.testTag("tint_hue_slider")
                                         )
                                         Text(
-                                            "Tint intensity: ${(blurTintIntensity * 100).toInt()}%",
+                                            stringResource(R.string.crop_tint_intensity, (blurTintIntensity * 100).toInt()),
                                             style = MaterialTheme.typography.labelMedium
                                         )
                                         Slider(
@@ -956,13 +969,13 @@ fun MediaEditorScreen(
                                                 FilterChip(
                                                     selected = blurRainbowStyle == style,
                                                     onClick = { blurRainbowStyle = style },
-                                                    label = { Text(style.displayName, style = MaterialTheme.typography.labelSmall) },
+                                                    label = { Text(stringResource(blurRainbowStyleLabelRes(style)), style = MaterialTheme.typography.labelSmall) },
                                                     modifier = Modifier.testTag("rainbow_style_${style.name.lowercase()}")
                                                 )
                                             }
                                         }
                                         Text(
-                                            "Rainbow intensity: ${(blurTintIntensity * 100).toInt()}%",
+                                            stringResource(R.string.crop_rainbow_intensity, (blurTintIntensity * 100).toInt()),
                                             style = MaterialTheme.typography.labelMedium
                                         )
                                         Slider(
@@ -978,7 +991,10 @@ fun MediaEditorScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.ZoomIn, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(8.dp))
-                            Text("Zoom: ${String.format("%.1fx", zoom)}", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                stringResource(R.string.crop_zoom_value, String.format(Locale.US, "%.1f", zoom)),
+                                style = MaterialTheme.typography.labelMedium
+                            )
                             Spacer(Modifier.width(12.dp))
                             Slider(
                                 value = zoom,
@@ -988,7 +1004,12 @@ fun MediaEditorScreen(
                             )
                         }
                         Text(
-                            "Parallax: ${(parallaxAmount * 100).toInt()}% · left ${with(density) { leftPreviewTravelPx.toDp().value.roundToInt() }} dp / right ${with(density) { rightPreviewTravelPx.toDp().value.roundToInt() }} dp",
+                            stringResource(
+                                R.string.crop_parallax_value,
+                                (parallaxAmount * 100).toInt(),
+                                with(density) { leftPreviewTravelPx.toDp().value.roundToInt() },
+                                with(density) { rightPreviewTravelPx.toDp().value.roundToInt() }
+                            ),
                             style = MaterialTheme.typography.labelMedium
                         )
                         Slider(
@@ -1000,7 +1021,7 @@ fun MediaEditorScreen(
                             modifier = Modifier.testTag("crop_parallax_slider")
                         )
                         Text(
-                            "Requires a parallax transition to be selected.",
+                            stringResource(R.string.crop_parallax_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1008,12 +1029,12 @@ fun MediaEditorScreen(
                             OutlinedButton(
                                 onClick = { panX = 0f; panY = 0f; zoom = 1f },
                                 contentPadding = ButtonDefaults.TextButtonContentPadding
-                            ) { Text("Center", style = MaterialTheme.typography.labelSmall) }
+                            ) { Text(stringResource(R.string.crop_pos_center), style = MaterialTheme.typography.labelSmall) }
                             OutlinedButton(onClick = { panY = 1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
-                                Text("Top", style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.crop_pos_top), style = MaterialTheme.typography.labelSmall)
                             }
                             OutlinedButton(onClick = { panY = -1f }, contentPadding = ButtonDefaults.TextButtonContentPadding) {
-                                Text("Bottom", style = MaterialTheme.typography.labelSmall)
+                                Text(stringResource(R.string.crop_pos_bottom), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                         HorizontalDivider(
@@ -1032,9 +1053,9 @@ fun MediaEditorScreen(
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Column {
-                                    Text("Already dark", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                    Text(stringResource(R.string.crop_already_dark), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                                     Text(
-                                        "Skip automatic dimming for this media",
+                                        stringResource(R.string.crop_already_dark_desc),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1069,12 +1090,12 @@ fun MediaEditorScreen(
                                         Spacer(Modifier.width(10.dp))
                                         Column {
                                             Text(
-                                                "Preview darkened",
+                                                stringResource(R.string.crop_preview_darkened),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Medium
                                             )
                                             Text(
-                                                "Preview this page at its darkened brightness",
+                                                stringResource(R.string.crop_preview_darkened_desc),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -1092,12 +1113,12 @@ fun MediaEditorScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "Darken intensity",
+                                        text = stringResource(R.string.crop_darken_intensity),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        text = "${(dimFactor * 100f).roundToInt()}%",
+                                        text = stringResource(R.string.percent_value, (dimFactor * 100f).roundToInt()),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary

@@ -615,6 +615,10 @@ enum class DarkenTriggerMode(
     BOTH_OR(
         "Both (Either Triggers)",
         "Activate when Dark Mode is on or inside your schedule"
+    ),
+    BATTERY_SAVER_ONLY(
+        "Battery Saver Only",
+        "Activate when Battery Saver or low-battery threshold is active"
     );
 
     val usesSchedule: Boolean
@@ -622,6 +626,9 @@ enum class DarkenTriggerMode(
 
     val usesDarkMode: Boolean
         get() = this == DARK_MODE_ONLY || this == BOTH_OR
+
+    val usesBatterySaver: Boolean
+        get() = this == BATTERY_SAVER_ONLY
 
     companion object {
         fun fromName(name: String): DarkenTriggerMode =
@@ -638,7 +645,8 @@ data class DarkenConfig(
     val scheduleStartHour: Int = 20,
     val scheduleStartMinute: Int = 0,
     val scheduleEndHour: Int = 7,
-    val scheduleEndMinute: Int = 0
+    val scheduleEndMinute: Int = 0,
+    val darkenOnBatterySaver: Boolean = false
 ) {
     val isEnabled: Boolean
         get() = enabled
@@ -648,6 +656,9 @@ data class DarkenConfig(
 
     val useSchedule: Boolean
         get() = enabled && triggerMode.usesSchedule
+
+    val useBatterySaver: Boolean
+        get() = enabled && (triggerMode.usesBatterySaver || darkenOnBatterySaver)
 
     fun normalized(): DarkenConfig = copy(
         luminanceThreshold = luminanceThreshold.coerceIn(0.05f, 0.95f),
@@ -669,6 +680,7 @@ data class DarkenConfig(
         put("scheduleStartMinute", safe.scheduleStartMinute)
         put("scheduleEndHour", safe.scheduleEndHour)
         put("scheduleEndMinute", safe.scheduleEndMinute)
+        put("darkenOnBatterySaver", safe.darkenOnBatterySaver)
     }
 
     companion object {
@@ -714,7 +726,8 @@ data class DarkenConfig(
                 scheduleStartHour = json.optInt("scheduleStartHour", 20).coerceIn(0, 23),
                 scheduleStartMinute = json.optInt("scheduleStartMinute", 0).coerceIn(0, 59),
                 scheduleEndHour = json.optInt("scheduleEndHour", 7).coerceIn(0, 23),
-                scheduleEndMinute = json.optInt("scheduleEndMinute", 0).coerceIn(0, 59)
+                scheduleEndMinute = json.optInt("scheduleEndMinute", 0).coerceIn(0, 59),
+                darkenOnBatterySaver = json.optBoolean("darkenOnBatterySaver", false)
             )
         }
     }
@@ -789,7 +802,8 @@ data class WallpaperAppState(
         (pages.size - 1).coerceAtLeast(0)
     ) { PageTransitionSetting(transitionType, transitionType) },
     val presetNeedsSave: Boolean = false,
-    val schemaVersion: Int = 5
+    val schemaVersion: Int = 5,
+    val appLanguage: String = DEFAULT_APP_LANGUAGE
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         val pagesArr = JSONArray()
@@ -824,9 +838,11 @@ data class WallpaperAppState(
         put("presetNeedsSave", presetNeedsSave)
         put("transitions", JSONArray().apply { transitions.forEach { put(it.toJson()) } })
         put("presets", JSONArray().apply { presets.forEach { put(it.toJson()) } })
+        put("appLanguage", appLanguage)
     }
 
     companion object {
+        const val DEFAULT_APP_LANGUAGE = "system"
         const val DEFAULT_ANIMATION_FRAME_RATE = 165
         const val DEFAULT_MOTION_BLUR_STRENGTH_PERCENT = 100
         const val MAX_MOTION_BLUR_STRENGTH_PERCENT = 200
@@ -956,7 +972,9 @@ data class WallpaperAppState(
                 activePresetId = activeId.takeIf { id -> presets.any { it.id == id } } ?: presets.first().id,
                 transitions = migratedTransitions,
                 presetNeedsSave = json.optBoolean("presetNeedsSave", false),
-                schemaVersion = json.optInt("schemaVersion", 1)
+                schemaVersion = json.optInt("schemaVersion", 1),
+                appLanguage = json.optString("appLanguage", DEFAULT_APP_LANGUAGE)
+                    .ifEmpty { DEFAULT_APP_LANGUAGE }
             )
         }
     }

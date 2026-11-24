@@ -416,6 +416,43 @@ class WallpaperRepository private constructor(private val context: Context) {
         return id
     }
 
+    fun createDefaultPreset(name: String, pageCount: Int, homePageIndex: Int): String? {
+        val cleanName = name.trim().take(40)
+        if (cleanName.isEmpty()) return null
+        val count = pageCount.coerceIn(2, 7)
+        val safeHomeIndex = homePageIndex.coerceIn(0, count - 1)
+        val defaultDim = _appState.value.darken.dimFactor
+        val pages = (0 until count).map { i ->
+            PageItem(
+                pageIndex = i,
+                croppedFileName = if (i < 3) "starter_page_$i.jpg" else null,
+                customLabel = if (i == safeHomeIndex) "Home" else "Page ${i + 1}",
+                isBlank = i >= 3,
+                dimFactor = defaultDim
+            )
+        }
+        val transitions = List((count - 1).coerceAtLeast(0)) {
+            PageTransitionSetting()
+        }
+        val id = UUID.randomUUID().toString()
+        val preset = WallpaperPreset(
+            id = id,
+            name = cleanName,
+            pages = pages,
+            transitions = transitions
+        )
+        updateState {
+            it.copy(
+                presets = it.presets + preset,
+                pages = preset.pages,
+                transitions = preset.transitions,
+                transitionType = "scroll",
+                activePresetId = id
+            )
+        }
+        return id
+    }
+
     fun renamePreset(presetId: String, name: String): Boolean {
         val cleanName = name.trim().take(40)
         if (cleanName.isEmpty()) return false

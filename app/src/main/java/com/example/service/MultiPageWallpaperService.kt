@@ -180,10 +180,15 @@ class MultiPageWallpaperService : WallpaperService() {
             animateIfVisible: Boolean,
             isDarkModeOverride: Boolean? = lastKnownDarkMode
         ) {
+            val isBatterySaverActive = BatterySaverPolicy.isBatterySaverActive(
+                config = state.batterySaver,
+                power = currentPowerSnapshot
+            )
             val shouldDarken = ExtraDimDetector.isDimConditionActive(
                 context = applicationContext,
                 config = state.darken,
-                isDarkModeOverride = isDarkModeOverride
+                isDarkModeOverride = isDarkModeOverride,
+                isBatterySaverActive = isBatterySaverActive
             )
             if (animateIfVisible && isVisible && surfaceWidth > 0 && surfaceHeight > 0) {
                 darkenTransitionController.transitionTo(shouldDarken)
@@ -298,6 +303,17 @@ class MultiPageWallpaperService : WallpaperService() {
             currentPowerSnapshot = snapshot
             nextAnimationFrameDeadlineNanos = 0L
             updateSurfaceFrameRate()
+            val state = repository.appState.value
+            if (state.darken.useBatterySaver) {
+                val prevTarget = darkenTransitionController.targetMix
+                syncDarkenState(state = state, animateIfVisible = isVisible)
+                if (isVisible && abs(darkenTransitionController.targetMix - prevTarget) > 0.001f) {
+                    drawFrame()
+                    if (isOffsetAnimationNeeded()) {
+                        scheduleOffsetAnimationFrame()
+                    }
+                }
+            }
         }
 
         private fun getEffectiveAnimationFrameRate(

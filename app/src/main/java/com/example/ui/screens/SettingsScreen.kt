@@ -5,420 +5,168 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.BatterySaver
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.data.model.BatterySaverConfig
-import com.example.data.model.BatterySaverTrigger
-import com.example.data.model.OffsetEasingStyle
-import com.example.data.model.WallpaperAppState
+import com.example.R
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.diagnostics.WallpaperDiagnosticsResult
 import com.example.diagnostics.WallpaperDiagnosticsState
 import com.example.diagnostics.WallpaperSignalOverlayWindow
-import com.example.power.BatterySaverPolicy
-import com.example.power.PowerSnapshot
+import com.example.ui.AppLanguage
 import com.example.ui.WallpaperViewModel
+import com.example.ui.components.DashboardBadge
+import com.example.ui.components.DashboardBadgeTone
+import com.example.ui.components.DashboardMetric
+import com.example.ui.components.EditorRadioOptionRow
+import com.example.ui.components.EditorSwitchRow
+import com.example.ui.components.SettingDashboardCard
+import com.example.ui.components.SettingEditorDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
 
 @Composable
 fun SettingsScreen(viewModel: WallpaperViewModel) {
     val diagnostics by WallpaperDiagnosticsRecorder.state.collectAsState()
     val appState by viewModel.appState.collectAsState()
-    val powerSnapshot by viewModel.powerSnapshot.collectAsState()
+    val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp)
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        SettingsSection(title = "Battery") {
-            BatterySaverSetting(
-                config = appState.batterySaver,
-                normalFrameRate = appState.animationFrameRate,
-                powerSnapshot = powerSnapshot,
-                onConfigChange = viewModel::updateBatterySaverConfig
+        SettingsSection(title = stringResource(R.string.settings_section_general)) {
+            LanguageDashboardCard(
+                currentLanguageTag = appState.appLanguage,
+                onSelectLanguage = viewModel::setAppLanguage
             )
         }
 
-        SettingsSection(title = "Calibration") {
+        SettingsSection(title = stringResource(R.string.settings_section_calibration)) {
             CalibrationScreen(viewModel = viewModel)
         }
 
-        SettingsSection(title = "Backup") {
+        SettingsSection(title = stringResource(R.string.settings_section_backup)) {
             BackupScreen(viewModel = viewModel)
         }
 
-        SettingsSection(title = "Debug") {
-            DebugSettings(viewModel, diagnostics)
+        SettingsSection(title = stringResource(R.string.settings_section_debug)) {
+            DebugOverlaysDashboardCard(
+                showOffsetOverlay = appState.showOffsetDebugOverlay,
+                showFrameIndicator = appState.showFrameDebugIndicator,
+                showSignalOverlay = appState.showSignalDebugOverlay,
+                onCommit = { offsetOverlay, frameIndicator, signalOverlay ->
+                    viewModel.toggleOffsetDebugOverlay(offsetOverlay)
+                    viewModel.toggleFrameDebugIndicator(frameIndicator)
+                    viewModel.toggleSignalDebugOverlay(signalOverlay)
+                }
+            )
+            WallpaperRecordingDashboardCard(
+                diagnostics = diagnostics,
+                isWallpaperActive = isWallpaperActive,
+                onClearHistory = viewModel::clearDiagnosticsHistory
+            )
         }
     }
 }
 
 @Composable
-internal fun BatterySaverSetting(
-    config: BatterySaverConfig,
-    normalFrameRate: Int,
-    powerSnapshot: PowerSnapshot,
-    onConfigChange: (BatterySaverConfig) -> Unit
+private fun LanguageDashboardCard(
+    currentLanguageTag: String,
+    onSelectLanguage: (String) -> Unit
 ) {
-    val thresholdSlider = remember(config.thresholdPercent) {
-        mutableFloatStateOf(config.thresholdPercent.toFloat())
-    }
-    val isSaverActive = BatterySaverPolicy.isBatterySaverActive(config, powerSnapshot)
-    val effectiveFps = BatterySaverPolicy.effectiveFrameRate(normalFrameRate, config, powerSnapshot)
-    val batteryLabel = powerSnapshot.batteryPercent?.let { "$it%" } ?: "--%"
-    val statusText = when {
-        isSaverActive -> "$batteryLabel · Saving $effectiveFps FPS"
-        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
-            "$batteryLabel · Charging ($normalFrameRate FPS)"
-        config.enabled -> "$batteryLabel · Normal ($normalFrameRate FPS)"
-        else -> "$batteryLabel · Off"
-    }
-    val statusContainerColor = when {
-        isSaverActive -> MaterialTheme.colorScheme.tertiaryContainer
-        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
-            MaterialTheme.colorScheme.secondaryContainer
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val statusContentColor = when {
-        isSaverActive -> MaterialTheme.colorScheme.onTertiaryContainer
-        config.enabled && config.pauseWhileCharging && powerSnapshot.isCharging ->
-            MaterialTheme.colorScheme.onSecondaryContainer
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    var showEditor by remember { mutableStateOf(false) }
+    val title = stringResource(R.string.language_title)
+    val selectedLanguage = AppLanguage.fromTag(currentLanguageTag)
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("battery_saver_card"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    SettingDashboardCard(
+        title = title,
+        icon = Icons.Default.Language,
+        cardTestTag = "language_settings_card",
+        editContentDescription = stringResource(R.string.cd_edit_setting, title),
+        onEditClick = { showEditor = true },
+        metrics = listOf(
+            DashboardMetric(
+                label = stringResource(R.string.language_current_label),
+                value = stringResource(selectedLanguage.labelRes)
+            )
+        )
+    )
+
+    if (showEditor) {
+        var draftLanguage by remember(currentLanguageTag) {
+            mutableStateOf(AppLanguage.fromTag(currentLanguageTag).tag)
+        }
+
+        SettingEditorDialog(
+            title = title,
+            icon = Icons.Default.Language,
+            onDismiss = { showEditor = false },
+            onConfirm = {
+                onSelectLanguage(draftLanguage)
+                showEditor = false
+            },
+            dialogTestTag = "language_editor_dialog"
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = if (powerSnapshot.isCharging) {
-                            Icons.Default.BatteryChargingFull
-                        } else {
-                            Icons.Default.BatterySaver
-                        },
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Battery-saving mode",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Surface(
-                    shape = CircleShape,
-                    color = statusContainerColor
-                ) {
-                    Text(
-                        text = statusText,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = statusContentColor,
-                        modifier = Modifier
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                            .testTag("battery_saver_status_badge")
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Reduce wallpaper refresh rate on low power",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Passively reacts to Android battery and Battery Saver broadcast callbacks without polling.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = config.enabled,
-                    onCheckedChange = { onConfigChange(config.copy(enabled = it)) },
-                    modifier = Modifier.testTag("toggle_battery_saver")
+            AppLanguage.values().forEach { language ->
+                EditorRadioOptionRow(
+                    title = stringResource(language.labelRes),
+                    selected = draftLanguage.equals(language.tag, ignoreCase = true),
+                    onClick = { draftLanguage = language.tag },
+                    rowTestTag = "language_option_${language.tag}"
                 )
-            }
-
-            AnimatedVisibility(visible = config.enabled) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "Activation trigger",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        BatterySaverTrigger.values().forEach { mode ->
-                            val isSelected = config.triggerMode == mode
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        onConfigChange(config.copy(triggerMode = mode))
-                                    }
-                                    .testTag("battery_saver_trigger_${mode.name}"),
-                                color = if (isSelected) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = mode.displayName,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                        Text(
-                                            text = mode.description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    RadioButton(
-                                        selected = isSelected,
-                                        onClick = {
-                                            onConfigChange(config.copy(triggerMode = mode))
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = config.triggerMode != BatterySaverTrigger.SYSTEM_BATTERY_SAVER
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Activate below battery level",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "${thresholdSlider.floatValue.roundToInt()}%",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Slider(
-                                value = thresholdSlider.floatValue,
-                                onValueChange = { thresholdSlider.floatValue = it },
-                                onValueChangeFinished = {
-                                    onConfigChange(
-                                        config.copy(
-                                            thresholdPercent = thresholdSlider.floatValue.roundToInt()
-                                        )
-                                    )
-                                },
-                                valueRange = BatterySaverConfig.MIN_THRESHOLD_PERCENT.toFloat()..
-                                    BatterySaverConfig.MAX_THRESHOLD_PERCENT.toFloat(),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("battery_saver_threshold_slider")
-                            )
-                        }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = "Reduced refresh rate",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            BatterySaverConfig.supportedReducedFrameRates.forEach { fps ->
-                                FilterChip(
-                                    selected = config.reducedFrameRate == fps,
-                                    onClick = {
-                                        onConfigChange(config.copy(reducedFrameRate = fps))
-                                    },
-                                    label = { Text("$fps FPS") },
-                                    modifier = Modifier.testTag("battery_saver_fps_$fps")
-                                )
-                            }
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Pause while charging",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Keep your normal $normalFrameRate FPS whenever the device is plugged in.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = config.pauseWhileCharging,
-                                onCheckedChange = {
-                                    onConfigChange(config.copy(pauseWhileCharging = it))
-                                },
-                                modifier = Modifier.testTag("toggle_battery_saver_pause_charging")
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun AnimationFrameRateSetting(
-    selectedFrameRate: Int,
-    onFrameRateSelected: (Int) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("animation_frame_rate_card"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "Wallpaper animation frame rate",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "The wallpaper smoothly follows launcher offsets at this target rate while moving. Higher rates may use more battery; the display may not support every option.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                WallpaperAppState.supportedAnimationFrameRates.forEach { frameRate ->
-                    FilterChip(
-                        selected = selectedFrameRate == frameRate,
-                        onClick = { onFrameRateSelected(frameRate) },
-                        label = { Text("$frameRate FPS") },
-                        modifier = Modifier.testTag("animation_frame_rate_$frameRate")
-                    )
-                }
             }
         }
     }
@@ -431,7 +179,7 @@ private fun SettingsSection(
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
             text = title,
@@ -443,355 +191,11 @@ private fun SettingsSection(
 }
 
 @Composable
-private fun DebugSettings(
-    viewModel: WallpaperViewModel,
-    diagnostics: WallpaperDiagnosticsState
-) {
-    val appState by viewModel.appState.collectAsState()
-    val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        OffsetOverlaySetting(
-            enabled = appState.showOffsetDebugOverlay,
-            onEnabledChange = viewModel::toggleOffsetDebugOverlay
-        )
-        FrameSequenceIndicatorSetting(
-            enabled = appState.showFrameDebugIndicator,
-            onEnabledChange = viewModel::toggleFrameDebugIndicator
-        )
-        SignalDebugOverlaySetting(
-            enabled = appState.showSignalDebugOverlay,
-            onEnabledChange = viewModel::toggleSignalDebugOverlay
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth().testTag("wallpaper_diagnostics_card"),
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "Wallpaper update recording",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Start recording, go to the home screen and swipe between pages, then return here and stop. The last 10 completed recordings are saved on this device.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "This records launcher offset callbacks and successful wallpaper frame submissions. It does not measure frames actually presented by the display. While moving, the wallpaper follows the latest offset at the selected target cadence, then stops drawing when settled.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "The selected rate is a target, not a guarantee. Actual presentation is limited by the display refresh rate and rendering performance.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (!isWallpaperActive && !diagnostics.isRecording) {
-                    Text(
-                        text = "Apply PaperPages as the active wallpaper before starting a recording.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                Button(
-                    onClick = {
-                        if (diagnostics.isRecording) {
-                            WallpaperDiagnosticsRecorder.stopRecording()
-                        } else {
-                            WallpaperDiagnosticsRecorder.startRecording()
-                        }
-                    },
-                    enabled = isWallpaperActive || diagnostics.isRecording,
-                    modifier = Modifier.fillMaxWidth().testTag("toggle_wallpaper_recording")
-                ) {
-                    Icon(
-                        imageVector = if (diagnostics.isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.size(8.dp))
-                    Text(if (diagnostics.isRecording) "Stop and save recording" else "Start recording")
-                }
-
-                if (diagnostics.isRecording) {
-                    Text(
-                        text = "Recording…",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.testTag("wallpaper_recording_status")
-                    )
-                }
-
-                diagnostics.current?.let { result ->
-                    RecordingMetrics(result)
-                }
-
-                if (diagnostics.history.isNotEmpty()) {
-                    Text(
-                        text = "Recent recordings",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    RecentAverage(diagnostics.history)
-                    diagnostics.history.forEachIndexed { index, result ->
-                        RecordingHistoryItem(index, result)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun OffsetEasingSetting(
-    enabled: Boolean,
-    style: OffsetEasingStyle,
-    linearZonePercent: Int,
-    strength: Int,
-    onEnabledChange: (Boolean) -> Unit,
-    onStyleChange: (OffsetEasingStyle) -> Unit,
-    onLinearZonePercentChange: (Int) -> Unit,
-    onStrengthChange: (Int) -> Unit
-) {
-    val linearZoneSlider = remember(linearZonePercent) {
-        mutableFloatStateOf(linearZonePercent.toFloat())
-    }
-    val strengthSlider = remember(strength) {
-        mutableFloatStateOf(strength.toFloat())
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("offset_easing_setting"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Wallpaper offset easing",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Remap wallpaper page offsets. Launcher icons are unaffected; settings remain available when easing is off.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onEnabledChange,
-                    modifier = Modifier.testTag("toggle_offset_easing")
-                )
-            }
-            Text(
-                text = "Easing style",
-                style = MaterialTheme.typography.labelMedium
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OffsetEasingStyle.values().forEach { easingStyle ->
-                    FilterChip(
-                        selected = style == easingStyle,
-                        onClick = { onStyleChange(easingStyle) },
-                        label = { Text(easingStyle.displayName) },
-                        modifier = Modifier.testTag("offset_easing_style_${easingStyle.name}")
-                    )
-                }
-            }
-            Text(
-                text = if (style == OffsetEasingStyle.SYMMETRIC) {
-                    "Middle linear zone: ${linearZoneSlider.floatValue.roundToInt()}%"
-                } else {
-                    "Linear portion: ${linearZoneSlider.floatValue.roundToInt()}%"
-                },
-                style = MaterialTheme.typography.labelMedium
-            )
-            Slider(
-                value = linearZoneSlider.floatValue,
-                onValueChange = { linearZoneSlider.floatValue = it },
-                onValueChangeFinished = {
-                    onLinearZonePercentChange(linearZoneSlider.floatValue.roundToInt())
-                },
-                valueRange = 0f..100f,
-                modifier = Modifier.testTag("offset_easing_linear_zone")
-            )
-            Text(
-                text = "Easing strength: ${strengthSlider.floatValue.roundToInt()}%",
-                style = MaterialTheme.typography.labelMedium
-            )
-            Slider(
-                value = strengthSlider.floatValue,
-                onValueChange = { strengthSlider.floatValue = it },
-                onValueChangeFinished = {
-                    onStrengthChange(strengthSlider.floatValue.roundToInt())
-                },
-                valueRange = 0f..100f,
-                modifier = Modifier.testTag("offset_easing_strength")
-            )
-        }
-    }
-}
-
-@Composable
-internal fun MotionBlurSetting(
-    enabled: Boolean,
-    strengthPercent: Int,
-    onEnabledChange: (Boolean) -> Unit,
-    onStrengthChange: (Int) -> Unit
-) {
-    val strengthSlider = remember(strengthPercent) {
-        mutableFloatStateOf(strengthPercent.toFloat())
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("motion_blur_setting"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Text(
-                        text = "Motion blur",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Smear the wallpaper in the direction of scrolling. Blur only runs while the wallpaper is moving.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onEnabledChange,
-                    modifier = Modifier.testTag("toggle_motion_blur")
-                )
-            }
-            Text(
-                text = "Strength: ${strengthSlider.floatValue.roundToInt()}%",
-                style = MaterialTheme.typography.labelMedium
-            )
-            Slider(
-                value = strengthSlider.floatValue,
-                onValueChange = { strengthSlider.floatValue = it },
-                onValueChangeFinished = {
-                    onStrengthChange(strengthSlider.floatValue.roundToInt())
-                },
-                valueRange = 0f..WallpaperAppState.MAX_MOTION_BLUR_STRENGTH_PERCENT.toFloat(),
-                modifier = Modifier.testTag("motion_blur_strength")
-            )
-        }
-    }
-}
-
-@Composable
-private fun OffsetOverlaySetting(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("offset_debug_overlay_card"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Show live offset overlay",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Display the raw X/Y offsets received from the launcher on the wallpaper.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                modifier = Modifier.testTag("toggle_offset_debug_overlay")
-            )
-        }
-    }
-}
-
-@Composable
-private fun FrameSequenceIndicatorSetting(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("frame_debug_indicator_card"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Show frame sequence indicator",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Draw a small block that cycles red, green, blue, yellow after each successfully submitted visible frame. A skipped color in a recording can mean a frame was not captured or presented.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = onEnabledChange,
-                modifier = Modifier.testTag("toggle_frame_debug_indicator")
-            )
-        }
-    }
-}
-
-@Composable
-private fun SignalDebugOverlaySetting(
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit
+private fun DebugOverlaysDashboardCard(
+    showOffsetOverlay: Boolean,
+    showFrameIndicator: Boolean,
+    showSignalOverlay: Boolean,
+    onCommit: (Boolean, Boolean, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -809,49 +213,83 @@ private fun SignalDebugOverlaySetting(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().testTag("signal_debug_overlay_card"),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Show live signal debug overlay",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "Displays live visibility, keyguard/unlock, screen power, launcher zoom, and system commands. Grant overlay permission to float above Recents and other apps.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = onEnabledChange,
-                    modifier = Modifier.testTag("toggle_signal_debug_overlay")
-                )
-            }
+    var showEditor by remember { mutableStateOf(false) }
+    val title = stringResource(R.string.debug_overlays_title)
+    val stateOn = stringResource(R.string.state_on)
+    val stateOff = stringResource(R.string.state_off)
 
-            AnimatedVisibility(visible = enabled) {
+    SettingDashboardCard(
+        title = title,
+        icon = Icons.Default.BugReport,
+        cardTestTag = "debug_overlays_card",
+        editContentDescription = stringResource(R.string.cd_edit_setting, title),
+        onEditClick = { showEditor = true },
+        metrics = listOf(
+            DashboardMetric(
+                label = stringResource(R.string.debug_offset_overlay_label),
+                value = if (showOffsetOverlay) stateOn else stateOff
+            ),
+            DashboardMetric(
+                label = stringResource(R.string.debug_frame_indicator_label),
+                value = if (showFrameIndicator) stateOn else stateOff
+            ),
+            DashboardMetric(
+                label = stringResource(R.string.debug_signal_overlay_label),
+                value = if (showSignalOverlay) stateOn else stateOff
+            )
+        )
+    )
+
+    if (showEditor) {
+        var draftOffset by remember(showOffsetOverlay) { mutableStateOf(showOffsetOverlay) }
+        var draftFrame by remember(showFrameIndicator) { mutableStateOf(showFrameIndicator) }
+        var draftSignal by remember(showSignalOverlay) { mutableStateOf(showSignalOverlay) }
+
+        SettingEditorDialog(
+            title = title,
+            icon = Icons.Default.BugReport,
+            onDismiss = { showEditor = false },
+            onConfirm = {
+                onCommit(draftOffset, draftFrame, draftSignal)
+                showEditor = false
+            },
+            dialogTestTag = "debug_overlays_editor_dialog"
+        ) {
+            EditorSwitchRow(
+                title = stringResource(R.string.debug_offset_overlay_title),
+                description = stringResource(R.string.debug_offset_overlay_desc),
+                checked = draftOffset,
+                onCheckedChange = { draftOffset = it },
+                switchTestTag = "toggle_offset_debug_overlay"
+            )
+
+            EditorSwitchRow(
+                title = stringResource(R.string.debug_frame_indicator_title),
+                description = stringResource(R.string.debug_frame_indicator_desc),
+                checked = draftFrame,
+                onCheckedChange = { draftFrame = it },
+                switchTestTag = "toggle_frame_debug_indicator"
+            )
+
+            EditorSwitchRow(
+                title = stringResource(R.string.debug_signal_overlay_title),
+                description = stringResource(R.string.debug_signal_overlay_desc),
+                checked = draftSignal,
+                onCheckedChange = { draftSignal = it },
+                switchTestTag = "toggle_signal_debug_overlay"
+            )
+
+            AnimatedVisibility(visible = draftSignal) {
                 if (canDrawOverlays) {
                     Text(
-                        text = "Floating overlay active: visible over Recents and other apps.",
+                        text = stringResource(R.string.debug_overlay_granted),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "Overlay permission not granted — currently shown on desktop wallpaper only.",
+                            text = stringResource(R.string.debug_overlay_missing),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -863,10 +301,275 @@ private fun SignalDebugOverlaySetting(
                                 ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 context.startActivity(intent)
                             },
-                            modifier = Modifier.fillMaxWidth().testTag("grant_signal_overlay_permission")
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("grant_signal_overlay_permission")
                         ) {
-                            Text("Allow display over other apps")
+                            Text(stringResource(R.string.debug_grant_overlay_btn))
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WallpaperRecordingDashboardCard(
+    diagnostics: WallpaperDiagnosticsState,
+    isWallpaperActive: Boolean,
+    onClearHistory: () -> Unit
+) {
+    var showHistoryDialog by remember { mutableStateOf(false) }
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    val title = stringResource(R.string.recording_title)
+    val offsetRate = combinedRate(
+        diagnostics.history.sumOf { it.movingOffsetIntervalCount },
+        diagnostics.history.sumOf { it.movingOffsetDurationNanos }
+    )
+    val frameRate = combinedRate(
+        diagnostics.history.sumOf { it.movingFrameIntervalCount },
+        diagnostics.history.sumOf { it.movingFrameDurationNanos }
+    )
+    val avgSummary = if (diagnostics.history.isEmpty()) {
+        "--"
+    } else {
+        "${formatRate(offsetRate)} · ${formatRate(frameRate)}"
+    }
+
+    SettingDashboardCard(
+        title = title,
+        icon = Icons.Default.Speed,
+        cardTestTag = "wallpaper_diagnostics_card",
+        editContentDescription = title,
+        onEditClick = null,
+        badges = listOf(
+            DashboardBadge(
+                text = if (diagnostics.isRecording) {
+                    stringResource(R.string.recording_status_recording)
+                } else {
+                    stringResource(R.string.recording_status_idle)
+                },
+                tone = if (diagnostics.isRecording) {
+                    DashboardBadgeTone.PRIMARY
+                } else {
+                    DashboardBadgeTone.NEUTRAL
+                },
+                showDot = true,
+                testTag = if (diagnostics.isRecording) "wallpaper_recording_status" else null
+            )
+        ),
+        metrics = listOf(
+            DashboardMetric(
+                label = stringResource(R.string.recording_saved_count_label),
+                value = diagnostics.history.size.toString()
+            ),
+            DashboardMetric(
+                label = stringResource(R.string.recording_average_label),
+                value = avgSummary
+            )
+        ),
+        supportingText = if (!isWallpaperActive && !diagnostics.isRecording) {
+            stringResource(R.string.recording_apply_required)
+        } else {
+            null
+        },
+        footer = {
+            diagnostics.current?.let { result ->
+                RecordingMetrics(result)
+            }
+
+            Button(
+                onClick = {
+                    if (diagnostics.isRecording) {
+                        WallpaperDiagnosticsRecorder.stopRecording()
+                    } else {
+                        WallpaperDiagnosticsRecorder.startRecording()
+                    }
+                },
+                enabled = isWallpaperActive || diagnostics.isRecording,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("toggle_wallpaper_recording")
+            ) {
+                Icon(
+                    imageVector = if (diagnostics.isRecording) Icons.Default.Stop else Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.size(8.dp))
+                Text(
+                    if (diagnostics.isRecording) {
+                        stringResource(R.string.recording_stop)
+                    } else {
+                        stringResource(R.string.recording_start)
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showHistoryDialog = true },
+                    enabled = diagnostics.history.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("view_recording_history_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text(stringResource(R.string.recording_view_history))
+                }
+
+                OutlinedButton(
+                    onClick = { showClearConfirmDialog = true },
+                    enabled = diagnostics.history.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("clear_recording_history_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteSweep,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.size(6.dp))
+                    Text(stringResource(R.string.recording_clear_history))
+                }
+            }
+        }
+    )
+
+    if (showHistoryDialog) {
+        RecordingHistoryDialog(
+            history = diagnostics.history,
+            onDismiss = { showHistoryDialog = false }
+        )
+    }
+
+    if (showClearConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirmDialog = false },
+            title = { Text(stringResource(R.string.recording_clear_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.recording_clear_message,
+                        diagnostics.history.size
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onClearHistory()
+                        showClearConfirmDialog = false
+                    },
+                    modifier = Modifier.testTag("confirm_clear_recording_history")
+                ) {
+                    Text(
+                        stringResource(R.string.action_delete),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun RecordingHistoryDialog(
+    history: List<WallpaperDiagnosticsResult>,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .widthIn(max = 560.dp)
+                .heightIn(max = 660.dp)
+                .testTag("recording_history_dialog"),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = stringResource(R.string.recording_history_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (history.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.recording_history_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        RecentAverage(history)
+                        history.forEachIndexed { index, result ->
+                            RecordingHistoryItem(index, result)
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("close_recording_history_button")
+                    ) {
+                        Text(stringResource(R.string.action_back))
                     }
                 }
             }
@@ -877,28 +580,62 @@ private fun SignalDebugOverlaySetting(
 @Composable
 private fun RecordingMetrics(result: WallpaperDiagnosticsResult) {
     Card(
-        modifier = Modifier.fillMaxWidth().testTag("wallpaper_recording_metrics"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("wallpaper_recording_metrics"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = "Current recording",
+                text = stringResource(R.string.recording_current_title),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold
             )
-            MetricRow("Duration", formatDuration(result.durationMillis))
-            MetricRow("Wallpaper visible", formatDuration(result.visibleDurationNanos / 1_000_000L))
-            MetricRow("Visible offset callbacks", result.visibleOffsetCallbacks.toString())
-            MetricRow("Average callbacks while visible", formatRate(result.averageOffsetCallbackHz))
-            MetricRow("Changed X offsets", result.changedOffsetCallbacks.toString())
-            MetricRow("Moving offset update rate", formatRate(result.movingOffsetHz))
-            MetricRow("Visible frames submitted", result.visibleFramesSubmitted.toString())
-            MetricRow("Frames from offset callbacks", result.offsetDrivenFramesSubmitted.toString())
-            MetricRow("Moving frame submission rate", formatRate(result.movingFrameSubmissionHz))
-            MetricRow("Average submissions while visible", formatRate(result.averageFrameSubmissionHz))
+            MetricRow(
+                stringResource(R.string.recording_metric_duration),
+                formatDuration(result.durationMillis)
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_visible),
+                formatDuration(result.visibleDurationNanos / 1_000_000L)
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_visible_callbacks),
+                result.visibleOffsetCallbacks.toString()
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_avg_callbacks),
+                formatRate(result.averageOffsetCallbackHz)
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_changed_x),
+                result.changedOffsetCallbacks.toString()
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_moving_offset),
+                formatRate(result.movingOffsetHz)
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_visible_frames),
+                result.visibleFramesSubmitted.toString()
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_offset_frames),
+                result.offsetDrivenFramesSubmitted.toString()
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_moving_frames),
+                formatRate(result.movingFrameSubmissionHz)
+            )
+            MetricRow(
+                stringResource(R.string.recording_metric_avg_frames),
+                formatRate(result.averageFrameSubmissionHz)
+            )
         }
     }
 }
@@ -914,8 +651,12 @@ private fun RecentAverage(history: List<WallpaperDiagnosticsResult>) {
         history.sumOf { it.movingFrameDurationNanos }
     )
     Text(
-        text = "Combined moving average (${history.size} sessions): " +
-            "offset ${formatRate(offsetRate)}, frame submissions ${formatRate(frameRate)}",
+        text = stringResource(
+            R.string.recording_combined_average,
+            history.size,
+            formatRate(offsetRate),
+            formatRate(frameRate)
+        ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.testTag("wallpaper_recording_history_average")
@@ -924,24 +665,33 @@ private fun RecentAverage(history: List<WallpaperDiagnosticsResult>) {
 
 @Composable
 private fun RecordingHistoryItem(index: Int, result: WallpaperDiagnosticsResult) {
+    val currentLocale = LocalConfiguration.current.locales.takeIf { !it.isEmpty }?.get(0)
+        ?: Locale.getDefault()
     Card(
-        modifier = Modifier.fillMaxWidth().testTag("wallpaper_recording_history_item_$index"),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("wallpaper_recording_history_item_$index"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
-                text = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
+                text = SimpleDateFormat("MMM d, HH:mm", currentLocale)
                     .format(Date(result.recordedAtMillis)),
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = "${formatDuration(result.durationMillis)} · " +
-                    "offset ${formatRate(result.movingOffsetHz)} · " +
-                    "frame submissions ${formatRate(result.movingFrameSubmissionHz)}",
+                text = stringResource(
+                    R.string.recording_item_summary,
+                    formatDuration(result.durationMillis),
+                    formatRate(result.movingOffsetHz),
+                    formatRate(result.movingFrameSubmissionHz)
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -960,8 +710,10 @@ private fun MetricRow(label: String, value: String) {
     }
 }
 
+@Composable
 private fun formatRate(rate: Float?): String =
-    rate?.let { String.format(Locale.US, "%.1f Hz", it) } ?: "Not enough movement"
+    rate?.let { stringResource(R.string.recording_rate_hz, it) }
+        ?: stringResource(R.string.recording_not_enough_movement)
 
 private fun formatDuration(durationMillis: Long): String {
     val totalSeconds = (durationMillis / 1_000L).coerceAtLeast(0L)

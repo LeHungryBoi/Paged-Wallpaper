@@ -11,29 +11,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -45,9 +38,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.WallpaperViewModel
+import com.example.ui.components.DashboardBadge
+import com.example.ui.components.DashboardBadgeTone
+import com.example.ui.components.DashboardMetric
+import com.example.ui.components.EditorSwitchRow
+import com.example.ui.components.SettingDashboardCard
+import com.example.ui.components.SettingEditorDialog
 
 private fun getBackupFolderDisplayPath(folderUri: String): String {
     val uri = Uri.parse(folderUri)
@@ -80,10 +81,16 @@ fun BackupScreen(
 ) {
     val context = LocalContext.current
     val appState by viewModel.appState.collectAsState()
+    var showEditor by remember { mutableStateOf(false) }
+    var draftFolderPath by remember(appState.backupFolderPath) {
+        mutableStateOf(appState.backupFolderPath)
+    }
+    var draftAutoSync by remember(appState.autoBackupEnabled) {
+        mutableStateOf(appState.autoBackupEnabled)
+    }
     var pendingManualExport by remember { mutableStateOf(false) }
-    var pendingAutoSyncEnable by remember { mutableStateOf(false) }
+    var selectingForEditor by remember { mutableStateOf(false) }
 
-    // SAF Open Document to import and restore
     val importFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -95,16 +102,23 @@ fun BackupScreen(
             }
             if (input != null) {
                 viewModel.importBackup(input) { success ->
-                    val msg = if (success) "Configuration & wallpapers successfully restored!" else "Restore failed"
+                    val msg = if (success) {
+                        context.getString(R.string.toast_backup_restored)
+                    } else {
+                        context.getString(R.string.toast_backup_restore_failed)
+                    }
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
             } else {
-                Toast.makeText(context, "Could not open the selected backup.", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.toast_backup_open_failed),
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
 
-    // Choose one destination reused by manual export and optional automatic sync.
     val openFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
     ) { treeUri ->
@@ -114,261 +128,245 @@ fun BackupScreen(
                     treeUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                viewModel.setBackupFolder(treeUri.toString())
-                if (pendingAutoSyncEnable) viewModel.setAutoBackupEnabled(true)
-                if (pendingManualExport) {
-                    viewModel.exportBackupToFolder(treeUri.toString()) { success ->
-                        val msg = if (success) {
-                            "Backup saved as paperpages_backup.zip in the selected folder."
-                        } else {
-                            "Export failed. Check that the selected folder is writable."
-                        }
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                    }
+                val uriString = treeUri.toString()
+                if (selectingForEditor) {
+                    draftFolderPath = uriString
                 } else {
-                    Toast.makeText(context, "Backup folder selected.", Toast.LENGTH_SHORT).show()
+                    viewModel.setBackupFolder(uriString)
+                    if (pendingManualExport) {
+                        viewModel.exportBackupToFolder(uriString) { success ->
+                            val msg = if (success) {
+                                context.getString(R.string.toast_backup_saved)
+                            } else {
+                                context.getString(R.string.toast_backup_export_failed)
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    } else {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.toast_backup_folder_selected),
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             } catch (_: Exception) {
-                Toast.makeText(context, "Could not access the selected folder.", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.toast_backup_folder_access_failed),
+                    Toast.LENGTH_LONG
+                ).show()
             } finally {
-                pendingAutoSyncEnable = false
                 pendingManualExport = false
+                selectingForEditor = false
             }
         } else {
-            pendingAutoSyncEnable = false
             pendingManualExport = false
+            selectingForEditor = false
         }
     }
 
     fun exportToSelectedFolder() {
         val folderUri = appState.backupFolderPath
         if (folderUri.isNullOrEmpty()) {
+            selectingForEditor = false
             pendingManualExport = true
             openFolderLauncher.launch(null)
             return
         }
         viewModel.exportBackupToFolder(folderUri) { success ->
             val msg = if (success) {
-                "Backup saved as paperpages_backup.zip in the selected folder."
+                context.getString(R.string.toast_backup_saved)
             } else {
-                "Export failed. Check that the selected folder is writable."
+                context.getString(R.string.toast_backup_export_failed)
             }
             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        // Explainer Card: Single-Version Philosophy
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    val title = stringResource(R.string.backup_title)
+    val folderDisplay = appState.backupFolderPath?.takeIf { it.isNotEmpty() }?.let {
+        "${getBackupFolderDisplayPath(it).trimEnd('/')}/"
+    } ?: stringResource(R.string.backup_no_folder)
+
+    SettingDashboardCard(
+        title = title,
+        icon = Icons.Default.Archive,
+        cardTestTag = "backup_dashboard_card",
+        editContentDescription = stringResource(R.string.cd_edit_setting, title),
+        onEditClick = {
+            draftFolderPath = appState.backupFolderPath
+            draftAutoSync = appState.autoBackupEnabled
+            showEditor = true
+        },
+        badges = listOf(
+            DashboardBadge(
+                text = if (appState.autoBackupEnabled) {
+                    stringResource(R.string.backup_badge_auto)
+                } else {
+                    stringResource(R.string.backup_badge_manual)
+                },
+                tone = if (appState.autoBackupEnabled) {
+                    DashboardBadgeTone.PRIMARY
+                } else {
+                    DashboardBadgeTone.NEUTRAL
+                }
             )
-        ) {
+        ),
+        metrics = listOf(
+            DashboardMetric(
+                label = stringResource(R.string.backup_folder_label),
+                value = folderDisplay
+            ),
+            DashboardMetric(
+                label = stringResource(R.string.backup_auto_sync_label),
+                value = if (appState.autoBackupEnabled) {
+                    stringResource(R.string.state_on)
+                } else {
+                    stringResource(R.string.state_off)
+                }
+            )
+        ),
+        footer = {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.Top,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(
-                    Icons.Default.CleaningServices,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "Clean Single-File Backup Policy",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                Button(
+                    onClick = { exportToSelectedFolder() },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("export_backup_button")
+                ) {
+                    Icon(
+                        Icons.Default.Upload,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
                     )
-                    Text(
-                        text = "PaperPages stores your settings, offsets, original photos, and page images in paperpages_backup.zip. Choose a destination folder and later exports reuse that same file instead of creating numbered copies.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.backup_export))
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        importFileLauncher.launch(
+                            arrayOf("application/zip", "application/octet-stream")
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .testTag("import_backup_button")
+                ) {
+                    Icon(
+                        Icons.Default.Download,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(stringResource(R.string.backup_restore))
                 }
             }
         }
+    )
 
-        // Section: Manual Backup & Restore
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("manual_backup_card"),
-            shape = RoundedCornerShape(20.dp)
+    if (showEditor) {
+        SettingEditorDialog(
+            title = title,
+            icon = Icons.Default.Archive,
+            onDismiss = { showEditor = false },
+            onConfirm = {
+                viewModel.setBackupFolder(draftFolderPath)
+                viewModel.setAutoBackupEnabled(draftAutoSync && !draftFolderPath.isNullOrEmpty())
+                showEditor = false
+            },
+            dialogTestTag = "backup_editor_dialog"
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(Icons.Default.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(
-                        text = "Manual Export & Restore",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Text(
-                    text = "Save your entire setup to a single file, or restore from an existing backup on any device.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            exportToSelectedFolder()
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("export_backup_button")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Export Backup")
+                        Icon(
+                            Icons.Default.Folder,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (!draftFolderPath.isNullOrEmpty()) {
+                                    stringResource(R.string.backup_folder_label)
+                                } else {
+                                    stringResource(R.string.backup_no_folder)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = draftFolderPath?.takeIf { it.isNotEmpty() }?.let {
+                                    "${getBackupFolderDisplayPath(it).trimEnd('/')}/"
+                                } ?: stringResource(R.string.backup_tap_select_hint),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                softWrap = true
+                            )
+                        }
                     }
 
                     OutlinedButton(
                         onClick = {
-                            importFileLauncher.launch(arrayOf("application/zip", "application/octet-stream"))
+                            selectingForEditor = true
+                            pendingManualExport = false
+                            openFolderLauncher.launch(null)
                         },
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("import_backup_button")
+                            .heightIn(min = 48.dp)
+                            .testTag("select_folder_button")
                     ) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Restore")
+                        Icon(
+                            Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(stringResource(R.string.backup_select_folder))
                     }
                 }
             }
-        }
 
-        // Section: Backup Settings
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("backup_settings_card"),
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(Icons.Default.Sync, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text(
-                        text = "Backup settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Text(
-                    text = "Choose one folder for manual backups and optional automatic sync.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (!appState.backupFolderPath.isNullOrEmpty()) "Backup folder" else "No folder selected",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = appState.backupFolderPath?.takeIf { it.isNotEmpty() }?.let {
-                                        "Path: ${getBackupFolderDisplayPath(it).trimEnd('/')}/"
-                                    } ?: "Tap Select Folder to link SAF storage",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    softWrap = true
-                                )
-                            }
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                pendingAutoSyncEnable = false
-                                pendingManualExport = false
-                                openFolderLauncher.launch(null)
-                            },
-                            modifier = Modifier.testTag("select_folder_button")
-                        ) {
-                            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Select")
-                        }
+            EditorSwitchRow(
+                title = stringResource(R.string.backup_auto_sync_label),
+                description = stringResource(R.string.backup_auto_sync_desc),
+                checked = draftAutoSync,
+                onCheckedChange = { enabled ->
+                    if (enabled && draftFolderPath.isNullOrEmpty()) {
+                        selectingForEditor = true
+                        pendingManualExport = false
+                        openFolderLauncher.launch(null)
+                    } else {
+                        draftAutoSync = enabled
                     }
-                }
+                },
+                switchTestTag = "toggle_auto_backup"
+            )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Automatic sync",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Update the backup when your setup changes.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = appState.autoBackupEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled && appState.backupFolderPath.isNullOrEmpty()) {
-                                pendingAutoSyncEnable = true
-                                pendingManualExport = false
-                                openFolderLauncher.launch(null)
-                            } else {
-                                viewModel.setAutoBackupEnabled(enabled)
-                            }
-                        },
-                        modifier = Modifier.testTag("toggle_auto_backup")
-                    )
-                }
-            }
+            Text(
+                text = stringResource(R.string.backup_policy_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

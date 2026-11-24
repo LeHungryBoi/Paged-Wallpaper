@@ -20,6 +20,7 @@ import com.example.data.model.PageItem
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.WallpaperAppState
 import com.example.data.repository.WallpaperRepository
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.power.BatterySaverMonitor
 import com.example.power.PowerSnapshot
 import com.example.service.MultiPageWallpaperService
@@ -233,6 +234,11 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.selectPreset(presetId, appState.value.calibration.pageCount)
     }
 
+    fun createDefaultPreset(name: String): String? {
+        val calib = appState.value.calibration
+        return repository.createDefaultPreset(name, calib.pageCount, calib.homePageIndex)
+    }
+
     fun duplicatePreset(presetId: String, name: String): String? =
         repository.duplicatePreset(presetId, name, appState.value.calibration.pageCount)
 
@@ -409,6 +415,18 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         repository.updateState {
             it.copy(autoBackupEnabled = enabled)
         }
+    }
+
+    fun setAppLanguage(languageTag: String) {
+        val normalized = languageTag.ifBlank { WallpaperAppState.DEFAULT_APP_LANGUAGE }
+        AppLocalePrefs.saveLanguageTag(getApplication(), normalized)
+        repository.updateState {
+            it.copy(appLanguage = normalized)
+        }
+    }
+
+    fun clearDiagnosticsHistory() {
+        WallpaperDiagnosticsRecorder.clearHistory()
     }
 
     fun applyWallpaperIntent(context: Context) {
