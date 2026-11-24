@@ -41,6 +41,19 @@ class EdgeOverScrollController {
         private set
 
     private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
+    private var trackedPointerId: Int = MotionEvent.INVALID_POINTER_ID
+    private var isGestureTracking: Boolean = false
+    private var gestureRejected: Boolean = false
+    private var gestureOriginX: Float = 0f
+    private var gestureOriginY: Float = 0f
+    private var maxHorizontalTravelPx: Float = 0f
+    private var hasCrossedTouchSlop: Boolean = false
+    private var hasLeftSettledEdge: Boolean = false
+    private var lockOriginSlopPx: Float = 0f
+    private var lastLeftEdgeOriginX: Float? = null
+    private var lastRightEdgeOriginX: Float? = null
+    private var wasAtLeftEdgeOffset: Boolean = false
+    private var wasAtRightEdgeOffset: Boolean = false
     private var downX: Float = 0f
     private var downY: Float = 0f
     private var lastX: Float = 0f
@@ -71,8 +84,13 @@ class EdgeOverScrollController {
         } else {
             MotionEvent.INVALID_POINTER_ID
         }
-        val activeIdx = if (activePointerId != MotionEvent.INVALID_POINTER_ID) {
-            event.findPointerIndex(activePointerId)
+        val lookupPointerId = when {
+            activePointerId != MotionEvent.INVALID_POINTER_ID -> activePointerId
+            trackedPointerId != MotionEvent.INVALID_POINTER_ID -> trackedPointerId
+            else -> MotionEvent.INVALID_POINTER_ID
+        }
+        val activeIdx = if (lookupPointerId != MotionEvent.INVALID_POINTER_ID) {
+            event.findPointerIndex(lookupPointerId)
         } else {
             -1
         }
@@ -130,7 +148,7 @@ class EdgeOverScrollController {
                     (y < surfaceHeight * TOP_GESTURE_EXCLUSION_FRACTION ||
                         y > surfaceHeight * BOTTOM_GESTURE_EXCLUSION_FRACTION)
                 ) {
-                    clearTouchOnly()
+                    clearAllTouchState()
                     return TouchResult(handled = false, needsRedraw = false)
                 }
 
@@ -144,6 +162,7 @@ class EdgeOverScrollController {
                         anchors.last()
                     }
                     activePointerId = pointerId
+                    trackedPointerId = pointerId
                     val sign = if (existingEdge == EdgeSide.LEFT) 1f else -1f
                     val existingDistance = abs(overScrollFraction) * dragSpan + slop
                     downX = x - sign * existingDistance
@@ -158,6 +177,18 @@ class EdgeOverScrollController {
                     releaseElapsedNanos = 0L
                     isTouchActive = true
                     isOverScrollLocked = true
+                    isGestureTracking = true
+                    gestureRejected = false
+                    gestureOriginX = downX
+                    gestureOriginY = y
+                    maxHorizontalTravelPx = existingDistance
+                    hasCrossedTouchSlop = true
+                    hasLeftSettledEdge = false
+                    lockOriginSlopPx = slop
+                    lastLeftEdgeOriginX = null
+                    lastRightEdgeOriginX = null
+                    wasAtLeftEdgeOffset = existingEdge == EdgeSide.LEFT
+                    wasAtRightEdgeOffset = existingEdge == EdgeSide.RIGHT
                     return TouchResult(handled = true, needsRedraw = false)
                 }
 
@@ -166,14 +197,25 @@ class EdgeOverScrollController {
                     renderedXOffset = renderedXOffset,
                     calibration = calibration
                 )
+                val (atLeftNow, atRightNow) = detectEdgeOffsetFlags(currentXOffset, calibration)
+                trackedPointerId = pointerId
+                isGestureTracking = true
+                gestureRejected = false
+                gestureOriginX = x
+                gestureOriginY = y
+                maxHorizontalTravelPx = 0f
+                hasCrossedTouchSlop = false
+                lastX = x
+                lastEventTimeMs = eventTimeMs
+                wasAtLeftEdgeOffset = atLeftNow || detectedEdge == EdgeSide.LEFT
+                wasAtRightEdgeOffset = atRightNow || detectedEdge == EdgeSide.RIGHT
+
                 if (detectedEdge != EdgeSide.NONE) {
                     edgeAtDown = detectedEdge
                     lockedEdgeOffset = anchor
                     activePointerId = pointerId
                     downX = x
                     downY = y
-                    lastX = x
-                    lastEventTimeMs = eventTimeMs
                     outwardVelocityPxPerSec = 0f
                     activeOutwardVelocityNorm = 0f
                     peakOutwardRawPx = 0f
@@ -182,42 +224,215 @@ class EdgeOverScrollController {
                     releaseElapsedNanos = 0L
                     isTouchActive = true
                     isOverScrollLocked = false
+                    hasLeftSettledEdge = false
+                    lockOriginSlopPx = slop
+                    lastLeftEdgeOriginX = if (detectedEdge == EdgeSide.LEFT) x else null
+                    lastRightEdgeOriginX = if (detectedEdge == EdgeSide.RIGHT) x else null
                 } else {
                     clearTouchOnly()
+                    hasLeftSettledEdge = true
+                    lockOriginSlopPx = 0f
+                    lastLeftEdgeOriginX = if (atLeftNow) x else null
+                    lastRightEdgeOriginX = if (atRightNow) x else null
                 }
                 return TouchResult(handled = false, needsRedraw = false)
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (!isTouchActive || edgeAtDown == EdgeSide.NONE) {
+                if (!isGestureTracking || gestureRejected) {
                     return TouchResult(handled = false, needsRedraw = false)
                 }
-                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+
+                val stepDx = x - lastX
+                val (atLeftNow, atRightNow) = detectEdgeOffsetFlags(currentXOffset, calibration)
+                val anchors = resolveAnchors(calibration)
+
+                if (!isOverScrollLocked) {
+                    val totalDx = x - gestureOriginX
+                    val totalDy = y - gestureOriginY
+                    maxHorizontalTravelPx = max(maxHorizontalTravelPx, abs(totalDx))
+                    if (maxHorizontalTravelPx > slop) {
+                        hasCrossedTouchSlop = true
+                    }
+                    if (abs(totalDy) > slop &&
+                        abs(totalDy) > maxHorizontalTravelPx * VERTICAL_REJECT_RATIO
+                    ) {
+                        gestureRejected = true
+                        clearAllTouchState()
+                        return TouchResult(handled = false, needsRedraw = false)
+                    }
+
+                    if (isTouchActive && edgeAtDown != EdgeSide.NONE && !hasLeftSettledEdge) {
+                        updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                        val dx = x - downX
+                        val dy = y - downY
+                        val outwardRawDx = when (edgeAtDown) {
+                            EdgeSide.LEFT -> dx
+                            EdgeSide.RIGHT -> -dx
+                            EdgeSide.NONE -> 0f
+                        }
+                        if (outwardRawDx > lockOriginSlopPx &&
+                            outwardRawDx > abs(dy) * HORIZONTAL_LOCK_RATIO
+                        ) {
+                            isOverScrollLocked = true
+                            peakOutwardRawPx = outwardRawDx
+                        } else if (outwardRawDx < -slop ||
+                            (outwardRawDx < 0f &&
+                                ((edgeAtDown == EdgeSide.LEFT && !atLeftNow) ||
+                                    (edgeAtDown == EdgeSide.RIGHT && !atRightNow)))
+                        ) {
+                            hasLeftSettledEdge = true
+                            clearTouchOnly()
+                            wasAtLeftEdgeOffset = atLeftNow
+                            wasAtRightEdgeOffset = atRightNow
+                            lastX = x
+                            lastEventTimeMs = eventTimeMs
+                            return TouchResult(handled = false, needsRedraw = false)
+                        } else {
+                            wasAtLeftEdgeOffset = atLeftNow
+                            wasAtRightEdgeOffset = atRightNow
+                            lastX = x
+                            lastEventTimeMs = eventTimeMs
+                            return TouchResult(handled = false, needsRedraw = false)
+                        }
+                    } else if (anchors.size >= 2) {
+                        if (atLeftNow) {
+                            val updatedOrigin = when {
+                                !wasAtLeftEdgeOffset && lastLeftEdgeOriginX != null ->
+                                    minOf(x, lastLeftEdgeOriginX!!)
+                                !wasAtLeftEdgeOffset || lastLeftEdgeOriginX == null -> x
+                                else -> lastLeftEdgeOriginX!!
+                            }
+                            lastLeftEdgeOriginX = updatedOrigin
+                            val outwardThreshold = if (hasCrossedTouchSlop) 0f else slop
+                            val outwardPastBoundary = x - updatedOrigin
+                            if (outwardPastBoundary > outwardThreshold && stepDx > 0f) {
+                                val residualPx = if (overScrollFraction < -FRACTION_EPSILON) {
+                                    abs(overScrollFraction) * dragSpan
+                                } else {
+                                    0f
+                                }
+                                edgeAtDown = EdgeSide.LEFT
+                                lockedEdgeOffset = anchors.first()
+                                activePointerId = trackedPointerId
+                                downX = updatedOrigin - residualPx
+                                downY = y
+                                lockOriginSlopPx = if (hasCrossedTouchSlop) 0f else slop
+                                hasLeftSettledEdge = false
+                                hasReversedPastOrigin = false
+                                snapBackMode = SnapBackMode.SLOW
+                                releaseElapsedNanos = 0L
+                                isTouchActive = true
+                                isOverScrollLocked = true
+                                peakOutwardRawPx = x - downX
+                                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                            } else if (x <= updatedOrigin && stepDx > 0f) {
+                                edgeAtDown = EdgeSide.LEFT
+                                lockedEdgeOffset = anchors.first()
+                                activePointerId = trackedPointerId
+                                downX = updatedOrigin
+                                downY = y
+                                lockOriginSlopPx = if (hasCrossedTouchSlop) 0f else slop
+                                hasLeftSettledEdge = false
+                                isTouchActive = true
+                                isOverScrollLocked = false
+                                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                                wasAtLeftEdgeOffset = atLeftNow
+                                wasAtRightEdgeOffset = atRightNow
+                                lastX = x
+                                lastEventTimeMs = eventTimeMs
+                                return TouchResult(handled = false, needsRedraw = false)
+                            } else {
+                                wasAtLeftEdgeOffset = atLeftNow
+                                wasAtRightEdgeOffset = atRightNow
+                                lastX = x
+                                lastEventTimeMs = eventTimeMs
+                                return TouchResult(handled = false, needsRedraw = false)
+                            }
+                        } else if (atRightNow) {
+                            val updatedOrigin = when {
+                                !wasAtRightEdgeOffset && lastRightEdgeOriginX != null ->
+                                    maxOf(x, lastRightEdgeOriginX!!)
+                                !wasAtRightEdgeOffset || lastRightEdgeOriginX == null -> x
+                                else -> lastRightEdgeOriginX!!
+                            }
+                            lastRightEdgeOriginX = updatedOrigin
+                            val outwardThreshold = if (hasCrossedTouchSlop) 0f else slop
+                            val outwardPastBoundary = updatedOrigin - x
+                            if (outwardPastBoundary > outwardThreshold && stepDx < 0f) {
+                                val residualPx = if (overScrollFraction > FRACTION_EPSILON) {
+                                    abs(overScrollFraction) * dragSpan
+                                } else {
+                                    0f
+                                }
+                                edgeAtDown = EdgeSide.RIGHT
+                                lockedEdgeOffset = anchors.last()
+                                activePointerId = trackedPointerId
+                                downX = updatedOrigin + residualPx
+                                downY = y
+                                lockOriginSlopPx = if (hasCrossedTouchSlop) 0f else slop
+                                hasLeftSettledEdge = false
+                                hasReversedPastOrigin = false
+                                snapBackMode = SnapBackMode.SLOW
+                                releaseElapsedNanos = 0L
+                                isTouchActive = true
+                                isOverScrollLocked = true
+                                peakOutwardRawPx = downX - x
+                                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                            } else if (x >= updatedOrigin && stepDx < 0f) {
+                                edgeAtDown = EdgeSide.RIGHT
+                                lockedEdgeOffset = anchors.last()
+                                activePointerId = trackedPointerId
+                                downX = updatedOrigin
+                                downY = y
+                                lockOriginSlopPx = if (hasCrossedTouchSlop) 0f else slop
+                                hasLeftSettledEdge = false
+                                isTouchActive = true
+                                isOverScrollLocked = false
+                                updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                                wasAtLeftEdgeOffset = atLeftNow
+                                wasAtRightEdgeOffset = atRightNow
+                                lastX = x
+                                lastEventTimeMs = eventTimeMs
+                                return TouchResult(handled = false, needsRedraw = false)
+                            } else {
+                                wasAtLeftEdgeOffset = atLeftNow
+                                wasAtRightEdgeOffset = atRightNow
+                                lastX = x
+                                lastEventTimeMs = eventTimeMs
+                                return TouchResult(handled = false, needsRedraw = false)
+                            }
+                        } else {
+                            wasAtLeftEdgeOffset = false
+                            wasAtRightEdgeOffset = false
+                            lastX = x
+                            lastEventTimeMs = eventTimeMs
+                            return TouchResult(handled = false, needsRedraw = false)
+                        }
+                    } else {
+                        wasAtLeftEdgeOffset = atLeftNow
+                        wasAtRightEdgeOffset = atRightNow
+                        lastX = x
+                        lastEventTimeMs = eventTimeMs
+                        return TouchResult(handled = false, needsRedraw = false)
+                    }
+                } else {
+                    updateVelocity(x = x, eventTimeMs = eventTimeMs, surfaceWidth = safeWidth)
+                }
+
+                if (!isOverScrollLocked) {
+                    wasAtLeftEdgeOffset = atLeftNow
+                    wasAtRightEdgeOffset = atRightNow
+                    lastX = x
+                    lastEventTimeMs = eventTimeMs
+                    return TouchResult(handled = false, needsRedraw = false)
+                }
 
                 val dx = x - downX
-                val dy = y - downY
                 val outwardRawDx = when (edgeAtDown) {
                     EdgeSide.LEFT -> dx
                     EdgeSide.RIGHT -> -dx
                     EdgeSide.NONE -> 0f
-                }
-
-                if (!isOverScrollLocked) {
-                    if (abs(dy) > slop && abs(dy) > abs(dx) * VERTICAL_REJECT_RATIO) {
-                        clearTouchOnly()
-                        return TouchResult(handled = false, needsRedraw = false)
-                    }
-                    if (outwardRawDx > slop && outwardRawDx > abs(dy) * HORIZONTAL_LOCK_RATIO) {
-                        isOverScrollLocked = true
-                        peakOutwardRawPx = outwardRawDx
-                    } else if (outwardRawDx < -slop) {
-                        clearTouchOnly()
-                        return TouchResult(handled = false, needsRedraw = false)
-                    }
-                }
-
-                if (!isOverScrollLocked) {
-                    return TouchResult(handled = false, needsRedraw = false)
                 }
 
                 if (outwardRawDx <= 0f) {
@@ -228,7 +443,17 @@ class EdgeOverScrollController {
                     // smoothly into the incoming page motion without pausing at rest.
                     releaseStartFraction = overScrollFraction
                     releaseElapsedNanos = 0L
+                    if (edgeAtDown == EdgeSide.LEFT && lastLeftEdgeOriginX == null) {
+                        lastLeftEdgeOriginX = x
+                    } else if (edgeAtDown == EdgeSide.RIGHT && lastRightEdgeOriginX == null) {
+                        lastRightEdgeOriginX = x
+                    }
+                    hasLeftSettledEdge = true
                     clearTouchOnly()
+                    wasAtLeftEdgeOffset = atLeftNow
+                    wasAtRightEdgeOffset = atRightNow
+                    lastX = x
+                    lastEventTimeMs = eventTimeMs
                     return TouchResult(handled = false, needsRedraw = hadFraction)
                 }
 
@@ -237,10 +462,10 @@ class EdgeOverScrollController {
                 }
 
                 val effectivePx = if (outwardRawDx >= peakOutwardRawPx) {
-                    (outwardRawDx - slop).coerceAtLeast(0f)
+                    (outwardRawDx - lockOriginSlopPx).coerceAtLeast(0f)
                 } else {
                     val returnRatio = (outwardRawDx / peakOutwardRawPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
-                    (peakOutwardRawPx - slop).coerceAtLeast(0f) * returnRatio
+                    (peakOutwardRawPx - lockOriginSlopPx).coerceAtLeast(0f) * returnRatio
                 }
 
                 val distanceComponent = (effectivePx / dragSpan).coerceIn(0f, 1f)
@@ -265,14 +490,20 @@ class EdgeOverScrollController {
                 }
                 val changed = abs(nextFraction - overScrollFraction) > FRACTION_EPSILON
                 overScrollFraction = nextFraction
+                wasAtLeftEdgeOffset = atLeftNow
+                wasAtRightEdgeOffset = atRightNow
+                lastX = x
+                lastEventTimeMs = eventTimeMs
                 return TouchResult(handled = true, needsRedraw = changed)
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-                if (isTouchActive && pointerId == activePointerId) {
+                if (isGestureTracking && pointerId == trackedPointerId) {
                     val wasLocked = isOverScrollLocked
-                    prepareRelease()
-                    clearTouchOnly()
+                    if (isTouchActive || wasLocked) {
+                        prepareRelease()
+                    }
+                    clearAllTouchState()
                     return TouchResult(
                         handled = wasLocked,
                         needsRedraw = wasLocked || hasActiveFraction()
@@ -288,7 +519,7 @@ class EdgeOverScrollController {
                 if (wasActive || wasLocked) {
                     prepareRelease()
                 }
-                clearTouchOnly()
+                clearAllTouchState()
                 return TouchResult(
                     handled = wasActive || wasLocked,
                     needsRedraw = wasLocked || hasActiveFraction()
@@ -349,7 +580,7 @@ class EdgeOverScrollController {
     }
 
     fun reset() {
-        clearTouchOnly()
+        clearAllTouchState()
         overScrollFraction = 0f
         snapBackMode = SnapBackMode.SLOW
         hasReversedPastOrigin = false
@@ -397,6 +628,39 @@ class EdgeOverScrollController {
         outwardVelocityPxPerSec = 0f
         activeOutwardVelocityNorm = 0f
         peakOutwardRawPx = 0f
+    }
+
+    private fun clearAllTouchState() {
+        clearTouchOnly()
+        trackedPointerId = MotionEvent.INVALID_POINTER_ID
+        isGestureTracking = false
+        gestureRejected = false
+        gestureOriginX = 0f
+        gestureOriginY = 0f
+        maxHorizontalTravelPx = 0f
+        hasCrossedTouchSlop = false
+        hasLeftSettledEdge = false
+        lockOriginSlopPx = 0f
+        lastLeftEdgeOriginX = null
+        lastRightEdgeOriginX = null
+        wasAtLeftEdgeOffset = false
+        wasAtRightEdgeOffset = false
+    }
+
+    private fun detectEdgeOffsetFlags(
+        xOffset: Float,
+        calibration: CalibrationConfig
+    ): Pair<Boolean, Boolean> {
+        val anchors = resolveAnchors(calibration)
+        if (anchors.size < 2) return false to false
+        val segmentTolerance = anchors.zipWithNext()
+            .minOfOrNull { (start, end) -> abs(end - start) }
+            ?.let { it * STATIC_SEGMENT_TOLERANCE_RATIO }
+            ?: 0f
+        val tolerance = maxOf(STATIC_OFFSET_TOLERANCE, segmentTolerance)
+        val atLeft = abs(xOffset - anchors.first()) <= tolerance
+        val atRight = abs(xOffset - anchors.last()) <= tolerance
+        return atLeft to atRight
     }
 
     private fun detectSettledEdge(

@@ -153,6 +153,82 @@ class EdgeOverScrollUnitTest {
         assertEquals(EdgeOverScrollController.SnapBackMode.FAST, controller.snapBackMode)
         controller.stepRelease(16_666_667L, 0.5f)
         assertTrue(controller.overScrollFraction < -0.28f && controller.overScrollFraction > -0.40f)
+
+        // Case 5: Opposite-direction reversal on Page 1 — swipe left 30 units (revealing Page 2),
+        // then reverse right 60 units (30 back to boundary + 30 past boundary into left overscroll)
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        val initialInward = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 270f, 500f, width, slop, 0.08f, 0.05f, calib, 60L
+        )
+        assertFalse(initialInward.handled)
+        assertFalse(controller.isTouchActive)
+        assertFalse(controller.isOverScrollLocked)
+        assertEquals(0f, controller.overScrollFraction, 0.001f)
+
+        val backToBoundary = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 300f, 500f, width, slop, 0f, 0.01f, calib, 120L
+        )
+        assertFalse(backToBoundary.handled)
+        assertFalse(controller.isOverScrollLocked)
+
+        val pastBoundary = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 330f, 500f, width, slop, 0f, 0f, calib, 180L
+        )
+        assertTrue(pastBoundary.handled)
+        assertTrue(pastBoundary.needsRedraw)
+        assertTrue(controller.isTouchActive)
+        assertTrue(controller.isOverScrollLocked)
+        assertEquals(0f, controller.lockedEdgeOffset, 0.001f)
+        assertTrue(controller.overScrollFraction < -0.04f)
+
+        controller.onTouchSignal(MotionEvent.ACTION_UP, 0, 330f, 500f, width, slop, 0f, 0f, calib, 210L)
+        assertEquals(EdgeOverScrollController.SnapBackMode.SLOW, controller.snapBackMode)
+
+        // Case 6: Single-step jump across Page 1 boundary (left 30 -> right 60) and double reversal
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 270f, 500f, width, slop, 0.08f, 0.05f, calib, 60L)
+        val jumpPastBoundary = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 330f, 500f, width, slop, 0f, 0f, calib, 120L
+        )
+        assertTrue(jumpPastBoundary.handled)
+        assertTrue(controller.isOverScrollLocked)
+        assertTrue(controller.overScrollFraction < -0.04f)
+
+        // Full reversal back inward into Page 2, then reverse outward again without lifting finger
+        val reverseToPage2 = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 260f, 500f, width, slop, 0.1f, 0.05f, calib, 180L
+        )
+        assertFalse(reverseToPage2.handled)
+        assertFalse(controller.isTouchActive)
+        assertEquals(EdgeOverScrollController.SnapBackMode.FAST, controller.snapBackMode)
+
+        val reenterLeftOverscroll = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 360f, 500f, width, slop, 0f, 0f, calib, 240L
+        )
+        assertTrue(reenterLeftOverscroll.handled)
+        assertTrue(controller.isTouchActive)
+        assertTrue(controller.isOverScrollLocked)
+        assertTrue(controller.overScrollFraction < -0.10f)
+
+        // Case 7: Symmetric opposite-direction reversal on Last Page (1.0f) — swipe right 30, then left 60
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 700f, 500f, width, slop, 1f, 1f, calib, 0L)
+        val lastPageInward = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 730f, 500f, width, slop, 0.92f, 0.95f, calib, 60L
+        )
+        assertFalse(lastPageInward.handled)
+        assertFalse(controller.isOverScrollLocked)
+
+        val lastPagePastBoundary = controller.onTouchSignal(
+            MotionEvent.ACTION_MOVE, 0, 670f, 500f, width, slop, 1f, 1f, calib, 140L
+        )
+        assertTrue(lastPagePastBoundary.handled)
+        assertTrue(controller.isTouchActive)
+        assertTrue(controller.isOverScrollLocked)
+        assertEquals(1f, controller.lockedEdgeOffset, 0.001f)
+        assertTrue(controller.overScrollFraction > 0.04f)
     }
 
     @Test

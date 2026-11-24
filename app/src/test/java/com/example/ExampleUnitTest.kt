@@ -1135,6 +1135,17 @@ class ExampleUnitTest {
             "FAST snap-back step (${controller.overScrollFraction}) should be smoothly capped around -0.345",
             controller.overScrollFraction < -0.28f && controller.overScrollFraction > -0.40f
         )
+
+        // Case 4: Swipe left 30px toward Page 2 then reverse right 60px past Page 1 boundary enters overscroll
+        controller.reset()
+        controller.onTouchSignal(MotionEvent.ACTION_DOWN, 0, 300f, 500f, width, slop, 0f, 0f, calib, 0L)
+        val inwardMove = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 270f, 500f, width, slop, 0.08f, 0.05f, calib, 60L)
+        assertFalse(inwardMove.handled)
+        assertFalse(controller.isOverScrollLocked)
+        val reversePastEdge = controller.onTouchSignal(MotionEvent.ACTION_MOVE, 0, 330f, 500f, width, slop, 0f, 0f, calib, 140L)
+        assertTrue(reversePastEdge.handled)
+        assertTrue(controller.isOverScrollLocked)
+        assertTrue(controller.overScrollFraction < -0.04f)
     }
 
     @Test

@@ -560,15 +560,9 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
 
-            // While the finger is held down on an edge page, ignore misleading launcher
-            // offsets once edge overscroll is locked so they cannot pull the incoming page
-            // in upon release.
-            if (edgeOverScrollController.isTouchActive) {
-                if (!edgeOverScrollController.isOverScrollLocked) {
-                    currentXOffset = xOffset.coerceIn(0f, 1f)
-                    currentYOffset = yOffset
-                    hasReceivedLauncherOffset = true
-                }
+            // While edge overscroll is locked, ignore misleading launcher offsets so they
+            // cannot pull the neighboring page in during overscroll or upon release.
+            if (edgeOverScrollController.isOverScrollLocked) {
                 return
             }
 
