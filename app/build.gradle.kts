@@ -16,7 +16,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.multiwall.vibe"
+    applicationId = "com.aistudio.multiwall.jzsnre"
     minSdk = 24
     targetSdk = 36
     versionCode = configuredVersionCode

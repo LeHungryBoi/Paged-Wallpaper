@@ -48,7 +48,7 @@ data class GpuFrameRequest(
     val entryBlurMix: Float = 0f,
     val motionBlurRadius: Int,
     val motionBlurDirection: Int,
-    val dimAmount: Float,
+    val darkenMix: Float = 0f,
     val receivedXOffset: Float?,
     val receivedYOffset: Float?,
     val signalOverlayLines: List<String> = emptyList(),
@@ -69,14 +69,26 @@ class GpuWallpaperRenderer(
 
     private data class AssetKey(
         val generation: Long,
+        val darkenedGeneration: Long,
         val page: PageItem?,
         val pageIndex: Int,
         val width: Int,
         val height: Int,
-        val usesParallax: Boolean
+        val usesParallax: Boolean,
+        val darkened: Boolean
     )
 
-    private data class AssetSlot(val pageIndex: Int, val usesParallax: Boolean)
+    private data class AssetSlot(
+        val pageIndex: Int,
+        val usesParallax: Boolean,
+        val darkened: Boolean
+    )
+
+    private data class PageRenderTextures(
+        val primary: PageTexture?,
+        val darkBlendTarget: PageTexture? = null,
+        val darkMix: Float = 0f
+    )
 
     private inner class PageTexture(
         val key: AssetKey,
@@ -437,7 +449,7 @@ class GpuWallpaperRenderer(
 
         try {
             if (isEdgeOverScroll) {
-                val edgePage = getPageTexture(frame, frame.pageA, usesParallax = true)
+                val edgePage = resolvePageTextures(frame, frame.pageA, usesParallax = true)
                 drawEdgeOverScroll(frame, edgePage)
             } else {
                 val hasLeftEdgeResidual = frame.pageA == 0 &&
@@ -445,20 +457,22 @@ class GpuWallpaperRenderer(
                 val lastPageIndex = (pageCount - 1).coerceAtLeast(0)
                 val hasRightEdgeResidual = frame.pageB == lastPageIndex &&
                     frame.edgeOverScrollFraction > EdgeOverScrollController.FRACTION_EPSILON
-                val pageA = getPageTexture(
+                val pageATex = resolvePageTextures(
                     frame,
                     frame.pageA,
                     transition.supportsParallax || hasLeftEdgeResidual
                 )
-                val pageB = if (frame.pageA == frame.pageB) {
-                    null
+                val pageBTex = if (frame.pageA == frame.pageB) {
+                    PageRenderTextures(primary = null)
                 } else {
-                    getPageTexture(
+                    resolvePageTextures(
                         frame,
                         frame.pageB,
                         transition.supportsParallax || hasRightEdgeResidual
                     )
                 }
+                val pageA = pageATex.primary
+                val pageB = pageBTex.primary
                 val pageAEdgeResidualPx = if (hasLeftEdgeResidual && pageA != null && pageA.leftTravelPx > 0) {
                     -EdgeOverScrollScaling.computeTravelPx(
                         absIntensity = -frame.edgeOverScrollFraction,
@@ -488,8 +502,8 @@ class GpuWallpaperRenderer(
                 when (transition.id) {
                     "parallax", "parallax_classic" -> drawParallax(
                         frame,
-                        pageA,
-                        pageB,
+                        pageATex,
+                        pageBTex,
                         transition.id == "parallax_classic",
                         slowImageMotionEnabled,
                         parallaxOutgoingRate,
@@ -499,87 +513,107 @@ class GpuWallpaperRenderer(
                     )
                     "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
                         frame,
-                        pageA,
-                        pageB,
+                        pageATex,
+                        pageBTex,
                         transition.id == "swipe_reveal",
                         revealOutgoingRate,
                         revealIncomingRate,
                         pageAEdgeResidualPx,
                         pageBEdgeResidualPx
                     )
-                    "fade" -> drawFade(frame, pageA, pageB)
-                    "soft_blur" -> drawSoftBlur(frame, pageA, pageB)
-                    "depth" -> drawDepth(frame, pageA, pageB)
+                    "fade" -> drawFade(frame, pageATex, pageBTex)
+                    "soft_blur" -> drawSoftBlur(frame, pageATex, pageBTex)
+                    "depth" -> drawDepth(frame, pageATex, pageBTex)
                     "slide_over" -> drawSlideOver(
                         frame,
-                        pageA,
-                        pageB,
+                        pageATex,
+                        pageBTex,
                         pageAEdgeResidualPx,
                         pageBEdgeResidualPx
                     )
-                    "cube" -> drawCube(frame, pageA, pageB)
-                    else -> drawScroll(frame, pageA, pageB, pageAEdgeResidualPx, pageBEdgeResidualPx)
+                    "cube" -> drawCube(frame, pageATex, pageBTex)
+                    else -> drawScroll(frame, pageATex, pageBTex, pageAEdgeResidualPx, pageBEdgeResidualPx)
                 }
             }
         } finally {
             System.arraycopy(baseProjectionMatrix, 0, projectionMatrix, 0, 16)
         }
+    }
 
-        if (frame.dimAmount > 0.01f) {
-            drawRect(
-                0f,
-                0f,
-                frame.width.toFloat(),
-                frame.height.toFloat(),
-                0f,
-                0f,
-                0f,
-                frame.dimAmount.coerceIn(0f, 1f)
+    private fun resolvePageTextures(
+        frame: GpuFrameRequest,
+        pageIndex: Int,
+        usesParallax: Boolean
+    ): PageRenderTextures {
+        val page = frame.state.pages.find { it.pageIndex == pageIndex }
+        val canDarken = repository.shouldDarkenPage(page, frame.state.darken)
+        val effectiveMix = if (canDarken) frame.darkenMix.coerceIn(0f, 1f) else 0f
+        if (effectiveMix <= 0.001f) {
+            return PageRenderTextures(
+                primary = getPageTexture(frame, pageIndex, usesParallax, darkened = false)
             )
+        }
+        if (effectiveMix >= 0.999f) {
+            return PageRenderTextures(
+                primary = getPageTexture(frame, pageIndex, usesParallax, darkened = true)
+            )
+        }
+        val normal = getPageTexture(frame, pageIndex, usesParallax, darkened = false)
+        val dark = getPageTexture(frame, pageIndex, usesParallax, darkened = true)
+        return when {
+            normal != null && dark != null -> PageRenderTextures(
+                primary = normal,
+                darkBlendTarget = dark,
+                darkMix = effectiveMix
+            )
+            normal != null -> PageRenderTextures(primary = normal)
+            else -> PageRenderTextures(primary = dark)
         }
     }
 
-    private fun drawEdgeOverScroll(frame: GpuFrameRequest, page: PageTexture?) {
-        if (page == null) return
+    private fun drawEdgeOverScroll(frame: GpuFrameRequest, pageTex: PageRenderTextures) {
+        val page = pageTex.primary ?: return
         val sourceLeft = EdgeOverScrollScaling.computeSourceLeftPx(
             intensity = frame.edgeOverScrollFraction,
             leftTravelPx = page.leftTravelPx,
             rightTravelPx = page.rightTravelPx,
             screenWidth = frame.width
         )
-        drawPage(page, 0, sourceLeft, frame, 1f)
+        drawPage(pageTex, 0, sourceLeft, frame, 1f)
     }
 
     private fun drawScroll(
         frame: GpuFrameRequest,
-        pageA: PageTexture?,
-        pageB: PageTexture?,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures,
         pageAEdgeResidualPx: Float = 0f,
         pageBEdgeResidualPx: Float = 0f
     ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         if (pageA != null && p < 1f) {
             val leftA = (-p * frame.width).toInt()
             if (pageAEdgeResidualPx != 0f && pageA.originalWidth > frame.width) {
-                drawPage(pageA, leftA, pageA.leftTravelPx + pageAEdgeResidualPx, frame, 1f)
+                drawPage(pageATex, leftA, pageA.leftTravelPx + pageAEdgeResidualPx, frame, 1f)
             } else {
-                drawFullPage(pageA, leftA, frame, 1f)
+                drawFullPage(pageATex, leftA, frame, 1f)
             }
         }
         if (pageB != null && p > 0f) {
             val leftB = ((1f - p) * frame.width).toInt()
             if (pageBEdgeResidualPx != 0f && pageB.originalWidth > frame.width) {
-                drawPage(pageB, leftB, pageB.leftTravelPx + pageBEdgeResidualPx, frame, 1f)
+                drawPage(pageBTex, leftB, pageB.leftTravelPx + pageBEdgeResidualPx, frame, 1f)
             } else {
-                drawFullPage(pageB, leftB, frame, 1f)
+                drawFullPage(pageBTex, leftB, frame, 1f)
             }
         }
     }
 
     private fun drawParallax(
         frame: GpuFrameRequest,
-        pageA: PageTexture?,
-        pageB: PageTexture?,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures,
         classicIncoming: Boolean,
         slowImageMotionEnabled: Boolean,
         outgoingMotionRate: Float,
@@ -587,6 +621,8 @@ class GpuWallpaperRenderer(
         pageAEdgeResidualPx: Float = 0f,
         pageBEdgeResidualPx: Float = 0f
     ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         val outgoingRate = outgoingMotionRate.coerceIn(0f, 1f)
         val incomingRate = incomingMotionRate.coerceIn(0f, 1f)
@@ -606,20 +642,22 @@ class GpuWallpaperRenderer(
                 (pageB?.leftTravelPx ?: 0) * (1f - pageBRate * (1f - p))
             }
             ) + pageBEdgeResidualPx
-        pageA?.let { drawPage(it, (-p * frame.width).toInt(), sourceA, frame, 1f) }
-        pageB?.let { drawPage(it, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f) }
+        if (pageA != null) drawPage(pageATex, (-p * frame.width).toInt(), sourceA, frame, 1f)
+        if (pageB != null) drawPage(pageBTex, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f)
     }
 
     private fun drawSwipeReveal(
         frame: GpuFrameRequest,
-        pageA: PageTexture?,
-        pageB: PageTexture?,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures,
         followsDirection: Boolean,
         outgoingRevealRate: Float,
         incomingRevealRate: Float,
         pageAEdgeResidualPx: Float = 0f,
         pageBEdgeResidualPx: Float = 0f
     ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         val pageARate = if (frame.swipeForward) outgoingRevealRate else incomingRevealRate
         val pageBRate = if (frame.swipeForward) incomingRevealRate else outgoingRevealRate
@@ -628,59 +666,113 @@ class GpuWallpaperRenderer(
         val sourceB = (pageB?.leftTravelPx ?: 0) * (1f - pageBRate * (1f - p)) +
             pageBEdgeResidualPx
         if (followsDirection && !frame.swipeForward) {
-            pageA?.let { drawPage(it, 0, sourceA, frame, 1f) }
-            pageB?.let {
-                drawPage(it, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f)
+            if (pageA != null) drawPage(pageATex, 0, sourceA, frame, 1f)
+            if (pageB != null) {
+                drawPage(pageBTex, ((1f - p) * frame.width).toInt(), sourceB, frame, 1f)
             }
         } else {
-            pageB?.let { drawPage(it, 0, sourceB, frame, 1f) }
-            pageA?.let {
-                drawPage(it, (-p * frame.width).toInt(), sourceA, frame, 1f)
+            if (pageB != null) drawPage(pageBTex, 0, sourceB, frame, 1f)
+            if (pageA != null) {
+                drawPage(pageATex, (-p * frame.width).toInt(), sourceA, frame, 1f)
             }
         }
     }
 
-    private fun drawFade(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
+    private fun drawFade(
+        frame: GpuFrameRequest,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures
+    ) {
         val p = frame.progress.coerceIn(0f, 1f)
-        pageA?.let { drawFullPage(it, 0, frame, 1f - p) }
-        pageB?.let { drawFullPage(it, 0, frame, p) }
+        if (pageATex.primary != null) drawFullPage(pageATex, 0, frame, 1f - p)
+        if (pageBTex.primary != null) drawFullPage(pageBTex, 0, frame, p)
     }
 
-    private fun drawSoftBlur(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
+    private fun drawSoftBlur(
+        frame: GpuFrameRequest,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures
+    ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         val eased = p * p * (3f - 2f * p)
-        pageA?.let { drawFullPage(it, 0, frame, 1f - eased) }
-        pageB?.let { drawFullPage(it, 0, frame, eased) }
+        if (pageA != null) drawFullPage(pageATex, 0, frame, 1f - eased)
+        if (pageB != null) drawFullPage(pageBTex, 0, frame, eased)
         val blurStrength = (sin(Math.PI * eased).toFloat() * 0.22f).coerceIn(0f, 0.22f)
         if (blurStrength > 0.001f) {
-            pageA?.let { drawTexture(it.blurredTextureId, frame, 1f, (1f - eased) * blurStrength) }
-            pageB?.let { drawTexture(it.blurredTextureId, frame, 1f, eased * blurStrength) }
+            pageA?.let {
+                drawTexture(
+                    textureId = it.blurredTextureId,
+                    frame = frame,
+                    scale = 1f,
+                    alpha = (1f - eased) * blurStrength,
+                    darkTextureId = pageATex.darkBlendTarget?.blurredTextureId ?: 0,
+                    darkMix = pageATex.darkMix
+                )
+            }
+            pageB?.let {
+                drawTexture(
+                    textureId = it.blurredTextureId,
+                    frame = frame,
+                    scale = 1f,
+                    alpha = eased * blurStrength,
+                    darkTextureId = pageBTex.darkBlendTarget?.blurredTextureId ?: 0,
+                    darkMix = pageBTex.darkMix
+                )
+            }
         }
     }
 
-    private fun drawDepth(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
+    private fun drawDepth(
+        frame: GpuFrameRequest,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures
+    ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         if (pageA != null && p < 1f) {
-            drawTexture(pageA.textureId, frame, 1f - 0.22f * p, 1f - p, pageA.blurredTextureId)
+            drawTexture(
+                textureId = pageA.textureId,
+                frame = frame,
+                scale = 1f - 0.22f * p,
+                alpha = 1f - p,
+                blurredTextureId = pageA.blurredTextureId,
+                darkTextureId = pageATex.darkBlendTarget?.textureId ?: 0,
+                darkBlurredTextureId = pageATex.darkBlendTarget?.blurredTextureId ?: 0,
+                darkMix = pageATex.darkMix
+            )
         }
         if (pageB != null && p > 0f) {
-            drawTexture(pageB.textureId, frame, 1.15f - 0.15f * p, p, pageB.blurredTextureId)
+            drawTexture(
+                textureId = pageB.textureId,
+                frame = frame,
+                scale = 1.15f - 0.15f * p,
+                alpha = p,
+                blurredTextureId = pageB.blurredTextureId,
+                darkTextureId = pageBTex.darkBlendTarget?.textureId ?: 0,
+                darkBlurredTextureId = pageBTex.darkBlendTarget?.blurredTextureId ?: 0,
+                darkMix = pageBTex.darkMix
+            )
         }
     }
 
     private fun drawSlideOver(
         frame: GpuFrameRequest,
-        pageA: PageTexture?,
-        pageB: PageTexture?,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures,
         pageAEdgeResidualPx: Float = 0f,
         pageBEdgeResidualPx: Float = 0f
     ) {
+        val pageA = pageATex.primary
+        val pageB = pageBTex.primary
         val p = frame.progress.coerceIn(0f, 1f)
         pageA?.let {
             if (pageAEdgeResidualPx != 0f && it.originalWidth > frame.width) {
-                drawPage(it, 0, it.leftTravelPx + pageAEdgeResidualPx, frame, 1f)
+                drawPage(pageATex, 0, it.leftTravelPx + pageAEdgeResidualPx, frame, 1f)
             } else {
-                drawFullPage(it, 0, frame, 1f)
+                drawFullPage(pageATex, 0, frame, 1f)
             }
             if (p > 0f) {
                 drawRect(
@@ -698,9 +790,9 @@ class GpuWallpaperRenderer(
         if (pageB != null && p > 0f) {
             val left = ((1f - p) * frame.width).toInt()
             if (pageBEdgeResidualPx != 0f && pageB.originalWidth > frame.width) {
-                drawPage(pageB, left, pageB.leftTravelPx + pageBEdgeResidualPx, frame, 1f)
+                drawPage(pageBTex, left, pageB.leftTravelPx + pageBEdgeResidualPx, frame, 1f)
             } else {
-                drawFullPage(pageB, left, frame, 1f)
+                drawFullPage(pageBTex, left, frame, 1f)
             }
             if (left > 0) {
                 val stripeWidth = (frame.width * 0.05f).toInt()
@@ -718,10 +810,14 @@ class GpuWallpaperRenderer(
         }
     }
 
-    private fun drawCube(frame: GpuFrameRequest, pageA: PageTexture?, pageB: PageTexture?) {
+    private fun drawCube(
+        frame: GpuFrameRequest,
+        pageATex: PageRenderTextures,
+        pageBTex: PageRenderTextures
+    ) {
         val p = frame.progress.coerceIn(0f, 1f)
-        if (pageA != null && p < 1f) {
-            drawCubeFace(pageA.textureId, frame, -90f * p, frame.width.toFloat(), pageA.blurredTextureId)
+        if (pageATex.primary != null && p < 1f) {
+            drawCubeFace(pageATex, frame, -90f * p, frame.width.toFloat())
             drawRect(
                 0f,
                 0f,
@@ -733,8 +829,8 @@ class GpuWallpaperRenderer(
                 quantizedAlpha(p * 180f / 255f)
             )
         }
-        if (pageB != null && p > 0f) {
-            drawCubeFace(pageB.textureId, frame, 90f * (1f - p), 0f, pageB.blurredTextureId)
+        if (pageBTex.primary != null && p > 0f) {
+            drawCubeFace(pageBTex, frame, 90f * (1f - p), 0f)
             drawRect(
                 0f,
                 0f,
@@ -749,12 +845,12 @@ class GpuWallpaperRenderer(
     }
 
     private fun drawCubeFace(
-        textureId: Int,
+        pageTex: PageRenderTextures,
         frame: GpuFrameRequest,
         rotation: Float,
-        pivotX: Float,
-        blurredTextureId: Int = 0
+        pivotX: Float
     ) {
+        val page = pageTex.primary ?: return
         cubeCamera.save()
         cubeCamera.rotateY(rotation)
         graphicsMatrix.reset()
@@ -773,10 +869,31 @@ class GpuWallpaperRenderer(
             1f
         )
         GlMatrix.multiplyMM(modelMatrix, 0, cubeMatrix, 0, cubeScaleMatrix, 0)
-        drawTexturedQuad(textureId, 0f, 0f, 1f, 1f, 1f)
-        if (frame.entryBlurMix > 0.004f && blurredTextureId != 0) {
+        drawTexturedQuad(
+            textureId = page.textureId,
+            uvOffsetX = 0f,
+            uvOffsetY = 0f,
+            uvScaleX = 1f,
+            uvScaleY = 1f,
+            alpha = 1f,
+            darkTextureId = pageTex.darkBlendTarget?.textureId ?: 0,
+            darkMix = pageTex.darkMix
+        )
+        if (frame.entryBlurMix > 0.004f && page.blurredTextureId != 0) {
             val mix = frame.entryBlurMix.coerceIn(0f, 1f)
-            drawTexturedQuad(blurredTextureId, 0f, 0f, 1f, 1f, mix, mix, mix, mix)
+            drawTexturedQuad(
+                textureId = page.blurredTextureId,
+                uvOffsetX = 0f,
+                uvOffsetY = 0f,
+                uvScaleX = 1f,
+                uvScaleY = 1f,
+                alpha = mix,
+                red = mix,
+                green = mix,
+                blue = mix,
+                darkTextureId = pageTex.darkBlendTarget?.blurredTextureId ?: 0,
+                darkMix = pageTex.darkMix
+            )
         }
     }
 
@@ -797,19 +914,22 @@ class GpuWallpaperRenderer(
     private fun getPageTexture(
         frame: GpuFrameRequest,
         pageIndex: Int,
-        usesParallax: Boolean
+        usesParallax: Boolean,
+        darkened: Boolean
     ): PageTexture? {
-        val slot = AssetSlot(pageIndex, usesParallax)
+        val slot = AssetSlot(pageIndex, usesParallax, darkened)
         val page = frame.state.pages.find { it.pageIndex == pageIndex }
         val isIntentionallyBlank = page == null || page.isBlank ||
             (page.originalId == null && page.croppedFileName == null)
         val key = AssetKey(
-            repository.bitmapGeneration,
-            page,
-            pageIndex,
-            frame.width,
-            frame.height,
-            usesParallax
+            generation = repository.bitmapGeneration,
+            darkenedGeneration = if (darkened) repository.darkenedBitmapGeneration else 0L,
+            page = page,
+            pageIndex = pageIndex,
+            width = frame.width,
+            height = frame.height,
+            usesParallax = usesParallax,
+            darkened = darkened
         )
         pageTextures[slot]?.let { if (it.key == key) return it }
         val now = System.nanoTime()
@@ -821,9 +941,9 @@ class GpuWallpaperRenderer(
         }
 
         val parallax = if (usesParallax) {
-            repository.getParallaxBitmap(pageIndex, frame.width, frame.height)
+            repository.getParallaxBitmap(pageIndex, frame.width, frame.height, darkened = darkened)
         } else {
-            repository.getCroppedBitmap(pageIndex, frame.width, frame.height)?.let {
+            repository.getCroppedBitmap(pageIndex, frame.width, frame.height, darkened = darkened)?.let {
                 WallpaperRepository.ParallaxBitmap(it, 0, 0)
             }
         }
@@ -919,12 +1039,15 @@ class GpuWallpaperRenderer(
     }
 
     private fun drawPage(
-        page: PageTexture,
+        pageTex: PageRenderTextures,
         left: Int,
         sourceLeft: Float,
         frame: GpuFrameRequest,
         alpha: Float
     ) {
+        val page = pageTex.primary ?: return
+        val darkTextureId = pageTex.darkBlendTarget?.textureId ?: 0
+        val darkBlurredTextureId = pageTex.darkBlendTarget?.blurredTextureId ?: 0
         val uvScaleX: Float
         val uvOffsetX: Float
         if (page.originalWidth <= frame.width) {
@@ -943,7 +1066,9 @@ class GpuWallpaperRenderer(
             height = frame.height.toFloat(),
             alpha = alpha,
             uvOffsetX = uvOffsetX,
-            uvScaleX = uvScaleX
+            uvScaleX = uvScaleX,
+            darkTextureId = darkTextureId,
+            darkMix = pageTex.darkMix
         )
         if (frame.entryBlurMix > 0.004f && page.blurredTextureId != 0) {
             val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
@@ -958,24 +1083,31 @@ class GpuWallpaperRenderer(
                 uvScaleX = uvScaleX,
                 red = mix,
                 green = mix,
-                blue = mix
+                blue = mix,
+                darkTextureId = darkBlurredTextureId,
+                darkMix = pageTex.darkMix
             )
         }
     }
 
     private fun drawFullPage(
-        page: PageTexture,
+        pageTex: PageRenderTextures,
         left: Int,
         frame: GpuFrameRequest,
         alpha: Float
     ) {
+        val page = pageTex.primary ?: return
+        val darkTextureId = pageTex.darkBlendTarget?.textureId ?: 0
+        val darkBlurredTextureId = pageTex.darkBlendTarget?.blurredTextureId ?: 0
         drawTextureModel(
             textureId = page.textureId,
             left = left.toFloat(),
             top = 0f,
             width = frame.width.toFloat(),
             height = frame.height.toFloat(),
-            alpha = alpha
+            alpha = alpha,
+            darkTextureId = darkTextureId,
+            darkMix = pageTex.darkMix
         )
         if (frame.entryBlurMix > 0.004f && page.blurredTextureId != 0) {
             val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
@@ -988,7 +1120,9 @@ class GpuWallpaperRenderer(
                 alpha = mix,
                 red = mix,
                 green = mix,
-                blue = mix
+                blue = mix,
+                darkTextureId = darkBlurredTextureId,
+                darkMix = pageTex.darkMix
             )
         }
     }
@@ -998,30 +1132,37 @@ class GpuWallpaperRenderer(
         frame: GpuFrameRequest,
         scale: Float,
         alpha: Float,
-        blurredTextureId: Int = 0
+        blurredTextureId: Int = 0,
+        darkTextureId: Int = 0,
+        darkBlurredTextureId: Int = 0,
+        darkMix: Float = 0f
     ) {
         val width = frame.width * scale
         val height = frame.height * scale
         drawTextureModel(
-            textureId,
-            (frame.width - width) / 2f,
-            (frame.height - height) / 2f,
-            width,
-            height,
-            alpha
+            textureId = textureId,
+            left = (frame.width - width) / 2f,
+            top = (frame.height - height) / 2f,
+            width = width,
+            height = height,
+            alpha = alpha,
+            darkTextureId = darkTextureId,
+            darkMix = darkMix
         )
         if (frame.entryBlurMix > 0.004f && blurredTextureId != 0) {
             val mix = (frame.entryBlurMix * alpha).coerceIn(0f, 1f)
             drawTextureModel(
-                blurredTextureId,
-                (frame.width - width) / 2f,
-                (frame.height - height) / 2f,
-                width,
-                height,
-                mix,
+                textureId = blurredTextureId,
+                left = (frame.width - width) / 2f,
+                top = (frame.height - height) / 2f,
+                width = width,
+                height = height,
+                alpha = mix,
                 red = mix,
                 green = mix,
-                blue = mix
+                blue = mix,
+                darkTextureId = darkBlurredTextureId,
+                darkMix = darkMix
             )
         }
     }
@@ -1037,12 +1178,26 @@ class GpuWallpaperRenderer(
         uvScaleX: Float = 1f,
         red: Float = 1f,
         green: Float = 1f,
-        blue: Float = 1f
+        blue: Float = 1f,
+        darkTextureId: Int = 0,
+        darkMix: Float = 0f
     ) {
         GlMatrix.setIdentityM(modelMatrix, 0)
         GlMatrix.translateM(modelMatrix, 0, left, top, 0f)
         GlMatrix.scaleM(modelMatrix, 0, width, height, 1f)
-        drawTexturedQuad(textureId, uvOffsetX, 0f, uvScaleX, 1f, alpha, red, green, blue)
+        drawTexturedQuad(
+            textureId = textureId,
+            uvOffsetX = uvOffsetX,
+            uvOffsetY = 0f,
+            uvScaleX = uvScaleX,
+            uvScaleY = 1f,
+            alpha = alpha,
+            red = red,
+            green = green,
+            blue = blue,
+            darkTextureId = darkTextureId,
+            darkMix = darkMix
+        )
     }
 
     private fun drawTexturedQuad(
@@ -1054,14 +1209,29 @@ class GpuWallpaperRenderer(
         alpha: Float,
         red: Float = 1f,
         green: Float = 1f,
-        blue: Float = 1f
+        blue: Float = 1f,
+        darkTextureId: Int = 0,
+        darkMix: Float = 0f
     ) {
+        val effectiveDarkMix = if (darkTextureId != 0 && darkMix > 0.001f) {
+            darkMix.coerceIn(0f, 1f)
+        } else {
+            0f
+        }
         GlMatrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, modelMatrix, 0)
         GLES20.glUseProgram(textureProgram)
         bindQuad(textureProgram)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(textureProgram, "uTexture"), 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(
+            GLES20.GL_TEXTURE_2D,
+            if (effectiveDarkMix > 0f) darkTextureId else textureId
+        )
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(textureProgram, "uDarkTexture"), 1)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(textureProgram, "uDarkMix"), effectiveDarkMix)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glUniformMatrix4fv(
             GLES20.glGetUniformLocation(textureProgram, "uMvp"),
             1,
@@ -1534,12 +1704,20 @@ class GpuWallpaperRenderer(
         private const val TEXTURE_FRAGMENT_SHADER = """
             precision highp float;
             uniform sampler2D uTexture;
+            uniform sampler2D uDarkTexture;
+            uniform float uDarkMix;
             uniform vec2 uUvOffset;
             uniform vec2 uUvScale;
             uniform vec4 uColor;
             varying highp vec2 vTexCoord;
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord * uUvScale + uUvOffset) * uColor;
+                vec2 uv = vTexCoord * uUvScale + uUvOffset;
+                vec4 base = texture2D(uTexture, uv);
+                if (uDarkMix > 0.001) {
+                    vec4 darkSample = texture2D(uDarkTexture, uv);
+                    base = mix(base, darkSample, uDarkMix);
+                }
+                gl_FragColor = base * uColor;
             }
         """
         private const val BLUR_FRAGMENT_SHADER = """

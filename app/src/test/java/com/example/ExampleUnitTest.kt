@@ -13,7 +13,7 @@ import com.example.data.model.BlurTintMode
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
-import com.example.data.model.DarkenTrigger
+import com.example.data.model.DarkenTriggerMode
 import com.example.data.model.OffsetEasingStyle
 import com.example.data.model.OriginalMedia
 import com.example.data.model.PageItem
@@ -468,17 +468,34 @@ class ExampleUnitTest {
     @Test
     fun testDarkenConfigSerialization() {
         val config = DarkenConfig(
-            triggerMode = DarkenTrigger.EXTRA_DIM,
+            enabled = true,
+            triggerMode = DarkenTriggerMode.BOTH_OR,
             autoDetectDark = true,
             luminanceThreshold = 0.35f,
-            dimFactor = 0.45f
+            dimFactor = 0.45f,
+            scheduleStartHour = 21,
+            scheduleStartMinute = 30,
+            scheduleEndHour = 6,
+            scheduleEndMinute = 45
         )
         val json = config.toJson()
         val restored = DarkenConfig.fromJson(json)
 
-        assertEquals(DarkenTrigger.EXTRA_DIM, restored.triggerMode)
+        assertTrue(restored.enabled)
+        assertEquals(DarkenTriggerMode.BOTH_OR, restored.triggerMode)
+        assertTrue(restored.useDarkMode)
+        assertTrue(restored.useSchedule)
+        assertTrue(restored.isEnabled)
         assertTrue(restored.autoDetectDark)
         assertEquals(0.45f, restored.dimFactor, 0.001f)
+        assertEquals(21, restored.scheduleStartHour)
+        assertEquals(30, restored.scheduleStartMinute)
+        assertEquals(6, restored.scheduleEndHour)
+        assertEquals(45, restored.scheduleEndMinute)
+
+        val page = PageItem(pageIndex = 0, dimFactor = 0.65f)
+        val restoredPage = PageItem.fromJson(page.toJson())
+        assertEquals(0.65f, restoredPage.dimFactor, 0.001f)
     }
 
     @Test

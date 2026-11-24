@@ -3,14 +3,6 @@ package com.example.data.model
 import org.json.JSONArray
 import org.json.JSONObject
 
-enum class DarkenTrigger(val displayName: String, val description: String) {
-    OFF("Disabled", "No dimming applied"),
-    EXTRA_DIM("Extra Dim (System)", "Dim wallpaper when Android's Reduce Bright Colors / Extra Dim is turned on"),
-    DARK_THEME("Dark Theme", "Dim wallpaper when system dark theme is active"),
-    SCHEDULED("Scheduled Time", "Dim wallpaper during scheduled night hours"),
-    ALWAYS("Always Dim", "Keep dimming filter always active")
-}
-
 enum class BatterySaverTrigger(val displayName: String, val description: String) {
     BATTERY_PERCENTAGE(
         "Battery percentage",
@@ -177,7 +169,8 @@ data class PageItem(
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
     val parallaxAmount: Float = 0f,
-    val isBlank: Boolean = false
+    val isBlank: Boolean = false,
+    val dimFactor: Float = DEFAULT_DIM_FACTOR
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("pageIndex", pageIndex)
@@ -197,12 +190,19 @@ data class PageItem(
         put("cropScale", cropScale.toDouble())
         put("parallaxAmount", parallaxAmount.toDouble())
         put("isBlank", isBlank)
+        put("dimFactor", dimFactor.coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR).toDouble())
     }
 
     companion object {
         const val DEFAULT_BLUR_TINT_COLOR = 0xFF38BDF8.toInt()
+        const val DEFAULT_DIM_FACTOR = 0.40f
+        const val MIN_DIM_FACTOR = 0.10f
+        const val MAX_DIM_FACTOR = 0.90f
 
-        fun fromJson(json: JSONObject): PageItem {
+        fun fromJson(
+            json: JSONObject,
+            defaultDimFactor: Float = DEFAULT_DIM_FACTOR
+        ): PageItem {
             val fillMode = CropFillMode.fromName(
                 json.optString("cropFillMode", CropFillMode.BLUR.name)
             )
@@ -235,7 +235,11 @@ data class PageItem(
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
                 parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f),
-                isBlank = json.optBoolean("isBlank", false)
+                isBlank = json.optBoolean("isBlank", false),
+                dimFactor = json.optDouble(
+                    "dimFactor",
+                    defaultDimFactor.coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR).toDouble()
+                ).toFloat().coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR)
             )
         }
     }
@@ -431,14 +435,15 @@ data class PageTransitionSetting(
 }
 
 private fun parsePageItems(
-    jsonPages: JSONArray?
+    jsonPages: JSONArray?,
+    defaultDimFactor: Float = PageItem.DEFAULT_DIM_FACTOR
 ): Pair<List<PageItem>, List<ParallaxMotionSettings?>> {
     val pages = mutableListOf<PageItem>()
     val legacyMotionSettings = mutableListOf<ParallaxMotionSettings?>()
     jsonPages?.let { values ->
         for (index in 0 until values.length()) {
             val pageJson = values.optJSONObject(index) ?: continue
-            pages.add(PageItem.fromJson(pageJson))
+            pages.add(PageItem.fromJson(pageJson, defaultDimFactor))
             legacyMotionSettings.add(
                 if (pageJson.optBoolean("slowParallax", false)) {
                     val legacySpeed = pageJson.optDouble("parallaxImageSpeed", 0.5)
@@ -498,8 +503,14 @@ data class WallpaperPreset(
     }
 
     companion object {
-        fun fromJson(json: JSONObject): WallpaperPreset {
-            val (pages, legacyMotionSettings) = parsePageItems(json.optJSONArray("pages"))
+        fun fromJson(
+            json: JSONObject,
+            defaultDimFactor: Float = PageItem.DEFAULT_DIM_FACTOR
+        ): WallpaperPreset {
+            val (pages, legacyMotionSettings) = parsePageItems(
+                json.optJSONArray("pages"),
+                defaultDimFactor = defaultDimFactor
+            )
             val transitions = mutableListOf<PageTransitionSetting>()
             json.optJSONArray("transitions")?.let { values ->
                 for (i in 0 until values.length()) {
@@ -589,39 +600,117 @@ data class CalibrationConfig(
     }
 }
 
+enum class DarkenTriggerMode(
+    val displayName: String,
+    val description: String
+) {
+    SCHEDULE_ONLY(
+        "Scheduled Time Only",
+        "Activate during your custom daily schedule"
+    ),
+    DARK_MODE_ONLY(
+        "System Dark Mode Only",
+        "Activate when Android Dark Mode is enabled"
+    ),
+    BOTH_OR(
+        "Both (Either Triggers)",
+        "Activate when Dark Mode is on or inside your schedule"
+    );
+
+    val usesSchedule: Boolean
+        get() = this == SCHEDULE_ONLY || this == BOTH_OR
+
+    val usesDarkMode: Boolean
+        get() = this == DARK_MODE_ONLY || this == BOTH_OR
+
+    companion object {
+        fun fromName(name: String): DarkenTriggerMode =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: DARK_MODE_ONLY
+    }
+}
+
 data class DarkenConfig(
-    val triggerMode: DarkenTrigger = DarkenTrigger.EXTRA_DIM,
+    val enabled: Boolean = false,
+    val triggerMode: DarkenTriggerMode = DarkenTriggerMode.DARK_MODE_ONLY,
     val autoDetectDark: Boolean = true,
     val luminanceThreshold: Float = 0.35f,
-    val dimFactor: Float = 0.40f,
+    val dimFactor: Float = DEFAULT_DIM_FACTOR,
     val scheduleStartHour: Int = 20,
     val scheduleStartMinute: Int = 0,
     val scheduleEndHour: Int = 7,
     val scheduleEndMinute: Int = 0
 ) {
+    val isEnabled: Boolean
+        get() = enabled
+
+    val useDarkMode: Boolean
+        get() = enabled && triggerMode.usesDarkMode
+
+    val useSchedule: Boolean
+        get() = enabled && triggerMode.usesSchedule
+
+    fun normalized(): DarkenConfig = copy(
+        luminanceThreshold = luminanceThreshold.coerceIn(0.05f, 0.95f),
+        dimFactor = dimFactor.coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR),
+        scheduleStartHour = scheduleStartHour.coerceIn(0, 23),
+        scheduleStartMinute = scheduleStartMinute.coerceIn(0, 59),
+        scheduleEndHour = scheduleEndHour.coerceIn(0, 23),
+        scheduleEndMinute = scheduleEndMinute.coerceIn(0, 59)
+    )
+
     fun toJson(): JSONObject = JSONObject().apply {
-        put("triggerMode", triggerMode.name)
-        put("autoDetectDark", autoDetectDark)
-        put("luminanceThreshold", luminanceThreshold.toDouble())
-        put("dimFactor", dimFactor.toDouble())
-        put("scheduleStartHour", scheduleStartHour)
-        put("scheduleStartMinute", scheduleStartMinute)
-        put("scheduleEndHour", scheduleEndHour)
-        put("scheduleEndMinute", scheduleEndMinute)
+        val safe = normalized()
+        put("enabled", safe.enabled)
+        put("triggerMode", safe.triggerMode.name)
+        put("autoDetectDark", safe.autoDetectDark)
+        put("luminanceThreshold", safe.luminanceThreshold.toDouble())
+        put("dimFactor", safe.dimFactor.toDouble())
+        put("scheduleStartHour", safe.scheduleStartHour)
+        put("scheduleStartMinute", safe.scheduleStartMinute)
+        put("scheduleEndHour", safe.scheduleEndHour)
+        put("scheduleEndMinute", safe.scheduleEndMinute)
     }
 
     companion object {
+        const val DEFAULT_DIM_FACTOR = PageItem.DEFAULT_DIM_FACTOR
+        const val MIN_DIM_FACTOR = PageItem.MIN_DIM_FACTOR
+        const val MAX_DIM_FACTOR = PageItem.MAX_DIM_FACTOR
+
         fun fromJson(json: JSONObject): DarkenConfig {
-            val trigger = try {
-                DarkenTrigger.valueOf(json.optString("triggerMode", DarkenTrigger.EXTRA_DIM.name))
-            } catch (e: Exception) {
-                DarkenTrigger.EXTRA_DIM
+            val (enabled, triggerMode) = when {
+                json.has("enabled") -> {
+                    val mode = DarkenTriggerMode.fromName(
+                        json.optString("triggerMode", DarkenTriggerMode.DARK_MODE_ONLY.name)
+                    )
+                    json.optBoolean("enabled", false) to mode
+                }
+                json.has("useDarkMode") || json.has("useSchedule") -> {
+                    val dark = json.optBoolean("useDarkMode", false)
+                    val sched = json.optBoolean("useSchedule", false)
+                    when {
+                        dark && sched -> true to DarkenTriggerMode.BOTH_OR
+                        sched -> true to DarkenTriggerMode.SCHEDULE_ONLY
+                        dark -> true to DarkenTriggerMode.DARK_MODE_ONLY
+                        else -> false to DarkenTriggerMode.DARK_MODE_ONLY
+                    }
+                }
+                else -> {
+                    when (json.optString("triggerMode", "").uppercase()) {
+                        "DARK_THEME", "DARK_MODE_ONLY" -> true to DarkenTriggerMode.DARK_MODE_ONLY
+                        "SCHEDULED", "SCHEDULE_ONLY" -> true to DarkenTriggerMode.SCHEDULE_ONLY
+                        "ALWAYS", "BOTH_OR" -> true to DarkenTriggerMode.BOTH_OR
+                        else -> false to DarkenTriggerMode.DARK_MODE_ONLY
+                    }
+                }
             }
             return DarkenConfig(
-                triggerMode = trigger,
+                enabled = enabled,
+                triggerMode = triggerMode,
                 autoDetectDark = json.optBoolean("autoDetectDark", true),
-                luminanceThreshold = json.optDouble("luminanceThreshold", 0.35).toFloat(),
-                dimFactor = json.optDouble("dimFactor", 0.40).toFloat().coerceIn(0.1f, 0.9f),
+                luminanceThreshold = json.optDouble("luminanceThreshold", 0.35).toFloat()
+                    .coerceIn(0.05f, 0.95f),
+                dimFactor = json.optDouble("dimFactor", DEFAULT_DIM_FACTOR.toDouble()).toFloat()
+                    .coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR),
                 scheduleStartHour = json.optInt("scheduleStartHour", 20).coerceIn(0, 23),
                 scheduleStartMinute = json.optInt("scheduleStartMinute", 0).coerceIn(0, 59),
                 scheduleEndHour = json.optInt("scheduleEndHour", 7).coerceIn(0, 23),
@@ -753,7 +842,12 @@ data class WallpaperAppState(
         val supportedAnimationFrameRates = listOf(60, 90, 120, 144, 165)
 
         fun fromJson(json: JSONObject): WallpaperAppState {
-            val (pagesList, legacyMotionSettings) = parsePageItems(json.optJSONArray("pages"))
+            val darkenConfig = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
+                ?: DarkenConfig()
+            val (pagesList, legacyMotionSettings) = parsePageItems(
+                json.optJSONArray("pages"),
+                defaultDimFactor = darkenConfig.dimFactor
+            )
             val calib = json.optJSONObject("calibration")?.let { CalibrationConfig.fromJson(it) }
                 ?: CalibrationConfig()
             val finalPages = if (pagesList.isEmpty()) {
@@ -761,7 +855,8 @@ data class WallpaperAppState(
                     PageItem(
                         pageIndex = i,
                         croppedFileName = "starter_page_${i}.jpg",
-                        customLabel = if (i == calib.homePageIndex) "Home" else "Page ${i + 1}"
+                        customLabel = if (i == calib.homePageIndex) "Home" else "Page ${i + 1}",
+                        dimFactor = darkenConfig.dimFactor
                     )
                 }
             } else {
@@ -778,7 +873,9 @@ data class WallpaperAppState(
             val presetValues = mutableListOf<WallpaperPreset>()
             json.optJSONArray("presets")?.let { values ->
                 for (i in 0 until values.length()) {
-                    values.optJSONObject(i)?.let { presetValues.add(WallpaperPreset.fromJson(it)) }
+                    values.optJSONObject(i)?.let {
+                        presetValues.add(WallpaperPreset.fromJson(it, defaultDimFactor = darkenConfig.dimFactor))
+                    }
                 }
             }
             val defaultTransitions = List((finalPages.size - 1).coerceAtLeast(0)) {
@@ -832,8 +929,7 @@ data class WallpaperAppState(
                     "entryDurationMs",
                     DEFAULT_ENTRY_DURATION_MS
                 ).coerceIn(MIN_ENTRY_DURATION_MS, MAX_ENTRY_DURATION_MS),
-                darken = json.optJSONObject("darken")?.let { DarkenConfig.fromJson(it) }
-                    ?: DarkenConfig(),
+                darken = darkenConfig,
                 backupFolderPath = json.optString("backupFolderPath").takeIf { it.isNotEmpty() },
                 autoBackupEnabled = json.optBoolean("autoBackupEnabled", false),
                 showOffsetDebugOverlay = json.optBoolean("showOffsetDebugOverlay", false),

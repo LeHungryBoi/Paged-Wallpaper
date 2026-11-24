@@ -66,6 +66,10 @@ class WallpaperRepository private constructor(private val context: Context) {
         File(context.filesDir, "cropped").apply { if (!exists()) mkdirs() }
     }
 
+    private val darkenedCacheDir: File by lazy {
+        File(context.filesDir, "darkened_cache").apply { if (!exists()) mkdirs() }
+    }
+
     private val configFile: File by lazy {
         File(context.filesDir, "config.json")
     }
@@ -84,6 +88,14 @@ class WallpaperRepository private constructor(private val context: Context) {
         context.getSharedPreferences("wallpaper_state", Context.MODE_PRIVATE)
     }
     private val backupMutex = Mutex()
+    private val prewarmScope = CoroutineScope(Dispatchers.IO)
+    private var prewarmJob: kotlinx.coroutines.Job? = null
+
+    @Volatile
+    private var lastRenderWidth: Int = context.resources.displayMetrics.widthPixels.coerceAtLeast(1)
+
+    @Volatile
+    private var lastRenderHeight: Int = context.resources.displayMetrics.heightPixels.coerceAtLeast(1)
 
     fun saveLastKnownOffset(offset: Float) {
         val clamped = offset.coerceIn(0f, 1f)
@@ -99,13 +111,28 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
     }
 
+    private data class DarkenedCacheKey(
+        val pageIndex: Int,
+        val width: Int,
+        val height: Int,
+        val dimPercent: Int
+    )
+
     // Bitmap cache for fast Live Wallpaper Engine rendering
     @Volatile
     var bitmapGeneration: Long = 0L
         private set
+
+    @Volatile
+    var darkenedBitmapGeneration: Long = 0L
+        private set
+
     private val bitmapCache = mutableMapOf<Triple<Int, Int, Int>, Bitmap>()
     private val parallaxBitmapCache =
         mutableMapOf<Triple<Int, Int, Int>, ParallaxBitmap>()
+    private val darkenedBitmapCache = mutableMapOf<DarkenedCacheKey, Bitmap>()
+    private val darkenedParallaxBitmapCache = mutableMapOf<DarkenedCacheKey, ParallaxBitmap>()
+    private val darkenedGenerationLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
 
     // Listeners for Live Wallpaper to trigger instant redrawing
     private val listeners = mutableListOf<() -> Unit>()
@@ -173,6 +200,9 @@ class WallpaperRepository private constructor(private val context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             ensureStarterWallpapersExist()
             invalidateCache()
+            if (_appState.value.darken.isEnabled) {
+                prewarmDarkenedCache()
+            }
             notifyListeners()
         }
     }
@@ -285,7 +315,25 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
         _appState.value = newState
         saveConfigInternal(newState)
-        if (newState.pages != previousState.pages) invalidateCache()
+        val normalPagesChanged = newState.pages.map {
+            it.copy(isAlreadyDark = false, dimFactor = PageItem.DEFAULT_DIM_FACTOR)
+        } != previousState.pages.map {
+            it.copy(isAlreadyDark = false, dimFactor = PageItem.DEFAULT_DIM_FACTOR)
+        }
+        val pagesChanged = newState.pages != previousState.pages
+        val darkenCacheConfigChanged =
+            newState.darken.dimFactor != previousState.darken.dimFactor ||
+                newState.darken.autoDetectDark != previousState.darken.autoDetectDark
+        if (normalPagesChanged) {
+            invalidateCache()
+        } else if (pagesChanged || darkenCacheConfigChanged) {
+            invalidateDarkenedCache()
+        }
+        if (newState.darken.isEnabled &&
+            (pagesChanged || darkenCacheConfigChanged || !previousState.darken.isEnabled)
+        ) {
+            prewarmDarkenedCache()
+        }
         notifyListeners()
 
         if (newState.autoBackupEnabled && !newState.backupFolderPath.isNullOrEmpty()) {
@@ -455,10 +503,250 @@ class WallpaperRepository private constructor(private val context: Context) {
         synchronized(parallaxBitmapCache) {
             parallaxBitmapCache.clear()
         }
+        invalidateDarkenedCache()
     }
 
-    fun getParallaxBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): ParallaxBitmap? {
+    fun invalidateDarkenedCache() {
+        darkenedBitmapGeneration++
+        synchronized(darkenedBitmapCache) {
+            darkenedBitmapCache.clear()
+        }
+        synchronized(darkenedParallaxBitmapCache) {
+            darkenedParallaxBitmapCache.clear()
+        }
+    }
+
+    fun updateRenderDimensions(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        val changed = lastRenderWidth != width || lastRenderHeight != height
+        lastRenderWidth = width
+        lastRenderHeight = height
+        if (changed && _appState.value.darken.isEnabled) {
+            prewarmDarkenedCache(width, height)
+        }
+    }
+
+    fun shouldDarkenPage(page: PageItem?, darken: DarkenConfig = _appState.value.darken): Boolean {
+        if (page == null || page.isBlank) return false
+        if (darken.autoDetectDark && page.isAlreadyDark) return false
+        return true
+    }
+
+    fun prewarmDarkenedCache(
+        width: Int = lastRenderWidth,
+        height: Int = lastRenderHeight
+    ) {
+        if (width <= 0 || height <= 0) return
+        prewarmJob?.cancel()
+        prewarmJob = prewarmScope.launch {
+            val state = _appState.value
+            if (!state.darken.isEnabled) return@launch
+            state.pages.forEach { page ->
+                if (!shouldDarkenPage(page, state.darken)) return@forEach
+                getCroppedBitmap(page.pageIndex, width, height, darkened = true)
+                if (page.parallaxAmount > 0f) {
+                    getParallaxBitmap(page.pageIndex, width, height, darkened = true)
+                }
+            }
+        }
+    }
+
+    private fun effectiveDimFactorFor(page: PageItem): Float =
+        page.dimFactor.coerceIn(PageItem.MIN_DIM_FACTOR, PageItem.MAX_DIM_FACTOR)
+
+    private fun dimPercentFor(page: PageItem): Int =
+        (effectiveDimFactorFor(page) * 100f)
+            .let { kotlin.math.round(it).toInt() }
+            .coerceIn(10, 90)
+
+    private fun computeDarkenedSignature(
+        page: PageItem,
+        reqWidth: Int,
+        reqHeight: Int,
+        usesParallax: Boolean,
+        dimPercent: Int
+    ): String {
+        val fileStamp = if (page.originalId == null) {
+            val fileName = page.croppedFileName ?: "starter_page_${page.pageIndex}.jpg"
+            val file = File(croppedDir, fileName)
+            if (file.exists()) "${file.length()}_${file.lastModified()}" else "missing"
+        } else {
+            val media = _originals.value.find { it.id == page.originalId }
+            "${media?.fileName.orEmpty()}_${media?.dateAdded ?: 0L}"
+        }
+        val raw = buildString {
+            append(page.pageIndex).append('|')
+            append(page.originalId.orEmpty()).append('|')
+            append(page.croppedFileName.orEmpty()).append('|')
+            append(fileStamp).append('|')
+            append(page.cropFillMode.name).append('|')
+            append(page.blurAmount).append('|')
+            append(page.blurStyle.name).append('|')
+            append(page.blurTintMode.name).append('|')
+            append(page.blurTintColor).append('|')
+            append(page.blurTintIntensity).append('|')
+            append(page.blurRainbowStyle.name).append('|')
+            append(page.cropPanX).append('|')
+            append(page.cropPanY).append('|')
+            append(page.cropScale).append('|')
+            append(if (usesParallax) page.parallaxAmount else 0f).append('|')
+            append(reqWidth).append('x').append(reqHeight).append('|')
+            append(dimPercent)
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(raw.toByteArray(Charsets.UTF_8))
+        return digest.take(8).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun writeBitmapAtomicallyToCache(bitmap: Bitmap, targetFile: File) {
+        val tempFile = File(
+            darkenedCacheDir,
+            "${targetFile.name}.${Thread.currentThread().id}.tmp"
+        )
+        try {
+            FileOutputStream(tempFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+            }
+            if (targetFile.exists()) targetFile.delete()
+            if (!tempFile.renameTo(targetFile)) {
+                tempFile.copyTo(targetFile, overwrite = true)
+                tempFile.delete()
+            }
+        } catch (e: Exception) {
+            tempFile.delete()
+            Log.e("WallpaperRepo", "Failed to write darkened cache ${targetFile.name}", e)
+        }
+    }
+
+    private fun pruneStaleDarkenedCacheFiles(prefix: String, keepPrefix: String) {
+        darkenedCacheDir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.startsWith(prefix) && !file.name.startsWith(keepPrefix)) {
+                file.delete()
+            }
+        }
+    }
+
+    fun getDarkenedCacheFileForTesting(
+        pageIndex: Int,
+        reqWidth: Int,
+        reqHeight: Int,
+        usesParallax: Boolean = false
+    ): File? {
+        val page = _appState.value.pages.find { it.pageIndex == pageIndex } ?: return null
+        val dimPercent = dimPercentFor(page)
+        val tag = if (usesParallax) "px" else "cr"
+        val sig = computeDarkenedSignature(page, reqWidth, reqHeight, usesParallax, dimPercent)
+        return File(darkenedCacheDir, "dark_p${pageIndex}_${tag}_${reqWidth}x${reqHeight}_${sig}.jpg")
+    }
+
+    fun getParallaxBitmap(
+        pageIndex: Int,
+        reqWidth: Int,
+        reqHeight: Int,
+        darkened: Boolean = false
+    ): ParallaxBitmap? {
         if (reqWidth <= 0 || reqHeight <= 0) return null
+        val state = _appState.value
+        val page = state.pages.find { it.pageIndex == pageIndex }
+        if (darkened && shouldDarkenPage(page, state.darken)) {
+            val safePage = page!!
+            val media = safePage.originalId?.let { id -> _originals.value.find { it.id == id } }
+            if (media != null && safePage.parallaxAmount > 0f) {
+                val dimPercent = dimPercentFor(safePage)
+                val darkKey = DarkenedCacheKey(pageIndex, reqWidth, reqHeight, dimPercent)
+                synchronized(darkenedParallaxBitmapCache) {
+                    darkenedParallaxBitmapCache[darkKey]?.let {
+                        if (!it.bitmap.isRecycled) return it
+                    }
+                }
+                val sig = computeDarkenedSignature(
+                    safePage,
+                    reqWidth,
+                    reqHeight,
+                    usesParallax = true,
+                    dimPercent = dimPercent
+                )
+                val filePrefix = "dark_p${pageIndex}_px_${reqWidth}x${reqHeight}_"
+                val baseName = "${filePrefix}${sig}"
+                val lock = darkenedGenerationLocks.computeIfAbsent(baseName) { Any() }
+                synchronized(lock) {
+                    synchronized(darkenedParallaxBitmapCache) {
+                        darkenedParallaxBitmapCache[darkKey]?.let {
+                            if (!it.bitmap.isRecycled) return it
+                        }
+                    }
+                    val cacheFile = File(darkenedCacheDir, "$baseName.jpg")
+                    val metaFile = File(darkenedCacheDir, "$baseName.meta")
+                    if (cacheFile.exists() && metaFile.exists()) {
+                        try {
+                            val parts = metaFile.readText().trim().split(",")
+                            if (parts.size == 2) {
+                                val leftTravel = parts[0].toInt()
+                                val rightTravel = parts[1].toInt()
+                                val decoded = BitmapFactory.decodeFile(
+                                    cacheFile.absolutePath,
+                                    BitmapFactory.Options().apply {
+                                        inPreferredConfig = Bitmap.Config.ARGB_8888
+                                    }
+                                )
+                                if (decoded != null) {
+                                    val cached = ParallaxBitmap(decoded, leftTravel, rightTravel)
+                                    synchronized(darkenedParallaxBitmapCache) {
+                                        darkenedParallaxBitmapCache[darkKey] = cached
+                                    }
+                                    return cached
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w("WallpaperRepo", "Failed to read darkened parallax cache", e)
+                        }
+                    }
+                    val normal = getParallaxBitmap(pageIndex, reqWidth, reqHeight, darkened = false)
+                        ?: return null
+                    val darkenedBitmap = ImageProcessingUtils.createDarkenedCopy(
+                        normal.bitmap,
+                        effectiveDimFactorFor(safePage)
+                    )
+                    writeBitmapAtomicallyToCache(darkenedBitmap, cacheFile)
+                    writeAtomically(metaFile, "${normal.leftTravelPx},${normal.rightTravelPx}")
+                    pruneStaleDarkenedCacheFiles(filePrefix, baseName)
+                    val cached = ParallaxBitmap(
+                        darkenedBitmap,
+                        normal.leftTravelPx,
+                        normal.rightTravelPx
+                    )
+                    synchronized(darkenedParallaxBitmapCache) {
+                        darkenedParallaxBitmapCache[darkKey] = cached
+                    }
+                    return cached
+                }
+            }
+            val darkenedCropped = getCroppedBitmap(pageIndex, reqWidth, reqHeight, darkened = true)
+                ?: return null
+            if (darkenedCropped.width == reqWidth && darkenedCropped.height == reqHeight) {
+                return ParallaxBitmap(darkenedCropped, 0, 0)
+            }
+            val dimPercent = dimPercentFor(safePage)
+            val darkKey = DarkenedCacheKey(pageIndex, reqWidth, reqHeight, dimPercent)
+            synchronized(darkenedParallaxBitmapCache) {
+                darkenedParallaxBitmapCache[darkKey]?.let {
+                    if (!it.bitmap.isRecycled) return it
+                }
+            }
+            return try {
+                Bitmap.createScaledBitmap(darkenedCropped, reqWidth, reqHeight, true).let {
+                    ParallaxBitmap(it, 0, 0).also { parallaxBitmap ->
+                        synchronized(darkenedParallaxBitmapCache) {
+                            darkenedParallaxBitmapCache[darkKey] = parallaxBitmap
+                        }
+                    }
+                }
+            } catch (e: OutOfMemoryError) {
+                Log.e("WallpaperRepo", "Not enough memory to scale darkened page $pageIndex", e)
+                null
+            }
+        }
+
         val key = Triple(pageIndex, reqWidth, reqHeight)
         synchronized(parallaxBitmapCache) {
             parallaxBitmapCache[key]?.let {
@@ -483,9 +771,7 @@ class WallpaperRepository private constructor(private val context: Context) {
                 null
             }
         }
-        val page = _appState.value.pages.find { it.pageIndex == pageIndex }
-            ?: return getScreenSizedPage()
-        val media = page.originalId?.let { id -> _originals.value.find { it.id == id } }
+        val media = page?.originalId?.let { id -> _originals.value.find { it.id == id } }
             ?: return getScreenSizedPage()
         if (page.parallaxAmount <= 0f) return getScreenSizedPage()
 
@@ -502,8 +788,77 @@ class WallpaperRepository private constructor(private val context: Context) {
         return rendered
     }
 
-    fun getCroppedBitmap(pageIndex: Int, reqWidth: Int, reqHeight: Int): Bitmap? {
+    fun getCroppedBitmap(
+        pageIndex: Int,
+        reqWidth: Int,
+        reqHeight: Int,
+        darkened: Boolean = false
+    ): Bitmap? {
         if (reqWidth <= 0 || reqHeight <= 0) return null
+        val state = _appState.value
+        val page = state.pages.find { it.pageIndex == pageIndex }
+        if (page?.isBlank == true) return null
+
+        if (darkened && shouldDarkenPage(page, state.darken)) {
+            val safePage = page!!
+            val dimPercent = dimPercentFor(safePage)
+            val darkKey = DarkenedCacheKey(pageIndex, reqWidth, reqHeight, dimPercent)
+            synchronized(darkenedBitmapCache) {
+                darkenedBitmapCache[darkKey]?.let {
+                    if (!it.isRecycled) return it
+                }
+            }
+            val sig = computeDarkenedSignature(
+                safePage,
+                reqWidth,
+                reqHeight,
+                usesParallax = false,
+                dimPercent = dimPercent
+            )
+            val filePrefix = "dark_p${pageIndex}_cr_${reqWidth}x${reqHeight}_"
+            val baseName = "${filePrefix}${sig}"
+            val lock = darkenedGenerationLocks.computeIfAbsent(baseName) { Any() }
+            synchronized(lock) {
+                synchronized(darkenedBitmapCache) {
+                    darkenedBitmapCache[darkKey]?.let {
+                        if (!it.isRecycled) return it
+                    }
+                }
+                val cacheFile = File(darkenedCacheDir, "$baseName.jpg")
+                if (cacheFile.exists()) {
+                    val decoded = try {
+                        BitmapFactory.decodeFile(
+                            cacheFile.absolutePath,
+                            BitmapFactory.Options().apply {
+                                inPreferredConfig = Bitmap.Config.ARGB_8888
+                            }
+                        )
+                    } catch (e: Exception) {
+                        Log.w("WallpaperRepo", "Failed to decode darkened cache ${cacheFile.name}", e)
+                        null
+                    }
+                    if (decoded != null) {
+                        synchronized(darkenedBitmapCache) {
+                            darkenedBitmapCache[darkKey] = decoded
+                        }
+                        return decoded
+                    }
+                }
+                val normal = getCroppedBitmap(pageIndex, reqWidth, reqHeight, darkened = false)
+                    ?: return null
+                val darkenedBitmap = ImageProcessingUtils.createDarkenedCopy(
+                    normal,
+                    effectiveDimFactorFor(safePage)
+                )
+                writeBitmapAtomicallyToCache(darkenedBitmap, cacheFile)
+                pruneStaleDarkenedCacheFiles(filePrefix, baseName)
+                synchronized(darkenedBitmapCache) {
+                    darkenedBitmapCache[darkKey] = darkenedBitmap
+                }
+                return darkenedBitmap
+            }
+        }
+
         val key = Triple(pageIndex, reqWidth, reqHeight)
         synchronized(bitmapCache) {
             bitmapCache[key]?.let {
@@ -511,8 +866,6 @@ class WallpaperRepository private constructor(private val context: Context) {
             }
         }
 
-        val page = _appState.value.pages.find { it.pageIndex == pageIndex }
-        if (page?.isBlank == true) return null
         val media = page?.originalId?.let { id -> _originals.value.find { it.id == id } }
         if (page != null && media != null) {
             val rendered = renderMediaBitmap(
@@ -632,7 +985,8 @@ class WallpaperRepository private constructor(private val context: Context) {
             cropScale = updatedPage.cropScale.coerceIn(1f, 3f),
             blurAmount = updatedPage.blurAmount.coerceIn(0f, 1f),
             blurTintIntensity = updatedPage.blurTintIntensity.coerceIn(0f, 1f),
-            parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f)
+            parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f),
+            dimFactor = updatedPage.dimFactor.coerceIn(PageItem.MIN_DIM_FACTOR, PageItem.MAX_DIM_FACTOR)
         )
         if (!renderMediaForPage(media, normalized, targetWidth, targetHeight)) return@withContext false
         val updatedPages = _appState.value.pages.map {
@@ -1111,6 +1465,8 @@ class WallpaperRepository private constructor(private val context: Context) {
             PresetDataMigration.migrateTransitionStorage(migratedLegacy)
 
             installRestoredFiles(stagingDir)
+            darkenedCacheDir.deleteRecursively()
+            darkenedCacheDir.mkdirs()
             loadInitialData()
             invalidateCache()
             notifyListeners()
@@ -1279,8 +1635,18 @@ class WallpaperRepository private constructor(private val context: Context) {
         private var instance: WallpaperRepository? = null
 
         fun getInstance(context: Context): WallpaperRepository {
-            return instance ?: synchronized(this) {
-                instance ?: WallpaperRepository(context.applicationContext).also { instance = it }
+            val appContext = context.applicationContext ?: context
+            val existing = instance
+            if (existing != null && existing.context === appContext) {
+                return existing
+            }
+            return synchronized(this) {
+                val current = instance
+                if (current != null && current.context === appContext) {
+                    current
+                } else {
+                    WallpaperRepository(appContext).also { instance = it }
+                }
             }
         }
     }

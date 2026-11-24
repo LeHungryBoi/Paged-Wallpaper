@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.filled.LensBlur
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Vignette
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -55,6 +57,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,6 +83,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -174,6 +179,8 @@ fun MediaEditorScreen(
     var panY by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.cropPanY) }
     var zoom by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.cropScale) }
     var isAlreadyDark by remember(media.id, page.pageIndex) { mutableStateOf(page.isAlreadyDark) }
+    var dimFactor by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.dimFactor) }
+    var previewDarkened by remember(media.id, page.pageIndex) { mutableStateOf(false) }
     var cropFillMode by remember(media.id, page.pageIndex) { mutableStateOf(page.cropFillMode) }
     var blurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurAmount) }
     var blurStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurStyle) }
@@ -292,6 +299,10 @@ fun MediaEditorScreen(
                             onSave(
                                 page.copy(
                                     isAlreadyDark = isAlreadyDark,
+                                    dimFactor = dimFactor.coerceIn(
+                                        PageItem.MIN_DIM_FACTOR,
+                                        PageItem.MAX_DIM_FACTOR
+                                    ),
                                     cropFillMode = cropFillMode,
                                     blurAmount = blurAmount,
                                     blurStyle = blurStyle,
@@ -389,12 +400,32 @@ fun MediaEditorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     val source = bitmap
+                    val showDarkenedPreview = previewDarkened && !isAlreadyDark
+                    val previewBrightnessScale = if (showDarkenedPreview) {
+                        1f - dimFactor.coerceIn(PageItem.MIN_DIM_FACTOR, PageItem.MAX_DIM_FACTOR)
+                    } else {
+                        1f
+                    }
                     if (source != null) {
                         if (cropFillMode != CropFillMode.CROP) {
                             Image(
                                 bitmap = (blurredBitmap ?: source).asImageBitmap(),
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
+                                colorFilter = if (previewBrightnessScale < 0.999f) {
+                                    ColorFilter.colorMatrix(
+                                        ColorMatrix().apply {
+                                            setToScale(
+                                                previewBrightnessScale,
+                                                previewBrightnessScale,
+                                                previewBrightnessScale,
+                                                1f
+                                            )
+                                        }
+                                    )
+                                } else {
+                                    null
+                                },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .blur(if (blurredBitmap == null) (blurAmount * 20f).dp else 0.dp)
@@ -418,7 +449,20 @@ fun MediaEditorScreen(
                             val paint = android.graphics.Paint(
                                 android.graphics.Paint.ANTI_ALIAS_FLAG or
                                     android.graphics.Paint.FILTER_BITMAP_FLAG
-                            )
+                            ).apply {
+                                if (previewBrightnessScale < 0.999f) {
+                                    colorFilter = android.graphics.ColorMatrixColorFilter(
+                                        android.graphics.ColorMatrix().apply {
+                                            setScale(
+                                                previewBrightnessScale,
+                                                previewBrightnessScale,
+                                                previewBrightnessScale,
+                                                1f
+                                            )
+                                        }
+                                    )
+                                }
+                            }
                             drawIntoCanvas { composeCanvas ->
                                 val nativeCanvas = composeCanvas.nativeCanvas
                                 if (cropFillMode == CropFillMode.CROP) {
@@ -476,6 +520,23 @@ fun MediaEditorScreen(
                         }
                     } else {
                         Text("Unable to load image", color = Color.White)
+                    }
+                    if (showDarkenedPreview) {
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp)
+                                .testTag("crop_darken_preview_badge"),
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.72f)
+                        ) {
+                            Text(
+                                text = "Darkened preview · ${(dimFactor * 100f).roundToInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                     Box(Modifier.fillMaxSize().border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(18.dp)))
                 }
@@ -955,6 +1016,9 @@ fun MediaEditorScreen(
                                 Text("Bottom", style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -981,6 +1045,73 @@ fun MediaEditorScreen(
                                 onCheckedChange = { isAlreadyDark = it },
                                 modifier = Modifier.testTag("toggle_is_already_dark")
                             )
+                        }
+                        AnimatedVisibility(visible = !isAlreadyDark) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Visibility,
+                                            contentDescription = null,
+                                            tint = if (previewDarkened) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                "Preview darkened",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Text(
+                                                "Preview this page at its darkened brightness",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = previewDarkened,
+                                        onCheckedChange = { previewDarkened = it },
+                                        modifier = Modifier.testTag("toggle_preview_darkened")
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Darken intensity",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "${(dimFactor * 100f).roundToInt()}%",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Slider(
+                                    value = dimFactor,
+                                    onValueChange = { dimFactor = it },
+                                    valueRange = PageItem.MIN_DIM_FACTOR..PageItem.MAX_DIM_FACTOR,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("page_dim_factor_slider")
+                                )
+                            }
                         }
                     }
                 }

@@ -2,60 +2,71 @@ package com.example.darken
 
 import android.content.Context
 import android.content.res.Configuration
-import android.database.ContentObserver
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
 import com.example.data.model.DarkenConfig
-import com.example.data.model.DarkenTrigger
+import com.example.data.model.DarkenTriggerMode
 import java.util.Calendar
 
 object ExtraDimDetector {
-    // Android standard setting key for Extra Dim / Reduce Bright Colors (Android 12+)
-    private const val REDUCE_BRIGHT_COLORS_ACTIVATED = "reduce_bright_colors_activated"
 
-    fun isExtraDimActive(context: Context): Boolean {
-        return try {
-            val activated = Settings.Secure.getInt(
-                context.contentResolver,
-                REDUCE_BRIGHT_COLORS_ACTIVATED,
-                0
-            )
-            activated == 1
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    fun isSystemDarkThemeActive(context: Context): Boolean {
-        val currentNightMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+    fun isSystemDarkThemeActive(configuration: Configuration): Boolean {
+        val currentNightMode = configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         return currentNightMode == Configuration.UI_MODE_NIGHT_YES
     }
 
-    fun isScheduledActive(config: DarkenConfig): Boolean {
-        val now = Calendar.getInstance()
-        val currentMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-        val startMinutes = config.scheduleStartHour * 60 + config.scheduleStartMinute
-        val endMinutes = config.scheduleEndHour * 60 + config.scheduleEndMinute
+    fun isSystemDarkThemeActive(context: Context): Boolean =
+        isSystemDarkThemeActive(context.resources.configuration)
+
+    fun isScheduledActive(
+        config: DarkenConfig,
+        hourOfDay: Int,
+        minute: Int
+    ): Boolean {
+        val safe = config.normalized()
+        val currentMinutes = hourOfDay.coerceIn(0, 23) * 60 + minute.coerceIn(0, 59)
+        val startMinutes = safe.scheduleStartHour * 60 + safe.scheduleStartMinute
+        val endMinutes = safe.scheduleEndHour * 60 + safe.scheduleEndMinute
+
+        if (startMinutes == endMinutes) return false
 
         return if (startMinutes < endMinutes) {
             currentMinutes in startMinutes until endMinutes
         } else {
-            // Overnights (e.g. 20:00 to 07:00)
+            // Overnight window (e.g. 20:00 to 07:00)
             currentMinutes >= startMinutes || currentMinutes < endMinutes
         }
     }
 
-    fun isDimConditionActive(context: Context, config: DarkenConfig): Boolean {
+    fun isScheduledActive(config: DarkenConfig): Boolean {
+        val now = Calendar.getInstance()
+        return isScheduledActive(
+            config = config,
+            hourOfDay = now.get(Calendar.HOUR_OF_DAY),
+            minute = now.get(Calendar.MINUTE)
+        )
+    }
+
+    fun isDimConditionActive(
+        context: Context,
+        config: DarkenConfig,
+        isDarkModeOverride: Boolean? = null,
+        hourOfDay: Int? = null,
+        minute: Int? = null
+    ): Boolean {
+        if (!config.enabled) return false
+        val darkModeActive = config.triggerMode.usesDarkMode &&
+            (isDarkModeOverride ?: isSystemDarkThemeActive(context))
+        val scheduleActive = config.triggerMode.usesSchedule &&
+            if (hourOfDay != null && minute != null) {
+                isScheduledActive(config, hourOfDay, minute)
+            } else {
+                isScheduledActive(config)
+            }
         return when (config.triggerMode) {
-            DarkenTrigger.OFF -> false
-            DarkenTrigger.EXTRA_DIM -> isExtraDimActive(context)
-            DarkenTrigger.DARK_THEME -> isSystemDarkThemeActive(context)
-            DarkenTrigger.SCHEDULED -> isScheduledActive(config)
-            DarkenTrigger.ALWAYS -> true
+            DarkenTriggerMode.SCHEDULE_ONLY -> scheduleActive
+            DarkenTriggerMode.DARK_MODE_ONLY -> darkModeActive
+            DarkenTriggerMode.BOTH_OR -> darkModeActive || scheduleActive
         }
     }
 
@@ -89,30 +100,5 @@ object ExtraDimDetector {
 
         return if (sampleCount > 0) (totalLuminance / sampleCount).toFloat() else 0.5f
     }
-
-    fun registerObserver(context: Context, onChange: () -> Unit): ContentObserver? {
-        return try {
-            val uri: Uri = Settings.Secure.getUriFor(REDUCE_BRIGHT_COLORS_ACTIVATED)
-            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean, uri: Uri?) {
-                    super.onChange(selfChange, uri)
-                    onChange()
-                }
-            }
-            context.contentResolver.registerContentObserver(uri, false, observer)
-            observer
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    fun unregisterObserver(context: Context, observer: ContentObserver?) {
-        if (observer != null) {
-            try {
-                context.contentResolver.unregisterContentObserver(observer)
-            } catch (e: Exception) {
-                // Ignore
-            }
-        }
-    }
 }
+

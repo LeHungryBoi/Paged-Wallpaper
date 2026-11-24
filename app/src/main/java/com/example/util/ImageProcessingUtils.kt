@@ -211,6 +211,32 @@ object ImageProcessingUtils {
     }
 
     /**
+     * Creates a pre-darkened copy of [srcBmp] by scaling RGB intensity by (1 - [dimFactor]).
+     */
+    fun createDarkenedCopy(
+        srcBmp: Bitmap,
+        dimFactor: Float
+    ): Bitmap {
+        val clamped = dimFactor.coerceIn(0f, 0.95f)
+        val brightnessScale = 1f - clamped
+        val out = Bitmap.createBitmap(
+            srcBmp.width.coerceAtLeast(1),
+            srcBmp.height.coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888
+        )
+        val canvas = Canvas(out)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(
+                ColorMatrix().apply {
+                    setScale(brightnessScale, brightnessScale, brightnessScale, 1f)
+                }
+            )
+        }
+        canvas.drawBitmap(srcBmp, 0f, 0f, paint)
+        return out
+    }
+
+    /**
      * Draws a soft ambient shadow behind the sharp foreground image so it separates cleanly
      * from bright Aero, Acrylic, or Rainbow backdrops.
      */

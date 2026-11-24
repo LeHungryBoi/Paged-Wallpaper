@@ -59,6 +59,8 @@ class WallpaperSignalOverlayWindow(
             ).apply {
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 y = safeTopPx
+                dimAmount = 0f
+                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             }
             try {
                 wm.addView(view, params)

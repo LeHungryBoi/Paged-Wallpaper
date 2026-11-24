@@ -52,8 +52,8 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isWallpaperActive = MutableStateFlow(false)
     val isWallpaperActive: StateFlow<Boolean> = _isWallpaperActive.asStateFlow()
 
-    private val _isExtraDimDetected = MutableStateFlow(false)
-    val isExtraDimDetected: StateFlow<Boolean> = _isExtraDimDetected.asStateFlow()
+    private val _isSystemDarkMode = MutableStateFlow(false)
+    val isSystemDarkMode: StateFlow<Boolean> = _isSystemDarkMode.asStateFlow()
 
     private val _isImporting = MutableStateFlow(false)
     val isImporting: StateFlow<Boolean> = _isImporting.asStateFlow()
@@ -80,7 +80,11 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         val info = wm.wallpaperInfo
         val myService = MultiPageWallpaperService::class.java.name
         _isWallpaperActive.value = info?.serviceInfo?.name == myService
-        _isExtraDimDetected.value = ExtraDimDetector.isExtraDimActive(getApplication())
+        _isSystemDarkMode.value = ExtraDimDetector.isSystemDarkThemeActive(getApplication())
+    }
+
+    fun refreshSystemDarkMode(isDark: Boolean) {
+        _isSystemDarkMode.value = isDark
     }
 
     fun importMedia(uri: Uri, onComplete: (OriginalMedia?) -> Unit = {}) {
@@ -365,7 +369,8 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateDarkenConfig(darkenConfig: DarkenConfig) {
-        repository.updateState { it.copy(darken = darkenConfig) }
+        val normalized = darkenConfig.normalized()
+        repository.updateState { it.copy(darken = normalized) }
     }
 
     fun togglePageAlreadyDark(pageIndex: Int, isDark: Boolean) {
