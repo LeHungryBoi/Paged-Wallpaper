@@ -9,12 +9,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +70,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -76,12 +78,14 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -176,6 +180,83 @@ private fun calculatePreviewTravel(
     val travelAmount = amount.coerceIn(0f, 1f)
     return (availableLeftTravel * travelAmount).coerceAtLeast(0f) to
         (availableRightTravel * travelAmount).coerceAtLeast(0f)
+}
+
+internal fun calculateFullImagePreviewPan(
+    currentPanX: Float,
+    currentPanY: Float,
+    panDelta: Offset,
+    canvasWidth: Float,
+    canvasHeight: Float,
+    sourceWidth: Int,
+    sourceHeight: Int,
+    viewportWidthPx: Float,
+    viewportHeightPx: Float,
+    zoom: Float,
+    cropFillMode: CropFillMode
+): Pair<Float, Float> {
+    if (canvasWidth <= 0f || canvasHeight <= 0f ||
+        sourceWidth <= 0 || sourceHeight <= 0 ||
+        viewportWidthPx <= 0f || viewportHeightPx <= 0f
+    ) {
+        return currentPanX to currentPanY
+    }
+    val imageScale = minOf(canvasWidth / sourceWidth, canvasHeight / sourceHeight)
+    if (imageScale <= 0f) return currentPanX to currentPanY
+
+    val clampedZoom = zoom.coerceIn(1f, 3f)
+    val deltaSourceX = panDelta.x / imageScale
+    val deltaSourceY = panDelta.y / imageScale
+
+    return if (cropFillMode == CropFillMode.CROP) {
+        val targetRatio = viewportWidthPx / viewportHeightPx
+        val sourceRatio = sourceWidth.toFloat() / sourceHeight
+        val baseCropWidth = if (sourceRatio > targetRatio) {
+            sourceHeight * targetRatio
+        } else {
+            sourceWidth.toFloat()
+        }
+        val baseCropHeight = if (sourceRatio > targetRatio) {
+            sourceHeight.toFloat()
+        } else {
+            sourceWidth / targetRatio
+        }
+        val cropWidth = baseCropWidth / clampedZoom
+        val cropHeight = baseCropHeight / clampedZoom
+        val maxPanX = ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
+        val maxPanY = ((sourceHeight - cropHeight) / 2f).coerceAtLeast(0f)
+        val nextPanX = if (maxPanX > 0.0001f) {
+            (currentPanX - deltaSourceX / maxPanX).coerceIn(-1f, 1f)
+        } else {
+            currentPanX
+        }
+        val nextPanY = if (maxPanY > 0.0001f) {
+            (currentPanY - deltaSourceY / maxPanY).coerceIn(-1f, 1f)
+        } else {
+            currentPanY
+        }
+        nextPanX to nextPanY
+    } else {
+        val imageFitScale = minOf(
+            viewportWidthPx / sourceWidth,
+            viewportHeightPx / sourceHeight
+        ) * clampedZoom
+        val drawWidth = sourceWidth * imageFitScale
+        val drawHeight = sourceHeight * imageFitScale
+        val maxOverflowX = ((drawWidth - viewportWidthPx) / 2f).coerceAtLeast(0f)
+        val maxOverflowY = ((drawHeight - viewportHeightPx) / 2f).coerceAtLeast(0f)
+        val nextPanX = if (maxOverflowX > 0.0001f) {
+            (currentPanX - deltaSourceX * imageFitScale / maxOverflowX).coerceIn(-1f, 1f)
+        } else {
+            currentPanX
+        }
+        val nextPanY = if (maxOverflowY > 0.0001f) {
+            (currentPanY - deltaSourceY * imageFitScale / maxOverflowY).coerceIn(-1f, 1f)
+        } else {
+            currentPanY
+        }
+        nextPanX to nextPanY
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -440,17 +521,18 @@ fun MediaEditorScreen(
                 }
             }
 
+            val currentDisplayBitmap by rememberUpdatedState(displayBitmap)
+            val currentCropFillMode by rememberUpdatedState(cropFillMode)
+            val currentViewportWidthPx by rememberUpdatedState(viewportWidthPx)
+            val currentViewportHeightPx by rememberUpdatedState(viewportHeightPx)
+
             Column(modifier = Modifier.fillMaxSize()) {
-                // Fixed top unified preview window: click to toggle Single Page (rounded corners) <-> Full Image (sharp corners)
+                // Fixed top unified preview window; mode toggle is isolated to the bottom-right pill badge
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(targetPreviewHeight)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f))
-                        .clickable(
-                            role = Role.Button,
-                            onClick = togglePreviewMode
-                        )
                         .testTag("crop_unified_preview"),
                     contentAlignment = Alignment.Center
                 ) {
@@ -466,15 +548,16 @@ fun MediaEditorScreen(
                                     MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
                                     RoundedCornerShape(18.dp)
                                 )
-                                .clickable(
-                                    role = Role.Button,
-                                    onClick = togglePreviewMode
-                                )
-                                .pointerInput(bitmap, cropFillMode, zoom) {
-                                    detectDragGestures { change, dragAmount ->
-                                        change.consume()
-                                        panX = (panX + dragAmount.x / size.width * 2f).coerceIn(-1f, 1f)
-                                        panY = (panY + dragAmount.y / size.height * 2f).coerceIn(-1f, 1f)
+                                .pointerInput(media.id, page.pageIndex) {
+                                    detectTransformGestures { _, pan, zoomChange, _ ->
+                                        if (currentDisplayBitmap == null) return@detectTransformGestures
+                                        if (zoomChange != 1f) {
+                                            zoom = (zoom * zoomChange).coerceIn(1f, 3f)
+                                        }
+                                        if (pan != Offset.Zero) {
+                                            panX = (panX + pan.x / size.width * 2f).coerceIn(-1f, 1f)
+                                            panY = (panY + pan.y / size.height * 2f).coerceIn(-1f, 1f)
+                                        }
                                     }
                                 }
                                 .testTag("crop_single_page_preview"),
@@ -575,7 +658,7 @@ fun MediaEditorScreen(
                             )
                         }
                     } else {
-                        // Full image preview retains sharp corners (RectangleShape)
+                        // Full image preview retains sharp corners (RectangleShape) and supports direct 1:1 frame drag & pinch zoom
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -583,10 +666,33 @@ fun MediaEditorScreen(
                                 .clip(RectangleShape)
                                 .background(Color.Black)
                                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClick = togglePreviewMode
-                                )
+                                .pointerInput(media.id, page.pageIndex) {
+                                    detectTransformGestures { _, pan, zoomChange, _ ->
+                                        val source = currentDisplayBitmap ?: return@detectTransformGestures
+                                        val nextZoom = if (zoomChange != 1f) {
+                                            (zoom * zoomChange).coerceIn(1f, 3f).also { zoom = it }
+                                        } else {
+                                            zoom
+                                        }
+                                        if (pan != Offset.Zero) {
+                                            val (nextPanX, nextPanY) = calculateFullImagePreviewPan(
+                                                currentPanX = panX,
+                                                currentPanY = panY,
+                                                panDelta = pan,
+                                                canvasWidth = size.width.toFloat(),
+                                                canvasHeight = size.height.toFloat(),
+                                                sourceWidth = source.width,
+                                                sourceHeight = source.height,
+                                                viewportWidthPx = currentViewportWidthPx,
+                                                viewportHeightPx = currentViewportHeightPx,
+                                                zoom = nextZoom,
+                                                cropFillMode = currentCropFillMode
+                                            )
+                                            panX = nextPanX
+                                            panY = nextPanY
+                                        }
+                                    }
+                                }
                                 .testTag("crop_parallax_bounds_preview")
                         ) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -714,27 +820,38 @@ fun MediaEditorScreen(
                         }
                     }
 
-                    // Mode toggle pill badge
-                    Surface(
+                    // Mode toggle pill badge (exclusive mode toggle target with 48dp minimum touch area)
+                    Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(12.dp)
+                            .padding(4.dp)
+                            .minimumInteractiveComponentSize()
+                            .clip(CircleShape)
+                            .clickable(
+                                role = Role.Button,
+                                onClick = togglePreviewMode
+                            )
                             .testTag("crop_preview_mode_badge"),
-                        shape = CircleShape,
-                        color = Color.Black.copy(alpha = 0.68f)
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = stringResource(
-                                if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
-                                    R.string.crop_preview_single_label
-                                } else {
-                                    R.string.crop_preview_full_label
-                                }
-                            ),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.68f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
+                        ) {
+                            Text(
+                                text = stringResource(
+                                    if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
+                                        R.string.crop_preview_single_label
+                                    } else {
+                                        R.string.crop_preview_full_label
+                                    }
+                                ),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
                     }
 
                     if (showDarkenedPreview) {

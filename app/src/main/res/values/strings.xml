@@ -335,6 +335,9 @@
     <string name="crop_blur_bokeh_desc">Creamy optical blur with glowing highlight bloom</string>
     <string name="crop_blur_prism">Prism</string>
     <string name="crop_blur_prism_desc">Subtle chromatic glass dispersion with soft spectral shimmer</string>
+    <string name="crop_move_value">Move: %1$s</string>
+    <string name="crop_move_axis_horizontal">Horizontal</string>
+    <string name="crop_move_axis_vertical">Vertical</string>
     <string name="crop_zoom_value">Zoom: %1$sx</string>
     <string name="crop_parallax_value">Parallax: %1$d%% · left %2$d dp / right %3$d dp</string>
     <string name="crop_parallax_hint">Requires a parallax transition to be selected.</string>

@@ -335,6 +335,9 @@
     <string name="crop_blur_bokeh_desc">奶油般柔和光学虚化，带高光光晕效果</string>
     <string name="crop_blur_prism">棱镜折射</string>
     <string name="crop_blur_prism_desc">轻微色散玻璃折射，伴随柔和光谱微光</string>
+    <string name="crop_move_value">移动：%1$s</string>
+    <string name="crop_move_axis_horizontal">水平</string>
+    <string name="crop_move_axis_vertical">垂直</string>
     <string name="crop_zoom_value">缩放：%1$sx</string>
     <string name="crop_parallax_value">视差：%1$d%% · 左 %2$d dp / 右 %3$d dp</string>
     <string name="crop_parallax_hint">需要选择支持视差的翻页过渡动画。</string>

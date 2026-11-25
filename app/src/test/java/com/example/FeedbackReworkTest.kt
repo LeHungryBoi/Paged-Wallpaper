@@ -20,8 +20,10 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pinch
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.CalibrationConfig
+import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTriggerMode
 import com.example.data.model.OriginalMedia
@@ -32,6 +34,7 @@ import com.example.ui.WallpaperViewModel
 import com.example.ui.screens.EffectsScreen
 import com.example.ui.screens.MediaEditorScreen
 import com.example.ui.screens.StudioScreen
+import com.example.ui.screens.calculateFullImagePreviewPan
 import com.example.ui.theme.MyApplicationTheme
 import com.example.util.ImageProcessingUtils
 import org.junit.Assert.assertEquals
@@ -280,12 +283,24 @@ class FeedbackReworkTest {
         }
         composeRule.waitForIdle()
 
-        // Single-page preview shown initially inside unified container; click toggles to full-image preview
+        // Single-page preview shown initially inside unified container; body clicks do not toggle modes
         composeRule.onNodeWithTag("crop_unified_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertDoesNotExist()
 
-        composeRule.onNodeWithTag("crop_unified_preview").performClick()
+        composeRule.onNodeWithTag("crop_single_page_preview").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("crop_single_page_preview").assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertDoesNotExist()
+
+        // Tapping the mode toggle pill badge switches to full-image preview
+        composeRule.onNodeWithTag("crop_preview_mode_badge").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
+
+        // Clicking the full-image preview body itself does not toggle back
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
@@ -494,5 +509,157 @@ class FeedbackReworkTest {
         composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
 
         repository.resetEditorDefaultFullPreview()
+    }
+
+    @Test
+    fun fullImagePreviewCalculatePanTracksFingerOneToOneInCropAndBlurModes() {
+        // Landscape 1000x1000 image fitted in 400x400 canvas (imageScale = 0.4) with 90x195 viewport
+        val (cropPanX, cropPanY) = calculateFullImagePreviewPan(
+            currentPanX = 0f,
+            currentPanY = 0f,
+            panDelta = Offset(40f, 0f),
+            canvasWidth = 400f,
+            canvasHeight = 400f,
+            sourceWidth = 1000,
+            sourceHeight = 1000,
+            viewportWidthPx = 90f,
+            viewportHeightPx = 195f,
+            zoom = 1f,
+            cropFillMode = CropFillMode.CROP
+        )
+        // Moving finger +40 canvas px = +100 source px right -> panX decreases for direct frame tracking
+        assertTrue("Expected negative panX when dragging frame right, got $cropPanX", cropPanX < -0.3f)
+        assertEquals(0f, cropPanY, 0.0001f)
+
+        // BLUR mode at 2x zoom: dragging right & down shifts panX and panY negative when overflow exists
+        val (blurPanX, blurPanY) = calculateFullImagePreviewPan(
+            currentPanX = 0f,
+            currentPanY = 0f,
+            panDelta = Offset(40f, 0f),
+            canvasWidth = 400f,
+            canvasHeight = 400f,
+            sourceWidth = 1000,
+            sourceHeight = 1000,
+            viewportWidthPx = 90f,
+            viewportHeightPx = 195f,
+            zoom = 2f,
+            cropFillMode = CropFillMode.BLUR
+        )
+        assertEquals(-0.4f, blurPanX, 0.001f)
+        assertEquals(0f, blurPanY, 0.0001f)
+
+        val (blurTallPanX, blurTallPanY) = calculateFullImagePreviewPan(
+            currentPanX = 0f,
+            currentPanY = 0f,
+            panDelta = Offset(0f, 20f),
+            canvasWidth = 400f,
+            canvasHeight = 400f,
+            sourceWidth = 400,
+            sourceHeight = 1000,
+            viewportWidthPx = 90f,
+            viewportHeightPx = 195f,
+            zoom = 2f,
+            cropFillMode = CropFillMode.BLUR
+        )
+        assertEquals(0f, blurTallPanX, 0.0001f)
+        assertTrue("Expected negative panY when dragging frame down in tall BLUR mode, got $blurTallPanY", blurTallPanY < -0.1f)
+    }
+
+    @Test
+    fun fullImagePreviewDragAndPinchUpdateSavedCropAndSinglePagePinchUpdatesScale() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = WallpaperRepository.getInstance(context)
+        repository.resetEditorDefaultFullPreview()
+
+        val originalsDir = File(context.filesDir, "originals").apply { mkdirs() }
+        val fileName = "test_full_preview_gestures.jpg"
+        val bmp = Bitmap.createBitmap(400, 200, Bitmap.Config.ARGB_8888).apply {
+            Canvas(this).drawColor(Color.rgb(120, 160, 200))
+        }
+        FileOutputStream(File(originalsDir, fileName)).use { out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+        }
+        bmp.recycle()
+
+        val media = OriginalMedia(
+            id = "media_full_preview_gestures",
+            fileName = fileName,
+            dateAdded = 3000L,
+            width = 400,
+            height = 200,
+            averageLuminance = 0.6f,
+            isDarkDetected = false
+        )
+        val initialPage = PageItem(
+            pageIndex = 0,
+            originalId = media.id,
+            cropFillMode = CropFillMode.CROP,
+            cropPanX = 0f,
+            cropPanY = 0f,
+            cropScale = 1f
+        )
+        var savedPage: PageItem? = null
+
+        composeRule.setContent {
+            MyApplicationTheme {
+                MediaEditorScreen(
+                    media = media,
+                    page = initialPage,
+                    pageCount = 3,
+                    isSaving = false,
+                    onDismiss = {},
+                    onSave = { savedPage = it }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        // 1. Pinch out in Single Page mode -> increases zoom from 1.0x
+        composeRule.onNodeWithTag("crop_single_page_preview").performTouchInput {
+            pinch(
+                start0 = center + Offset(-10f, 0f),
+                end0 = center + Offset(-40f, 0f),
+                start1 = center + Offset(10f, 0f),
+                end1 = center + Offset(40f, 0f)
+            )
+        }
+        composeRule.waitForIdle()
+        assertEquals(0, composeRule.onAllNodesWithText("Zoom: 1.0x").fetchSemanticsNodes().size)
+
+        // 2. Toggle to Full Image mode via pill badge
+        composeRule.onNodeWithTag("crop_preview_mode_badge").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
+
+        // 3. Pinch out further in Full Image mode -> increases cropScale further
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").performTouchInput {
+            pinch(
+                start0 = center + Offset(-20f, 0f),
+                end0 = center + Offset(-90f, 0f),
+                start1 = center + Offset(20f, 0f),
+                end1 = center + Offset(90f, 0f)
+            )
+        }
+        composeRule.waitForIdle()
+
+        // 4. Drag right and down in Full Image mode -> moves cyan static frame right & down (negative panX and panY)
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").performTouchInput {
+            down(center)
+            moveBy(Offset(20f, 15f), delayMillis = 20L)
+            moveBy(Offset(20f, 15f), delayMillis = 20L)
+            moveBy(Offset(20f, 15f), delayMillis = 20L)
+            moveBy(Offset(20f, 15f), delayMillis = 20L)
+            up()
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("crop_confirm_button").performClick()
+        composeRule.waitForIdle()
+
+        val result = savedPage
+        assertTrue("Expected page to be saved", result != null)
+        assertTrue("Expected pinch zoom to increase cropScale above 2.0x, got ${result!!.cropScale}", result.cropScale > 2.0f)
+        assertTrue("Expected dragging frame right in full-image preview to yield negative cropPanX, got ${result.cropPanX}", result.cropPanX < -0.1f)
+        assertTrue("Expected dragging frame down in full-image preview to yield negative cropPanY, got ${result.cropPanY}", result.cropPanY < -0.1f)
     }
 }
