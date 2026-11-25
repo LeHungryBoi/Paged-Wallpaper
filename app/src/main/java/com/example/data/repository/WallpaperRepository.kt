@@ -111,12 +111,37 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
     }
 
-    fun getEditorPreviewSplitFraction(default: Float = 0.42f): Float =
+    fun getEditorPreviewSplitFraction(
+        default: Float = DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION
+    ): Float =
         prefs.getFloat("editor_preview_split_fraction", default).coerceIn(0.20f, 0.70f)
 
     fun saveEditorPreviewSplitFraction(fraction: Float) {
         prefs.edit()
             .putFloat("editor_preview_split_fraction", fraction.coerceIn(0.20f, 0.70f))
+            .apply()
+    }
+
+    fun resetEditorPreviewSplitFraction() {
+        prefs.edit()
+            .remove("editor_preview_split_fraction")
+            .apply()
+    }
+
+    fun getEditorDefaultFullPreview(
+        default: Boolean = DEFAULT_EDITOR_FULL_PREVIEW
+    ): Boolean =
+        prefs.getBoolean("editor_default_full_preview", default)
+
+    fun saveEditorDefaultFullPreview(fullPreview: Boolean) {
+        prefs.edit()
+            .putBoolean("editor_default_full_preview", fullPreview)
+            .apply()
+    }
+
+    fun resetEditorDefaultFullPreview() {
+        prefs.edit()
+            .remove("editor_default_full_preview")
             .apply()
     }
 
@@ -1677,6 +1702,8 @@ class WallpaperRepository private constructor(private val context: Context) {
     }
 
     companion object {
+        const val DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION = 0.42f
+        const val DEFAULT_EDITOR_FULL_PREVIEW = false
         private const val BACKUP_FILE_NAME = "paperpages_backup.zip"
         private const val MAX_BACKUP_UNCOMPRESSED_BYTES = 1024L * 1024L * 1024L
 

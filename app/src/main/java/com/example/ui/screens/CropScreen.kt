@@ -70,7 +70,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -213,15 +212,17 @@ fun MediaEditorScreen(
     var blurTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTintIntensity) }
     var blurRainbowStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurRainbowStyle) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
-    var previewMode by remember(media.id, page.pageIndex) { mutableStateOf(EditorPreviewMode.SINGLE_PAGE) }
-    var splitFraction by remember(repository) {
-        mutableFloatStateOf(repository.getEditorPreviewSplitFraction())
+    var previewMode by remember(media.id, page.pageIndex, repository) {
+        mutableStateOf(
+            if (repository.getEditorDefaultFullPreview()) {
+                EditorPreviewMode.FULL_IMAGE
+            } else {
+                EditorPreviewMode.SINGLE_PAGE
+            }
+        )
     }
-
-    DisposableEffect(repository) {
-        onDispose {
-            repository.saveEditorPreviewSplitFraction(splitFraction)
-        }
+    var splitFraction by remember(media.id, page.pageIndex, repository) {
+        mutableFloatStateOf(repository.getEditorPreviewSplitFraction())
     }
 
     BackHandler(enabled = !isSaving) { onDismiss() }
@@ -767,8 +768,6 @@ fun MediaEditorScreen(
                         .semantics { contentDescription = dividerCd }
                         .pointerInput(availableHeightPx, minFraction, maxFraction) {
                             detectVerticalDragGestures(
-                                onDragEnd = { repository.saveEditorPreviewSplitFraction(splitFraction) },
-                                onDragCancel = { repository.saveEditorPreviewSplitFraction(splitFraction) },
                                 onVerticalDrag = { change, dragAmount ->
                                     change.consume()
                                     val next = (splitFraction + dragAmount / availableHeightPx)

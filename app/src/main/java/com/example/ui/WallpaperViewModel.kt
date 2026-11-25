@@ -442,6 +442,28 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
         WallpaperDiagnosticsRecorder.clearHistory()
     }
 
+    fun getDefaultEditorPreviewSplitFraction(): Float =
+        repository.getEditorPreviewSplitFraction()
+
+    fun setDefaultEditorPreviewSplitFraction(fraction: Float) {
+        repository.saveEditorPreviewSplitFraction(fraction)
+    }
+
+    fun resetDefaultEditorPreviewSplitFraction() {
+        repository.resetEditorPreviewSplitFraction()
+    }
+
+    fun getDefaultEditorFullPreview(): Boolean =
+        repository.getEditorDefaultFullPreview()
+
+    fun setDefaultEditorFullPreview(fullPreview: Boolean) {
+        repository.saveEditorDefaultFullPreview(fullPreview)
+    }
+
+    fun resetDefaultEditorFullPreview() {
+        repository.resetEditorDefaultFullPreview()
+    }
+
     fun applyWallpaperIntent(context: Context) {
         try {
             val intent = Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).apply {

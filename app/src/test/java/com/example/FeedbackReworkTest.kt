@@ -10,12 +10,15 @@ import android.os.Build
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.CalibrationConfig
@@ -237,10 +240,10 @@ class FeedbackReworkTest {
     }
 
     @Test
-    fun mediaEditorTogglesUnifiedPreviewModeAndPersistsSplitPosition() {
+    fun mediaEditorTogglesUnifiedPreviewModeAndDoesNotPersistTemporarySplit() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repository = WallpaperRepository.getInstance(context)
-        repository.saveEditorPreviewSplitFraction(0.42f)
+        repository.resetEditorPreviewSplitFraction()
 
         val originalsDir = File(context.filesDir, "originals").apply { mkdirs() }
         val fileName = "test_rework_crop.jpg"
@@ -287,16 +290,17 @@ class FeedbackReworkTest {
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
 
-        // Drag split-screen separator downwards and verify updated split fraction persists
+        // Drag split-screen separator downwards -> temporary in-memory adjustment only, storage stays at default
         composeRule.onNodeWithTag("crop_split_separator").performTouchInput {
             down(center)
             moveBy(Offset(0f, 120f))
             up()
         }
         composeRule.waitForIdle()
-        assertTrue(
-            "Expected persisted split fraction > 0.42f after dragging down, got ${repository.getEditorPreviewSplitFraction()}",
-            repository.getEditorPreviewSplitFraction() > 0.42f
+        assertEquals(
+            WallpaperRepository.DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION,
+            repository.getEditorPreviewSplitFraction(),
+            0.001f
         )
 
         // Settings area below remains scrollable
@@ -304,8 +308,11 @@ class FeedbackReworkTest {
     }
 
     @Test
-    fun mainAppTopMenuConditionallyShowsStudioDarkenAndSettingsDebugButtons() {
+    fun mainAppTopMenuConditionallyShowsStudioDarkenAndSettingsDebugAndFlagsDialogs() {
         val app = ApplicationProvider.getApplicationContext<Application>()
+        val repository = WallpaperRepository.getInstance(app)
+        repository.resetEditorPreviewSplitFraction()
+        repository.resetEditorDefaultFullPreview()
         val viewModel = WallpaperViewModel(app)
 
         composeRule.setContent {
@@ -315,30 +322,177 @@ class FeedbackReworkTest {
         }
         composeRule.waitForIdle()
 
-        // Studio tab active by default -> Darken button visible in forehead, Debug absent
+        // Studio tab active by default -> Darken button visible in forehead, Debug/Flags absent
         composeRule.onNodeWithTag("top_menu_studio_darken_button").assertIsDisplayed()
         composeRule.onNodeWithTag("top_menu_settings_debug_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("top_menu_settings_flags_button").assertDoesNotExist()
 
         // Click Studio Darken button -> All-pages darken preview appears
         composeRule.onNodeWithTag("top_menu_studio_darken_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("studio_all_pages_darken_card").assertIsDisplayed()
 
-        // Switch to Behavior -> neither forehead button shown
+        // Switch to Behavior -> none of Studio/Settings forehead buttons shown
         composeRule.onNodeWithTag("tab_behavior").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("top_menu_studio_darken_button").assertDoesNotExist()
         composeRule.onNodeWithTag("top_menu_settings_debug_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("top_menu_settings_flags_button").assertDoesNotExist()
 
-        // Switch to Settings -> Debug button visible in forehead
+        // Switch to Settings -> Debug and Flags buttons visible in forehead
         composeRule.onNodeWithTag("tab_settings").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("top_menu_settings_debug_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("top_menu_settings_flags_button").assertIsDisplayed()
         composeRule.onNodeWithTag("top_menu_studio_darken_button").assertDoesNotExist()
 
         // Clicking Debug scrolls Settings to Diagnostics & Debug section
         composeRule.onNodeWithTag("top_menu_settings_debug_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("settings_debug_section").assertIsDisplayed()
+
+        // Open Chrome-style Flags UI
+        composeRule.onNodeWithTag("top_menu_settings_flags_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flags_editor_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("flags_bottom_hint").assertIsDisplayed()
+        composeRule.onNodeWithTag("editor_cancel_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("editor_confirm_button").assertIsDisplayed()
+
+        val rootBounds = composeRule.onNodeWithTag("flags_editor_dialog").getBoundsInRoot()
+        val hintBounds = composeRule.onNodeWithTag("flags_bottom_hint").getBoundsInRoot()
+        val cancelBounds = composeRule.onNodeWithTag("editor_cancel_button").getBoundsInRoot()
+        val confirmBounds = composeRule.onNodeWithTag("editor_confirm_button").getBoundsInRoot()
+        assertTrue(hintBounds.bottom <= rootBounds.bottom)
+        assertTrue(cancelBounds.bottom <= rootBounds.bottom)
+        assertTrue(confirmBounds.bottom <= rootBounds.bottom)
+
+        // Initially no modified dots exist; Modified tab is empty while Unmodified shows both flags
+        composeRule.onNodeWithTag("flag_dot_split").assertDoesNotExist()
+        composeRule.onNodeWithTag("flag_dot_preview_mode").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("flags_tab_modified").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flags_empty_state").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("flags_tab_unmodified").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_item_split").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("flag_item_preview_mode").performScrollTo().assertIsDisplayed()
+
+        composeRule.onNodeWithTag("flags_tab_all").performClick()
+        composeRule.waitForIdle()
+
+        // Search matches programmatic name (#editor-default-preview-mode), description, and title
+        composeRule.onNodeWithTag("flags_search_input").performTextInput("preview-mode")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_item_preview_mode").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("flag_item_split").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("flags_search_input").performTextClearance()
+        composeRule.onNodeWithTag("flags_search_input").performTextInput("height ratio")
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_item_split").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("flag_item_preview_mode").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("flags_search_clear_button").performClick()
+        composeRule.waitForIdle()
+
+        // Modify split slider -> blue dot appears; split moves to Modified tab while preview_mode stays Unmodified
+        composeRule.onNodeWithTag("flag_default_split_slider")
+            .performScrollTo()
+            .performSemanticsAction(SemanticsActions.SetProgress) { action ->
+                action(0.60f)
+            }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_dot_split").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("flag_dot_preview_mode").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("flags_tab_modified").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_item_split").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag("flag_item_preview_mode").assertDoesNotExist()
+
+        // Change preview mode via Chrome selector dropdown as well
+        composeRule.onNodeWithTag("flags_tab_all").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_preview_mode_selector").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_preview_mode_option_full").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_dot_preview_mode").performScrollTo().assertIsDisplayed()
+
+        // Single-item icon reset on split returns split to default while leaving preview mode modified
+        composeRule.onNodeWithTag("flag_reset_split_button").performScrollTo().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_dot_split").assertDoesNotExist()
+        composeRule.onNodeWithTag("flag_dot_preview_mode").performScrollTo().assertIsDisplayed()
+
+        // Apply changes -> preview mode persists while split remains default
+        composeRule.onNodeWithTag("editor_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertEquals(
+            WallpaperRepository.DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION,
+            repository.getEditorPreviewSplitFraction(),
+            0.001f
+        )
+        assertTrue(repository.getEditorDefaultFullPreview())
+
+        // Re-open Flags, hit Reset all, and Apply -> everything restored to default
+        composeRule.onNodeWithTag("top_menu_settings_flags_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flags_reset_default_button").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("flag_dot_preview_mode").assertDoesNotExist()
+        composeRule.onNodeWithTag("editor_confirm_button").performClick()
+        composeRule.waitForIdle()
+        assertFalse(repository.getEditorDefaultFullPreview())
+    }
+
+    @Test
+    fun mediaEditorRespectsInitialPreviewModeFlag() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = WallpaperRepository.getInstance(context)
+        repository.saveEditorDefaultFullPreview(true)
+
+        val originalsDir = File(context.filesDir, "originals").apply { mkdirs() }
+        val fileName = "test_rework_crop_full_flag.jpg"
+        val bmp = Bitmap.createBitmap(180, 180, Bitmap.Config.ARGB_8888).apply {
+            Canvas(this).drawColor(Color.rgb(180, 195, 210))
+        }
+        FileOutputStream(File(originalsDir, fileName)).use { out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, 95, out)
+        }
+        bmp.recycle()
+
+        val media = OriginalMedia(
+            id = "media_rework_crop_full_flag",
+            fileName = fileName,
+            dateAdded = 2500L,
+            width = 180,
+            height = 180,
+            averageLuminance = 0.72f,
+            isDarkDetected = false
+        )
+        val page = PageItem(pageIndex = 0, originalId = media.id)
+
+        composeRule.setContent {
+            MyApplicationTheme {
+                MediaEditorScreen(
+                    media = media,
+                    page = page,
+                    pageCount = 3,
+                    isSaving = false,
+                    onDismiss = {},
+                    onSave = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
+
+        repository.resetEditorDefaultFullPreview()
     }
 }

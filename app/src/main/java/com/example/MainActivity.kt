@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
@@ -63,10 +64,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.repository.WallpaperRepository
 import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.ui.AppLocaleHelper
 import com.example.ui.ProvideAppLocale
 import com.example.ui.WallpaperViewModel
+import com.example.ui.screens.AdvancedFlagsScreen
 import com.example.ui.screens.EffectsScreen
 import com.example.ui.screens.MediaEditorScreen
 import com.example.ui.screens.MediaLibraryScreen
@@ -74,6 +77,7 @@ import com.example.ui.screens.MediaPickerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.StudioScreen
 import com.example.ui.theme.MyApplicationTheme
+import kotlin.math.abs
 
 enum class AppTab(
     @StringRes val titleRes: Int,
@@ -132,6 +136,7 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
     var isAssigningMedia by remember { mutableStateOf(false) }
     var studioDarkenPreview by remember { mutableStateOf(false) }
     var settingsDebugScrollTrigger by remember { mutableIntStateOf(0) }
+    var showFlagsScreen by remember { mutableStateOf(false) }
 
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
     val appState by viewModel.appState.collectAsState()
@@ -142,7 +147,26 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
             originals.find { it.id == page.originalId }?.let { media -> index to (page to media) }
         }
     }
-    if (pageToEdit != null) {
+    if (showFlagsScreen) {
+        AdvancedFlagsScreen(
+            initialSplitFraction = viewModel.getDefaultEditorPreviewSplitFraction(),
+            initialFullPreview = viewModel.getDefaultEditorFullPreview(),
+            onDismiss = { showFlagsScreen = false },
+            onConfirm = { newSplitFraction, newFullPreview ->
+                if (abs(newSplitFraction - WallpaperRepository.DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION) < 0.005f) {
+                    viewModel.resetDefaultEditorPreviewSplitFraction()
+                } else {
+                    viewModel.setDefaultEditorPreviewSplitFraction(newSplitFraction)
+                }
+                if (newFullPreview == WallpaperRepository.DEFAULT_EDITOR_FULL_PREVIEW) {
+                    viewModel.resetDefaultEditorFullPreview()
+                } else {
+                    viewModel.setDefaultEditorFullPreview(newFullPreview)
+                }
+                showFlagsScreen = false
+            }
+        )
+    } else if (pageToEdit != null) {
         val (pageIndex, pageAndMedia) = pageToEdit
         val (page, media) = pageAndMedia
         MediaEditorScreen(
@@ -280,44 +304,77 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
                                         appState.showFrameDebugIndicator ||
                                         appState.showSignalDebugOverlay ||
                                         diagnostics.isRecording
-                                    Surface(
-                                        onClick = { settingsDebugScrollTrigger++ },
-                                        shape = CircleShape,
-                                        color = if (anyDebugActive) {
-                                            MaterialTheme.colorScheme.tertiaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
-                                        },
-                                        modifier = Modifier
-                                            .minimumInteractiveComponentSize()
-                                            .testTag("top_menu_settings_debug_button")
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        Surface(
+                                            onClick = { settingsDebugScrollTrigger++ },
+                                            shape = CircleShape,
+                                            color = if (anyDebugActive) {
+                                                MaterialTheme.colorScheme.tertiaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                                            },
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("top_menu_settings_debug_button")
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Filled.BugReport,
-                                                contentDescription = stringResource(R.string.top_menu_debug_cd),
-                                                tint = if (anyDebugActive) {
-                                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                                } else {
-                                                    MaterialTheme.colorScheme.primary
-                                                },
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Text(
-                                                text = stringResource(R.string.top_menu_debug_short),
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = if (anyDebugActive) {
-                                                    MaterialTheme.colorScheme.onTertiaryContainer
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                                },
-                                                maxLines = 1
-                                            )
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.BugReport,
+                                                    contentDescription = stringResource(R.string.top_menu_debug_cd),
+                                                    tint = if (anyDebugActive) {
+                                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                                    } else {
+                                                        MaterialTheme.colorScheme.primary
+                                                    },
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = stringResource(R.string.top_menu_debug_short),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (anyDebugActive) {
+                                                        MaterialTheme.colorScheme.onTertiaryContainer
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                                    },
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            onClick = { showFlagsScreen = true },
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+                                            modifier = Modifier
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("top_menu_settings_flags_button")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Flag,
+                                                    contentDescription = stringResource(R.string.top_menu_flags_cd),
+                                                    tint = MaterialTheme.colorScheme.tertiary,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = stringResource(R.string.top_menu_flags_short),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                    maxLines = 1
+                                                )
+                                            }
                                         }
                                     }
                                 }
