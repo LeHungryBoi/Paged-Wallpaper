@@ -21,8 +21,10 @@ import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.PageItem
 import kotlin.math.abs
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 object ImageProcessingUtils {
@@ -211,29 +213,160 @@ object ImageProcessingUtils {
     }
 
     /**
-     * Creates a pre-darkened copy of [srcBmp] by scaling RGB intensity by (1 - [dimFactor]).
+     * Creates a normalized darkened copy of [srcBmp].
+     * Like audio loudness & dynamic-range normalization, bright and mid-tone wallpapers of varying
+     * original brightness/contrast are brought down to a consistent target luminance level and
+     * bounded dynamic range controlled solely by [dimFactor], without ever brightening pixels
+     * already darker than the target.
      */
     fun createDarkenedCopy(
         srcBmp: Bitmap,
         dimFactor: Float
     ): Bitmap {
-        val clamped = dimFactor.coerceIn(0f, 0.95f)
-        val brightnessScale = 1f - clamped
-        val out = Bitmap.createBitmap(
-            srcBmp.width.coerceAtLeast(1),
-            srcBmp.height.coerceAtLeast(1),
-            Bitmap.Config.ARGB_8888
-        )
-        val canvas = Canvas(out)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            colorFilter = ColorMatrixColorFilter(
-                ColorMatrix().apply {
-                    setScale(brightnessScale, brightnessScale, brightnessScale, 1f)
-                }
-            )
+        val w = srcBmp.width.coerceAtLeast(1)
+        val h = srcBmp.height.coerceAtLeast(1)
+        val normalizedSrc = if (srcBmp.config == Bitmap.Config.ARGB_8888) {
+            srcBmp
+        } else {
+            srcBmp.copy(Bitmap.Config.ARGB_8888, false) ?: srcBmp
         }
-        canvas.drawBitmap(srcBmp, 0f, 0f, paint)
-        return out
+        try {
+            val rowPixels = IntArray(w)
+            val histogram = IntArray(256)
+            val sampleStepX = max(1, w / 240)
+            val sampleStepY = max(1, h / 240)
+            var totalSamples = 0
+
+            var y = 0
+            while (y < h) {
+                normalizedSrc.getPixels(rowPixels, 0, w, 0, y, w, 1)
+                var x = 0
+                while (x < w) {
+                    val c = rowPixels[x]
+                    val r = (c ushr 16) and 0xFF
+                    val g = (c ushr 8) and 0xFF
+                    val b = c and 0xFF
+                    val lumIdx = ((r * 54 + g * 183 + b * 19) ushr 8).coerceIn(0, 255)
+                    histogram[lumIdx]++
+                    totalSamples++
+                    x += sampleStepX
+                }
+                y += sampleStepY
+            }
+
+            val scaleLut = buildNormalizedScaleLut(
+                histogram = histogram,
+                totalSamples = totalSamples,
+                dimFactor = dimFactor
+            )
+
+            val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            for (row in 0 until h) {
+                normalizedSrc.getPixels(rowPixels, 0, w, 0, row, w, 1)
+                for (col in 0 until w) {
+                    val c = rowPixels[col]
+                    val r = (c ushr 16) and 0xFF
+                    val g = (c ushr 8) and 0xFF
+                    val b = c and 0xFF
+                    val lumIdx = ((r * 54 + g * 183 + b * 19) ushr 8).coerceIn(0, 255)
+                    val s = scaleLut[lumIdx]
+                    val nr = ((r * s + 128) ushr 8).coerceIn(0, 255)
+                    val ng = ((g * s + 128) ushr 8).coerceIn(0, 255)
+                    val nb = ((b * s + 128) ushr 8).coerceIn(0, 255)
+                    rowPixels[col] = (c and -0x1000000) or (nr shl 16) or (ng shl 8) or nb
+                }
+                out.setPixels(rowPixels, 0, w, 0, row, w, 1)
+            }
+            return out
+        } finally {
+            if (normalizedSrc !== srcBmp) {
+                normalizedSrc.recycle()
+            }
+        }
+    }
+
+    /**
+     * Builds a 256-entry 8-bit fixed-point multiplier LUT (`0..256`) that normalizes an image's
+     * luminance distribution `[pLow..pHigh]` & mean toward a consistent target level and range
+     * derived from [dimFactor], guaranteeing `scale <= 1.0`.
+     */
+    internal fun buildNormalizedScaleLut(
+        histogram: IntArray,
+        totalSamples: Int,
+        dimFactor: Float
+    ): IntArray {
+        val lut = IntArray(256)
+        if (totalSamples <= 0) {
+            val fallback = ((1f - dimFactor.coerceIn(0f, 0.95f)) * 256f).roundToInt().coerceIn(0, 256)
+            lut.fill(fallback)
+            return lut
+        }
+
+        val lowTarget = (totalSamples * 0.05f).roundToInt().coerceAtLeast(1)
+        val highTarget = (totalSamples * 0.95f).roundToInt().coerceAtLeast(lowTarget)
+        var cumulative = 0
+        var pLowIdx = -1
+        var pHighIdx = 255
+        var weightedSum = 0L
+        for (i in 0..255) {
+            val count = histogram[i]
+            cumulative += count
+            weightedSum += i.toLong() * count
+            if (pLowIdx < 0 && cumulative >= lowTarget) {
+                pLowIdx = i
+            }
+            if (cumulative >= highTarget) {
+                pHighIdx = i
+                break
+            }
+        }
+        // Finish sum in case loop broke early
+        for (i in (pHighIdx + 1)..255) {
+            weightedSum += i.toLong() * histogram[i]
+        }
+
+        val pLow = ((pLowIdx.coerceAtLeast(0)) / 255f).coerceIn(0f, 1f)
+        val pHigh = (pHighIdx.coerceIn(pLowIdx.coerceAtLeast(0), 255) / 255f).coerceIn(pLow, 1f)
+        val meanLum = ((weightedSum.toDouble() / totalSamples) / 255.0).toFloat().coerceIn(0f, 1f)
+        val effectiveRange = (pHigh - pLow).coerceAtLeast(0.001f)
+
+        val strength = dimFactor.coerceIn(0f, 0.95f)
+        val targetPeakLum = (0.80f * (1f - strength) + 0.05f).coerceIn(0.06f, 0.85f)
+        val targetBlackLum = (targetPeakLum * 0.05f).coerceIn(0.003f, 0.035f)
+        val targetMeanLum = targetBlackLum + (targetPeakLum - targetBlackLum) * 0.42f
+        val flatTargetLum = targetMeanLum * 0.65f + targetPeakLum * 0.35f
+
+        val meanNorm = ((meanLum - pLow) / effectiveRange).coerceIn(0.06f, 0.94f)
+        val gamma = (ln(0.42) / ln(meanNorm.toDouble())).toFloat().coerceIn(0.45f, 2.2f)
+        val rangeMix = ((effectiveRange - 0.04f) / 0.12f).coerceIn(0f, 1f)
+
+        lut[0] = 0
+        for (i in 1..255) {
+            val inL = i / 255f
+            val rangeMappedLum = when {
+                inL <= pLow -> {
+                    val t = if (pLow > 0.001f) (inL / pLow).coerceIn(0f, 1f) else 0f
+                    targetBlackLum * t
+                }
+                inL >= pHigh -> {
+                    val over = if (1f - pHigh > 0.001f) {
+                        ((inL - pHigh) / (1f - pHigh)).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+                    (targetPeakLum + targetPeakLum * 0.06f * over).coerceAtMost(0.90f)
+                }
+                else -> {
+                    val u = ((inL - pLow) / effectiveRange).coerceIn(0f, 1f)
+                    val shaped = u.toDouble().pow(gamma.toDouble()).toFloat()
+                    targetBlackLum + (targetPeakLum - targetBlackLum) * shaped
+                }
+            }
+            val desiredLum = rangeMix * rangeMappedLum + (1f - rangeMix) * min(inL, flatTargetLum)
+            val scale = (desiredLum / inL).coerceIn(0f, 1f)
+            lut[i] = (scale * 256f).roundToInt().coerceIn(0, 256)
+        }
+        return lut
     }
 
     /**

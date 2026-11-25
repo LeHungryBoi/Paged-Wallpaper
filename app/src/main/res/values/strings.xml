@@ -149,7 +149,7 @@
     <string name="darken_sameday_hint">Same-day schedule active between start and end. Tap either time to customize.</string>
     <string name="darken_smart_detect_title">Smart dark detection</string>
     <string name="darken_smart_detect_desc">Wallpapers detected as dark or flagged as Already dark will not be over-darkened.</string>
-    <string name="darken_page_settings_hint">Adjust each wallpaper\'s darken intensity and preview it inside Page Settings.</string>
+    <string name="darken_page_settings_hint">Adjust the unified darken level above or mark already-dark pages inside Page Settings.</string>
     <string name="darken_pick_start_title">Select schedule start time</string>
     <string name="darken_pick_end_title">Select schedule end time</string>
     <string name="darken_switch_clock_cd">Switch to clock dial</string>
@@ -365,4 +365,21 @@
     <string name="app_icon_err_unknown">unknown error</string>
     <string name="app_icon_updated">Home screen icon updated.</string>
     <string name="app_icon_pinned">Follow your launcher prompt to add the home-screen icon.</string>
+    <!-- Top Menu & Darken Preview -->
+    <string name="top_menu_darken_cd">Toggle all-pages darken preview</string>
+    <string name="top_menu_darken_short">Darken</string>
+    <string name="top_menu_debug_cd">Jump to Diagnostics &amp; Debug</string>
+    <string name="top_menu_debug_short">Debug</string>
+    <string name="studio_darken_preview_title">All-pages darken preview</string>
+    <string name="studio_darken_level_label">Unified darken level: %1$d%%</string>
+    <string name="studio_darken_preview_normal">Normal</string>
+    <string name="studio_darken_preview_dark">Darkened</string>
+    <string name="studio_darken_tap_hint">Tap a page badge to mark Already dark</string>
+    <string name="darken_unified_level_label">Normalized darken level</string>
+    <string name="darken_unified_level_desc">Normalizes all light wallpapers to a consistent darkness and range.</string>
+    <string name="darken_all_pages_preview_label">All pages preview</string>
+    <string name="crop_preview_single_label">Single · Tap for full</string>
+    <string name="crop_preview_full_label">Full · Tap for page</string>
+    <string name="crop_split_divider_cd">Drag to resize preview and settings</string>
+    <string name="crop_unified_darken_note">Uses unified darken level (%1$d%%)</string>
 </resources>

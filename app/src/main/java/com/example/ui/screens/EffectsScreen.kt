@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -47,12 +50,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +71,7 @@ import com.example.data.model.BatterySaverTrigger
 import com.example.data.model.DarkenConfig
 import com.example.data.model.DarkenTriggerMode
 import com.example.data.model.OffsetEasingStyle
+import com.example.data.model.PageItem
 import com.example.data.model.WallpaperAppState
 import com.example.power.BatterySaverPolicy
 import com.example.power.PowerSnapshot
@@ -80,7 +88,10 @@ import com.example.ui.components.SettingDashboardCard
 import com.example.ui.components.SettingEditorDialog
 import com.example.ui.darkenTriggerLabelRes
 import com.example.ui.offsetEasingStyleLabelRes
+import com.example.util.ImageProcessingUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -155,6 +166,10 @@ fun EffectsScreen(
             normalFrameRate = appState.animationFrameRate,
             isSystemDarkMode = isSystemDarkMode,
             powerSnapshot = powerSnapshot,
+            pages = appState.pages,
+            loadPagePreview = { pageIndex ->
+                viewModel.loadPagePreviewBitmap(pageIndex, 240, 426, darkened = false)
+            },
             onCommit = { nextDarken, nextBattery ->
                 viewModel.updateDarkenConfig(nextDarken)
                 viewModel.updateBatterySaverConfig(nextBattery)
@@ -640,6 +655,8 @@ private fun DarkenConditionsDashboardCard(
     normalFrameRate: Int,
     isSystemDarkMode: Boolean,
     powerSnapshot: PowerSnapshot,
+    pages: List<PageItem>,
+    loadPagePreview: (Int) -> Bitmap?,
     onCommit: (DarkenConfig, BatterySaverConfig) -> Unit
 ) {
     var scheduleTimeTick by remember { mutableIntStateOf(0) }
@@ -766,6 +783,12 @@ private fun DarkenConditionsDashboardCard(
                 }
             )
         )
+        add(
+            DashboardMetric(
+                label = stringResource(R.string.darken_unified_level_label),
+                value = stringResource(R.string.percent_value, (darken.dimFactor * 100f).roundToInt())
+            )
+        )
         if (darken.enabled && darken.darkenOnBatterySaver && !darken.triggerMode.usesBatterySaver) {
             add(
                 DashboardMetric(
@@ -803,6 +826,41 @@ private fun DarkenConditionsDashboardCard(
             mutableFloatStateOf(batterySaver.thresholdPercent.toFloat())
         }
         var editingTimeField by remember { mutableStateOf<ScheduleTimeField?>(null) }
+        val basePagePreviews = remember { mutableStateMapOf<Int, Bitmap>() }
+        val normalizedDarkPreviews = remember { mutableStateMapOf<Int, Bitmap>() }
+
+        LaunchedEffect(showEditor, pages) {
+            val loaded = withContext(Dispatchers.IO) {
+                pages.mapNotNull { page ->
+                    loadPagePreview(page.pageIndex)?.let { page.pageIndex to it }
+                }
+            }
+            basePagePreviews.clear()
+            loaded.forEach { (idx, bmp) -> basePagePreviews[idx] = bmp }
+        }
+
+        LaunchedEffect(
+            showEditor,
+            basePagePreviews.size,
+            draftDarken.dimFactor,
+            draftDarken.autoDetectDark,
+            pages
+        ) {
+            if (basePagePreviews.isEmpty()) return@LaunchedEffect
+            val computed = withContext(Dispatchers.IO) {
+                pages.mapNotNull { page ->
+                    val base = basePagePreviews[page.pageIndex] ?: return@mapNotNull null
+                    val preview = if (draftDarken.autoDetectDark && page.isAlreadyDark) {
+                        base
+                    } else {
+                        ImageProcessingUtils.createDarkenedCopy(base, draftDarken.dimFactor)
+                    }
+                    page.pageIndex to preview
+                }
+            }
+            normalizedDarkPreviews.clear()
+            computed.forEach { (idx, bmp) -> normalizedDarkPreviews[idx] = bmp }
+        }
 
         SettingEditorDialog(
             title = title,
@@ -1027,6 +1085,80 @@ private fun DarkenConditionsDashboardCard(
                         onCheckedChange = { draftDarken = draftDarken.copy(autoDetectDark = it) },
                         switchTestTag = "toggle_auto_detect_dark"
                     )
+
+                    EditorSliderControl(
+                        label = stringResource(R.string.darken_unified_level_label),
+                        valueText = stringResource(
+                            R.string.percent_value,
+                            (draftDarken.dimFactor * 100f).roundToInt()
+                        ),
+                        value = draftDarken.dimFactor,
+                        onValueChange = { draftDarken = draftDarken.copy(dimFactor = it) },
+                        valueRange = DarkenConfig.MIN_DIM_FACTOR..DarkenConfig.MAX_DIM_FACTOR,
+                        sliderTestTag = "darken_unified_level_slider"
+                    )
+
+                    Text(
+                        text = stringResource(R.string.darken_unified_level_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (pages.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("darken_dialog_all_pages_preview"),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.darken_all_pages_preview_label),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                pages.forEach { page ->
+                                    val bmp = normalizedDarkPreviews[page.pageIndex]
+                                        ?: basePagePreviews[page.pageIndex]
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .aspectRatio(9f / 16f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color.Black),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (bmp != null) {
+                                            Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = stringResource(
+                                                    R.string.studio_page_title,
+                                                    page.pageIndex + 1
+                                                ),
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        }
+                                        Surface(
+                                            shape = RoundedCornerShape(bottomEnd = 6.dp),
+                                            color = Color.Black.copy(alpha = 0.65f),
+                                            modifier = Modifier.align(Alignment.TopStart)
+                                        ) {
+                                            Text(
+                                                text = "${page.pageIndex + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     Text(
                         text = stringResource(R.string.darken_page_settings_hint),

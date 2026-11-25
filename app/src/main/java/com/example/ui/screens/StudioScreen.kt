@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -53,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -71,8 +74,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.data.model.DarkenConfig
 import com.example.data.model.PageTransitionSetting
 import com.example.data.model.ParallaxMotionSettings
 import com.example.data.model.RevealMotionRates
@@ -425,7 +430,8 @@ private fun PageTransitionControls(
 fun StudioScreen(
     viewModel: WallpaperViewModel,
     onChooseMediaForPage: (Int) -> Unit,
-    onEditPage: (Int) -> Unit
+    onEditPage: (Int) -> Unit,
+    showDarkenPreview: Boolean = false
 ) {
     val appState by viewModel.appState.collectAsState()
     val originals by viewModel.originals.collectAsState()
@@ -434,7 +440,9 @@ fun StudioScreen(
     var presetActionId by remember { mutableStateOf<String?>(null) }
     var presetName by remember { mutableStateOf("") }
     var presetToDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var compareNormalInDarkPreview by remember { mutableStateOf(false) }
     val pageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
+    val darkenedPageBitmaps = remember { mutableStateMapOf<Int, Bitmap>() }
 
     // Reload page thumbnails
     LaunchedEffect(appState.pages, appState.activePresetId) {
@@ -451,56 +459,52 @@ fun StudioScreen(
         }
     }
 
+    LaunchedEffect(
+        showDarkenPreview,
+        compareNormalInDarkPreview,
+        appState.pages,
+        appState.activePresetId,
+        appState.darken.dimFactor,
+        appState.darken.autoDetectDark
+    ) {
+        if (!showDarkenPreview) return@LaunchedEffect
+        val loadedDarkened = withContext(Dispatchers.IO) {
+            appState.pages.mapNotNull { page ->
+                viewModel.loadPagePreviewBitmap(
+                    pageIndex = page.pageIndex,
+                    width = 360,
+                    height = 640,
+                    darkened = !compareNormalInDarkPreview
+                )?.let { page.pageIndex to it }
+            }
+        }
+        darkenedPageBitmaps.clear()
+        loadedDarkened.forEach { (pageIndex, bitmap) ->
+            darkenedPageBitmaps[pageIndex] = bitmap
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Card(shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        stringResource(R.string.studio_presets_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    val defaultNewPresetName = stringResource(
-                        R.string.studio_preset_default_name,
-                        appState.presets.size + 1
-                    )
-                    FilledTonalButton(
-                        onClick = {
-                            presetActionId = null
-                            presetName = defaultNewPresetName.take(40)
-                            presetAction = PresetAction.CREATE
-                        },
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("create_preset_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            stringResource(R.string.studio_new_preset),
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-                Row(
-                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     appState.presets.forEach { preset ->
                         var menuExpanded by remember(preset.id) { mutableStateOf(false) }
@@ -513,7 +517,13 @@ fun StudioScreen(
                                         viewModel.selectPreset(preset.id)
                                     }
                                 },
-                                label = { Text(preset.name) },
+                                label = {
+                                    Text(
+                                        text = preset.name,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
                                 modifier = Modifier.testTag("preset_${preset.id}")
                             )
                             Box {
@@ -582,6 +592,241 @@ fun StudioScreen(
                             }
                         }
                     }
+                }
+
+                val defaultNewPresetName = stringResource(
+                    R.string.studio_preset_default_name,
+                    appState.presets.size + 1
+                )
+                FilledTonalButton(
+                    onClick = {
+                        presetActionId = null
+                        presetName = defaultNewPresetName.take(40)
+                        presetAction = PresetAction.CREATE
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("create_preset_button")
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        stringResource(R.string.studio_new_preset),
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = showDarkenPreview) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("studio_all_pages_darken_card"),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.studio_darken_preview_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Surface(
+                            onClick = {
+                                compareNormalInDarkPreview = !compareNormalInDarkPreview
+                            },
+                            shape = CircleShape,
+                            color = if (compareNormalInDarkPreview) {
+                                MaterialTheme.colorScheme.secondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("studio_darken_compare_toggle")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (compareNormalInDarkPreview) {
+                                        Icons.Filled.LightMode
+                                    } else {
+                                        Icons.Filled.DarkMode
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = if (compareNormalInDarkPreview) {
+                                        stringResource(R.string.studio_darken_preview_normal)
+                                    } else {
+                                        stringResource(R.string.studio_darken_preview_dark)
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = stringResource(
+                            R.string.studio_darken_level_label,
+                            (appState.darken.dimFactor * 100f).roundToInt()
+                        ),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Slider(
+                        value = appState.darken.dimFactor,
+                        onValueChange = viewModel::setDarkenDimFactor,
+                        valueRange = DarkenConfig.MIN_DIM_FACTOR..DarkenConfig.MAX_DIM_FACTOR,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("studio_unified_darken_slider")
+                    )
+
+                    val columns = when {
+                        appState.pages.size <= 3 -> appState.pages.size.coerceAtLeast(1)
+                        appState.pages.size == 4 -> 2
+                        else -> 4
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        appState.pages.chunked(columns).forEach { rowPages ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowPages.forEach { page ->
+                                    val previewBmp = darkenedPageBitmaps[page.pageIndex]
+                                        ?: pageBitmaps[page.pageIndex]
+                                    val hasEditableOriginal = originals.any { it.id == page.originalId }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .aspectRatio(9f / 16f)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color.Black)
+                                            .clickable {
+                                                if (hasEditableOriginal) {
+                                                    onEditPage(page.pageIndex)
+                                                } else {
+                                                    onChooseMediaForPage(page.pageIndex)
+                                                }
+                                            }
+                                            .testTag("darken_grid_thumb_${page.pageIndex}"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (previewBmp != null) {
+                                            Image(
+                                                bitmap = previewBmp.asImageBitmap(),
+                                                contentDescription = stringResource(
+                                                    R.string.studio_page_title,
+                                                    page.pageIndex + 1
+                                                ),
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Text(
+                                                text = "${page.pageIndex + 1}",
+                                                color = Color.White.copy(alpha = 0.7f),
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(bottomEnd = 8.dp),
+                                            color = Color.Black.copy(alpha = 0.65f),
+                                            modifier = Modifier.align(Alignment.TopStart)
+                                        ) {
+                                            Text(
+                                                text = "${page.pageIndex + 1}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color.White,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            onClick = {
+                                                viewModel.togglePageAlreadyDark(
+                                                    page.pageIndex,
+                                                    !page.isAlreadyDark
+                                                )
+                                            },
+                                            shape = CircleShape,
+                                            color = if (page.isAlreadyDark) {
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            } else {
+                                                Color.Black.copy(alpha = 0.6f)
+                                            },
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(2.dp)
+                                                .minimumInteractiveComponentSize()
+                                                .testTag("darken_grid_page_${page.pageIndex}")
+                                        ) {
+                                            Icon(
+                                                imageVector = if (page.isAlreadyDark) {
+                                                    Icons.Filled.DarkMode
+                                                } else {
+                                                    Icons.Filled.LightMode
+                                                },
+                                                contentDescription = stringResource(R.string.studio_already_dark_cd),
+                                                tint = if (page.isAlreadyDark) {
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                } else {
+                                                    Color.White
+                                                },
+                                                modifier = Modifier
+                                                    .padding(6.dp)
+                                                    .size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                repeat(columns - rowPages.size) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = stringResource(R.string.studio_darken_tap_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

@@ -39,18 +39,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
@@ -75,15 +80,26 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun SettingsScreen(viewModel: WallpaperViewModel) {
+fun SettingsScreen(
+    viewModel: WallpaperViewModel,
+    debugScrollTrigger: Int = 0
+) {
     val diagnostics by WallpaperDiagnosticsRecorder.state.collectAsState()
     val appState by viewModel.appState.collectAsState()
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
+    val scrollState = rememberScrollState()
+    var debugSectionOffsetY by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(debugScrollTrigger) {
+        if (debugScrollTrigger > 0) {
+            scrollState.animateScrollTo(debugSectionOffsetY)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
@@ -102,7 +118,14 @@ fun SettingsScreen(viewModel: WallpaperViewModel) {
             BackupScreen(viewModel = viewModel)
         }
 
-        SettingsSection(title = stringResource(R.string.settings_section_debug)) {
+        SettingsSection(
+            title = stringResource(R.string.settings_section_debug),
+            modifier = Modifier
+                .onGloballyPositioned { coordinates ->
+                    debugSectionOffsetY = coordinates.positionInParent().y.roundToInt()
+                }
+                .testTag("settings_debug_section")
+        ) {
             DebugOverlaysDashboardCard(
                 showOffsetOverlay = appState.showOffsetDebugOverlay,
                 showFrameIndicator = appState.showFrameDebugIndicator,
@@ -175,10 +198,11 @@ private fun LanguageDashboardCard(
 @Composable
 private fun SettingsSection(
     title: String,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(

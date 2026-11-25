@@ -40,9 +40,14 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     val appState: StateFlow<WallpaperAppState> = repository.appState
     val originals: StateFlow<List<OriginalMedia>> = repository.originals
 
-    fun loadPagePreviewBitmap(pageIndex: Int, width: Int, height: Int): Bitmap? =
+    fun loadPagePreviewBitmap(
+        pageIndex: Int,
+        width: Int,
+        height: Int,
+        darkened: Boolean = false
+    ): Bitmap? =
         try {
-            repository.getCroppedBitmap(pageIndex, width, height)
+            repository.getCroppedBitmap(pageIndex, width, height, darkened = darkened)
                 ?.takeUnless { it.isRecycled }
                 ?.copy(Bitmap.Config.ARGB_8888, false)
         } catch (e: OutOfMemoryError) {
@@ -377,6 +382,14 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
     fun updateDarkenConfig(darkenConfig: DarkenConfig) {
         val normalized = darkenConfig.normalized()
         repository.updateState { it.copy(darken = normalized) }
+    }
+
+    fun setDarkenDimFactor(dimFactor: Float) {
+        repository.updateState { state ->
+            state.copy(
+                darken = state.darken.copy(dimFactor = dimFactor).normalized()
+            )
+        }
     }
 
     fun togglePageAlreadyDark(pageIndex: Int, isDark: Boolean) {

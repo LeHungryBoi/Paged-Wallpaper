@@ -149,7 +149,7 @@
     <string name="darken_sameday_hint">當日排程在起訖時間之間生效，點擊時間可自訂。</string>
     <string name="darken_smart_detect_title">智慧深色桌布偵測</string>
     <string name="darken_smart_detect_desc">偵測為深色或標記為「已是深色」的桌布不會重複變暗。</string>
-    <string name="darken_page_settings_hint">請在「編輯頁面設定」中調整每張桌布的變暗強度並預覽效果。</string>
+    <string name="darken_page_settings_hint">在上方調整統一變暗級別，或在「編輯頁面設定」中標記已是深色的頁面。</string>
     <string name="darken_pick_start_title">選擇開始時間</string>
     <string name="darken_pick_end_title">選擇結束時間</string>
     <string name="darken_switch_clock_cd">切換至時鐘撥盤</string>
@@ -365,4 +365,21 @@
     <string name="app_icon_err_unknown">未知錯誤</string>
     <string name="app_icon_updated">桌面圖示已更新。</string>
     <string name="app_icon_pinned">請依桌面提示新增捷徑圖示。</string>
+    <!-- 頂部選單與變暗預覽 -->
+    <string name="top_menu_darken_cd">切換全頁面變暗預覽</string>
+    <string name="top_menu_darken_short">變暗</string>
+    <string name="top_menu_debug_cd">跳轉至診斷與除錯</string>
+    <string name="top_menu_debug_short">除錯</string>
+    <string name="studio_darken_preview_title">全頁面變暗預覽</string>
+    <string name="studio_darken_level_label">統一變暗等級：%1$d%%</string>
+    <string name="studio_darken_preview_normal">原圖</string>
+    <string name="studio_darken_preview_dark">變暗</string>
+    <string name="studio_darken_tap_hint">點擊頁面角標可切換「已是深色」</string>
+    <string name="darken_unified_level_label">統一歸一化變暗等級</string>
+    <string name="darken_unified_level_desc">將不同亮度的桌布歸一化至一致的暗度與動態範圍。</string>
+    <string name="darken_all_pages_preview_label">全頁面同屏預覽</string>
+    <string name="crop_preview_single_label">單頁預覽 · 點擊切換原圖</string>
+    <string name="crop_preview_full_label">完整原圖 · 點擊切回單頁</string>
+    <string name="crop_split_divider_cd">拖動以調整預覽區與設定區大小</string>
+    <string name="crop_unified_darken_note">使用統一變暗等級（%1$d%%）</string>
 </resources>

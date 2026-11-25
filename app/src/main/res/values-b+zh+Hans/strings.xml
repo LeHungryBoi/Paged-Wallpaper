@@ -149,7 +149,7 @@
     <string name="darken_sameday_hint">当日定时在起止时间之间生效，点击时间可修改。</string>
     <string name="darken_smart_detect_title">智能暗色壁纸识别</string>
     <string name="darken_smart_detect_desc">检测为暗色或标记为“已是深色”的壁纸不会重复变暗。</string>
-    <string name="darken_page_settings_hint">请在“编辑页面设置”中调整每张壁纸的变暗强度并预览效果。</string>
+    <string name="darken_page_settings_hint">在上方调整统一变暗级别，或在“编辑页面设置”中标记已是深色的页面。</string>
     <string name="darken_pick_start_title">选择开始时间</string>
     <string name="darken_pick_end_title">选择结束时间</string>
     <string name="darken_switch_clock_cd">切换至表盘选择</string>
@@ -365,4 +365,21 @@
     <string name="app_icon_err_unknown">未知错误</string>
     <string name="app_icon_updated">桌面图标已更新。</string>
     <string name="app_icon_pinned">请按桌面提示添加快捷图标。</string>
+    <!-- 顶部菜单与变暗预览 -->
+    <string name="top_menu_darken_cd">切换全页面变暗预览</string>
+    <string name="top_menu_darken_short">变暗</string>
+    <string name="top_menu_debug_cd">跳转至诊断与调试</string>
+    <string name="top_menu_debug_short">调试</string>
+    <string name="studio_darken_preview_title">全页面变暗预览</string>
+    <string name="studio_darken_level_label">统一变暗等级：%1$d%%</string>
+    <string name="studio_darken_preview_normal">原图</string>
+    <string name="studio_darken_preview_dark">变暗</string>
+    <string name="studio_darken_tap_hint">点击页面角标可切换“已是深色”</string>
+    <string name="darken_unified_level_label">统一归一化变暗等级</string>
+    <string name="darken_unified_level_desc">将不同亮度的壁纸归一化到一致的暗度与亮度范围。</string>
+    <string name="darken_all_pages_preview_label">全页面同屏预览</string>
+    <string name="crop_preview_single_label">单页预览 · 点击切换原图</string>
+    <string name="crop_preview_full_label">完整原图 · 点击切回单页</string>
+    <string name="crop_split_divider_cd">拖动以调整预览区与设置区大小</string>
+    <string name="crop_unified_darken_note">使用统一变暗等级（%1$d%%）</string>
 </resources>

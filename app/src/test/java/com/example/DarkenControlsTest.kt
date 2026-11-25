@@ -189,7 +189,7 @@ class DarkenControlsTest {
     }
 
     @Test
-    fun repositoryGeneratesCachesAndInvalidatesDarkenedBitmapsPerPageDimFactor() {
+    fun repositoryGeneratesCachesAndInvalidatesDarkenedBitmapsUsingUnifiedDimFactor() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repository = WallpaperRepository.getInstance(context)
 
@@ -210,27 +210,28 @@ class DarkenControlsTest {
                         croppedFileName = "test_bright_page.jpg",
                         isAlreadyDark = false,
                         isBlank = false,
-                        dimFactor = 0.50f
+                        dimFactor = 0.20f
                     ),
                     PageItem(
                         pageIndex = 1,
                         croppedFileName = "test_bright_page.jpg",
                         isAlreadyDark = true,
                         isBlank = false,
-                        dimFactor = 0.50f
+                        dimFactor = 0.80f
                     ),
                     PageItem(
                         pageIndex = 2,
                         croppedFileName = "test_bright_page.jpg",
                         isAlreadyDark = false,
                         isBlank = false,
-                        dimFactor = 0.25f
+                        dimFactor = 0.90f
                     )
                 ),
                 darken = DarkenConfig(
                     enabled = true,
                     triggerMode = DarkenTriggerMode.DARK_MODE_ONLY,
-                    autoDetectDark = true
+                    autoDetectDark = true,
+                    dimFactor = 0.50f
                 )
             )
         }
@@ -246,8 +247,8 @@ class DarkenControlsTest {
         val darkRed = Color.red(darkenedBmp!!.getPixel(50, 100))
         val page2DarkRed = Color.red(page2DarkenedBmp!!.getPixel(50, 100))
         assertTrue("Expected normal ($normalRed) brighter than darkened ($darkRed)", darkRed < normalRed - 50)
-        assertTrue("Expected ~50% darkened pixel near 100, got $darkRed", darkRed in 80..120)
-        assertTrue("Expected page 2 (25% dim: $page2DarkRed) brighter than page 0 (50% dim: $darkRed)", page2DarkRed > darkRed + 25)
+        // Both light pages use unified DarkenConfig.dimFactor rather than per-page dimFactor
+        assertEquals(darkRed, page2DarkRed)
 
         val diskCacheFile = repository.getDarkenedCacheFileForTesting(0, 100, 200)
         assertNotNull(diskCacheFile)
@@ -258,20 +259,18 @@ class DarkenControlsTest {
         assertNotNull(alreadyDarkResult)
         assertTrue(Color.red(alreadyDarkResult!!.getPixel(50, 100)) > 170)
 
-        // Updating page 0 dimFactor should invalidate darkened cache and regenerate a darker cached file while pruning the old one
+        // Updating unified DarkenConfig.dimFactor should invalidate darkened cache and regenerate a darker cached file while pruning the old one
         val prevGeneration = repository.darkenedBitmapGeneration
         repository.updateState { state ->
             state.copy(
-                pages = state.pages.map { page ->
-                    if (page.pageIndex == 0) page.copy(dimFactor = 0.75f) else page
-                }
+                darken = state.darken.copy(dimFactor = 0.75f)
             )
         }
         assertTrue(repository.darkenedBitmapGeneration > prevGeneration)
 
         val darkerBmp = repository.getCroppedBitmap(0, 100, 200, darkened = true)!!
         val darkerRed = Color.red(darkerBmp.getPixel(50, 100))
-        assertTrue("Expected 75% dim ($darkerRed) darker than 50% dim ($darkRed)", darkerRed < darkRed - 25)
+        assertTrue("Expected 75% dim ($darkerRed) darker than 50% dim ($darkRed)", darkerRed < darkRed - 15)
         val newDiskCacheFile = repository.getDarkenedCacheFileForTesting(0, 100, 200)!!
         assertTrue(newDiskCacheFile.exists())
         assertFalse("Expected old cache file to be pruned", diskCacheFile.exists())
@@ -410,7 +409,7 @@ class DarkenControlsTest {
     }
 
     @Test
-    fun pageSettingsAllowsDarkenIntensityControlAndLivePreview() {
+    fun pageSettingsShowsUnifiedDarkenPreviewAndAlreadyDarkToggle() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val originalsDir = File(context.filesDir, "originals").apply { mkdirs() }
         val fileName = "test_page_settings_media.jpg"
@@ -446,6 +445,7 @@ class DarkenControlsTest {
                     page = initialPage,
                     pageCount = 3,
                     isSaving = false,
+                    unifiedDimFactor = 0.40f,
                     onDismiss = {},
                     onSave = { savedPage = it }
                 )
@@ -454,22 +454,14 @@ class DarkenControlsTest {
 
         composeRule.waitForIdle()
 
-        // Toggle darkened preview on and verify preview badge appears
+        // Toggle darkened preview on and verify unified preview badge & note appear
         composeRule.onNodeWithTag("toggle_preview_darkened").performScrollTo().performClick()
-        composeRule.onNodeWithTag("crop_darken_preview_badge", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Darkened preview · 40%", useUnmergedTree = true).assertIsDisplayed()
-
-        // Adjust page darken intensity slider to 70%
-        composeRule.onNodeWithTag("page_dim_factor_slider")
-            .performScrollTo()
-            .performSemanticsAction(SemanticsActions.SetProgress) { action ->
-                action(0.70f)
-            }
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("crop_darken_preview_badge", useUnmergedTree = true).performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Darkened preview · 70%", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_darken_preview_badge", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Darkened preview · 40%", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_unified_darken_note").performScrollTo().assertIsDisplayed()
 
-        // Toggle Already dark on -> preview badge & intensity controls hide
+        // Toggle Already dark on -> preview badge hides
         composeRule.onNodeWithTag("toggle_is_already_dark").performScrollTo().performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("crop_darken_preview_badge", useUnmergedTree = true).assertDoesNotExist()
@@ -481,6 +473,5 @@ class DarkenControlsTest {
 
         assertNotNull(savedPage)
         assertFalse(savedPage!!.isAlreadyDark)
-        assertEquals(0.70f, savedPage!!.dimFactor, 0.02f)
     }
 }

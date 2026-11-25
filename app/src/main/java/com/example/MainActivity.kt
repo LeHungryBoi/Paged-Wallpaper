@@ -12,8 +12,11 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -21,6 +24,9 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -29,7 +35,6 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Wallpaper
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,13 +43,17 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -121,10 +130,13 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
     var editingPageIndex by remember { mutableStateOf<Int?>(null) }
     var isSavingMedia by remember { mutableStateOf(false) }
     var isAssigningMedia by remember { mutableStateOf(false) }
+    var studioDarkenPreview by remember { mutableStateOf(false) }
+    var settingsDebugScrollTrigger by remember { mutableIntStateOf(0) }
 
     val isWallpaperActive by viewModel.isWallpaperActive.collectAsState()
     val appState by viewModel.appState.collectAsState()
     val originals by viewModel.originals.collectAsState()
+    val diagnostics by WallpaperDiagnosticsRecorder.state.collectAsState()
     val pageToEdit = editingPageIndex?.let { index ->
         appState.pages.find { it.pageIndex == index }?.let { page ->
             originals.find { it.id == page.originalId }?.let { media -> index to (page to media) }
@@ -192,15 +204,128 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
-                CenterAlignedTopAppBar(
+                TopAppBar(
                     title = {
-                        Text(
-                            text = stringResource(R.string.app_name),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.app_name),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            when (selectedTab) {
+                                AppTab.STUDIO -> {
+                                    val active = studioDarkenPreview
+                                    Surface(
+                                        onClick = { studioDarkenPreview = !studioDarkenPreview },
+                                        shape = CircleShape,
+                                        color = if (active) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                                        },
+                                        border = if (active) {
+                                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                                        } else {
+                                            null
+                                        },
+                                        modifier = Modifier
+                                            .minimumInteractiveComponentSize()
+                                            .testTag("top_menu_studio_darken_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.LightMode,
+                                                contentDescription = stringResource(R.string.top_menu_darken_cd),
+                                                tint = if (active) {
+                                                    MaterialTheme.colorScheme.primary
+                                                } else {
+                                                    Color(0xFFD97706)
+                                                },
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Filled.DarkMode,
+                                                contentDescription = null,
+                                                tint = if (active) {
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                },
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = stringResource(R.string.top_menu_darken_short),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (active) {
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                },
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                                AppTab.SETTINGS -> {
+                                    val anyDebugActive = appState.showOffsetDebugOverlay ||
+                                        appState.showFrameDebugIndicator ||
+                                        appState.showSignalDebugOverlay ||
+                                        diagnostics.isRecording
+                                    Surface(
+                                        onClick = { settingsDebugScrollTrigger++ },
+                                        shape = CircleShape,
+                                        color = if (anyDebugActive) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
+                                        },
+                                        modifier = Modifier
+                                            .minimumInteractiveComponentSize()
+                                            .testTag("top_menu_settings_debug_button")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.BugReport,
+                                                contentDescription = stringResource(R.string.top_menu_debug_cd),
+                                                tint = if (anyDebugActive) {
+                                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.primary
+                                                },
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Text(
+                                                text = stringResource(R.string.top_menu_debug_short),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (anyDebugActive) {
+                                                    MaterialTheme.colorScheme.onTertiaryContainer
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                                },
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                                AppTab.BEHAVIOR, AppTab.MEDIA -> Unit
+                            }
+                        }
                     },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     ),
                     actions = {
@@ -295,11 +420,15 @@ private fun MainAppScaffoldContent(viewModel: WallpaperViewModel) {
                             },
                             onEditPage = { pageIndex ->
                                 editingPageIndex = pageIndex
-                            }
+                            },
+                            showDarkenPreview = studioDarkenPreview
                         )
                         AppTab.BEHAVIOR -> EffectsScreen(viewModel = viewModel)
                         AppTab.MEDIA -> MediaLibraryScreen(viewModel = viewModel)
-                        AppTab.SETTINGS -> SettingsScreen(viewModel = viewModel)
+                        AppTab.SETTINGS -> SettingsScreen(
+                            viewModel = viewModel,
+                            debugScrollTrigger = settingsDebugScrollTrigger
+                        )
                     }
                 }
             }
