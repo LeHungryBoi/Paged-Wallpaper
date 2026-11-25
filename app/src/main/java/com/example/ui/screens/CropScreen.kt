@@ -89,10 +89,10 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -637,14 +637,13 @@ fun MediaEditorScreen(
                             )
                         }
                     } else {
-                        // Full image preview retains sharp corners (RectangleShape) and supports direct 1:1 frame drag & pinch zoom
+                        // Full image preview keeps sharp corners, unclipped 2dp reach/static strokes, and 1:1 frame drag & pinch zoom
+                        val previewOutlineColor = MaterialTheme.colorScheme.outlineVariant
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .clip(RectangleShape)
                                 .background(Color.Black)
-                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
                                 .pointerInput(media.id, page.pageIndex) {
                                     detectTransformGestures { _, pan, zoomChange, _ ->
                                         val source = currentDisplayBitmap ?: return@detectTransformGestures
@@ -675,7 +674,25 @@ fun MediaEditorScreen(
                                 .testTag("crop_parallax_bounds_preview")
                         ) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
-                                val source = displayBitmap ?: return@Canvas
+                                val nativeCanvas = drawContext.canvas.nativeCanvas
+                                val borderWidthPx = 1.dp.toPx()
+                                val halfBorderPx = borderWidthPx / 2f
+                                val borderPaint = Paint().apply {
+                                    color = previewOutlineColor.toArgb()
+                                    style = Paint.Style.STROKE
+                                    strokeWidth = borderWidthPx
+                                }
+                                val source = displayBitmap
+                                if (source == null) {
+                                    nativeCanvas.drawRect(
+                                        halfBorderPx,
+                                        halfBorderPx,
+                                        size.width - halfBorderPx,
+                                        size.height - halfBorderPx,
+                                        borderPaint
+                                    )
+                                    return@Canvas
+                                }
                                 val imageScale = minOf(size.width / source.width, size.height / source.height)
                                 val imageWidth = source.width * imageScale
                                 val imageHeight = source.height * imageScale
@@ -740,13 +757,19 @@ fun MediaEditorScreen(
                                 val reachLeft = (frameLeft - leftSourceTravel).coerceAtLeast(0f)
                                 val reachRight = (frameRight + rightSourceTravel)
                                     .coerceAtMost(source.width.toFloat())
-                                val nativeCanvas = drawContext.canvas.nativeCanvas
                                 val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
                                 nativeCanvas.drawBitmap(
                                     source,
                                     null,
                                     RectF(imageLeft, imageTop, imageLeft + imageWidth, imageTop + imageHeight),
                                     imagePaint
+                                )
+                                nativeCanvas.drawRect(
+                                    halfBorderPx,
+                                    halfBorderPx,
+                                    size.width - halfBorderPx,
+                                    size.height - halfBorderPx,
+                                    borderPaint
                                 )
 
                                 val mapX = { x: Float -> imageLeft + x * imageScale }
