@@ -25,10 +25,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -96,6 +98,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -104,7 +107,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
@@ -448,7 +455,9 @@ fun MediaEditorScreen(
         ) {
             val availableHeight = this.maxHeight
             val density = LocalDensity.current
-            val dividerHeight = 48.dp
+            val dividerHeight = 36.dp
+            val previewTopPadding = 8.dp
+            val previewBottomPadding = 4.dp
             val minPreviewHeight = 120.dp
             val minSettingsHeight = 140.dp
             val maxPreviewHeight = (availableHeight - dividerHeight - minSettingsHeight)
@@ -461,7 +470,8 @@ fun MediaEditorScreen(
             val maxFraction = (with(density) { maxPreviewHeight.toPx() } / availableHeightPx)
                 .coerceIn(minFraction, 0.80f)
 
-            val viewportHeight = (targetPreviewHeight - 16.dp).coerceAtLeast(96.dp)
+            val viewportHeight = (targetPreviewHeight - previewTopPadding - previewBottomPadding)
+                .coerceAtLeast(96.dp)
             val viewportWidth = viewportHeight * (9f / 19.5f)
             val viewportWidthPx = with(density) { viewportWidth.toPx() }
             val viewportHeightPx = with(density) { viewportHeight.toPx() }
@@ -505,8 +515,16 @@ fun MediaEditorScreen(
             val currentViewportWidthPx by rememberUpdatedState(viewportWidthPx)
             val currentViewportHeightPx by rememberUpdatedState(viewportHeightPx)
 
+            val touchHandleWidth = 76.dp
+            val touchHandleHeight = 48.dp
+            val dividerTouchOffsetYPx = with(density) {
+                (targetPreviewHeight + dividerHeight / 2f - touchHandleHeight / 2f).roundToPx()
+            }
+            val dividerCd = stringResource(R.string.crop_split_divider_cd)
+
+            Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Fixed top unified preview window; mode toggle is isolated to the bottom-right pill badge
+                // Fixed top unified preview window
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -516,6 +534,12 @@ fun MediaEditorScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = previewTopPadding, bottom = previewBottomPadding),
+                            contentAlignment = Alignment.Center
+                        ) {
                         Box(
                             modifier = Modifier
                                 .size(width = viewportWidth, height = viewportHeight)
@@ -636,13 +660,19 @@ fun MediaEditorScreen(
                                     .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(18.dp))
                             )
                         }
+                        }
                     } else {
                         // Full image preview keeps sharp corners, unclipped 2dp reach/static strokes, and 1:1 frame drag & pinch zoom
                         val previewOutlineColor = MaterialTheme.colorScheme.outlineVariant
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = previewTopPadding,
+                                    bottom = previewBottomPadding
+                                )
                                 .background(Color.Black)
                                 .pointerInput(media.id, page.pageIndex) {
                                     detectTransformGestures { _, pan, zoomChange, _ ->
@@ -799,60 +829,6 @@ fun MediaEditorScreen(
                                 nativeCanvas.drawRect(reachBounds, reachStroke)
                                 nativeCanvas.drawRect(staticBounds, staticStroke)
                             }
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.BottomStart)
-                                    .padding(8.dp)
-                                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    stringResource(R.string.crop_legend_static),
-                                    color = Color(0xFF50DCFF),
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                                Text(
-                                    stringResource(R.string.crop_legend_reach),
-                                    color = Color(0xFFFFB400),
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                        }
-                    }
-
-                    // Mode toggle pill badge (exclusive mode toggle target with 48dp minimum touch area)
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(4.dp)
-                            .minimumInteractiveComponentSize()
-                            .clip(CircleShape)
-                            .clickable(
-                                role = Role.Button,
-                                onClick = togglePreviewMode
-                            )
-                            .testTag("crop_preview_mode_badge"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.Black.copy(alpha = 0.68f),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
-                        ) {
-                            Text(
-                                text = stringResource(
-                                    if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
-                                        R.string.crop_preview_single_label
-                                    } else {
-                                        R.string.crop_preview_full_label
-                                    }
-                                ),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
                         }
                     }
 
@@ -878,41 +854,109 @@ fun MediaEditorScreen(
                     }
                 }
 
-                // Android split-screen style draggable separator (48.dp touch target)
-                val dividerCd = stringResource(R.string.crop_split_divider_cd)
-                Box(
+                // Compact split divider bar hosting bounds legend (left, Full Image only), shortened divider + drag pill (center), and mode pill (right)
+                SplitDividerRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(dividerHeight)
-                        .semantics { contentDescription = dividerCd }
-                        .pointerInput(availableHeightPx, minFraction, maxFraction) {
-                            detectVerticalDragGestures(
-                                onVerticalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    val next = (splitFraction + dragAmount / availableHeightPx)
-                                        .coerceIn(minFraction, maxFraction)
-                                    splitFraction = next
-                                }
-                            )
-                        }
                         .testTag("crop_split_separator"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        tonalElevation = 2.dp
-                    ) {
+                    showLegend = previewMode == EditorPreviewMode.FULL_IMAGE,
+                    legendContent = {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.68f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
+                            modifier = Modifier.testTag("crop_parallax_legend_pill")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.crop_legend_static),
+                                    color = Color(0xFF50DCFF),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        letterSpacing = 0.2.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = stringResource(R.string.crop_legend_reach),
+                                    color = Color(0xFFFFB400),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        letterSpacing = 0.2.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                        }
+                    },
+                    dividerLineContent = {
                         Box(
                             modifier = Modifier
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                                .size(width = 40.dp, height = 4.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
                         )
+                    },
+                    centerHandleContent = {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            tonalElevation = 2.dp
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                                    .size(width = 36.dp, height = 4.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                            )
+                        }
+                    },
+                    modeBadgeContent = {
+                        Box(
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 36.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClick = togglePreviewMode
+                                )
+                                .testTag("crop_preview_mode_badge"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.68f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
+                                            R.string.crop_preview_single_label
+                                        } else {
+                                            R.string.crop_preview_full_label
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 10.sp,
+                                        letterSpacing = 0.2.sp
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
                     }
-                }
+                )
 
                 // Independently scrollable settings area
                 Column(
@@ -920,7 +964,7 @@ fun MediaEditorScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)
                         .testTag("crop_settings_scroll_area"),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -1357,6 +1401,126 @@ fun MediaEditorScreen(
                 Spacer(Modifier.height(20.dp))
                 }
             }
+
+            // Exclusive 48dp-tall resize touch zone centered over the drag pill to prevent misclicks
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { IntOffset(0, dividerTouchOffsetYPx) }
+                    .size(width = touchHandleWidth, height = touchHandleHeight)
+                    .semantics { contentDescription = dividerCd }
+                    .pointerInput(availableHeightPx, minFraction, maxFraction) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                val next = (splitFraction + dragAmount / availableHeightPx)
+                                    .coerceIn(minFraction, maxFraction)
+                                splitFraction = next
+                            }
+                        )
+                    }
+                    .testTag("crop_split_drag_handle")
+            )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitDividerRow(
+    modifier: Modifier = Modifier,
+    showLegend: Boolean,
+    legendContent: @Composable () -> Unit,
+    dividerLineContent: @Composable () -> Unit,
+    centerHandleContent: @Composable () -> Unit,
+    modeBadgeContent: @Composable () -> Unit
+) {
+    val density = LocalDensity.current
+    val edgePaddingPx = with(density) { 16.dp.roundToPx() }
+    val pillToHandleGapPx = with(density) { 8.dp.roundToPx() }
+    val pillToLineGapPx = with(density) { 10.dp.roundToPx() }
+    val maxHalfLineWidthPx = with(density) { 84.dp.roundToPx() }
+
+    Layout(
+        modifier = modifier,
+        content = {
+            dividerLineContent()
+            centerHandleContent()
+            modeBadgeContent()
+            if (showLegend) {
+                legendContent()
+            }
+        }
+    ) { measurables, constraints ->
+        val totalWidth = constraints.maxWidth
+        val totalHeight = constraints.maxHeight
+        val centerX = totalWidth / 2
+
+        val lineMeasurable = measurables[0]
+        val centerHandleMeasurable = measurables[1]
+        val modeBadgeMeasurable = measurables[2]
+        val legendMeasurable = measurables.getOrNull(3)
+
+        val relaxedConstraints = Constraints(
+            minWidth = 0,
+            maxWidth = totalWidth,
+            minHeight = 0,
+            maxHeight = totalHeight
+        )
+        val centerHandlePlaceable = centerHandleMeasurable.measure(relaxedConstraints)
+
+        val maxSideWidth = ((totalWidth - centerHandlePlaceable.width) / 2 -
+            edgePaddingPx - pillToHandleGapPx).coerceAtLeast(0)
+        val sideConstraints = Constraints(
+            minWidth = 0,
+            maxWidth = maxSideWidth,
+            minHeight = 0,
+            maxHeight = totalHeight
+        )
+        val modeBadgePlaceable = modeBadgeMeasurable.measure(sideConstraints)
+        val legendPlaceable = legendMeasurable?.measure(sideConstraints)
+
+        val leftBoundary = (legendPlaceable?.let { edgePaddingPx + it.width } ?: edgePaddingPx) +
+            pillToLineGapPx
+        val rightBoundary = (totalWidth - edgePaddingPx - modeBadgePlaceable.width) -
+            pillToLineGapPx
+        val halfAvailableLeft = (centerX - leftBoundary).coerceAtLeast(0)
+        val halfAvailableRight = (rightBoundary - centerX).coerceAtLeast(0)
+        val halfLineWidth = minOf(halfAvailableLeft, halfAvailableRight, maxHalfLineWidthPx)
+            .coerceAtLeast(0)
+        val lineWidth = if (halfLineWidth * 2 > centerHandlePlaceable.width) {
+            halfLineWidth * 2
+        } else {
+            0
+        }
+        val linePlaceable = lineMeasurable.measure(
+            Constraints(
+                minWidth = lineWidth,
+                maxWidth = lineWidth,
+                minHeight = 0,
+                maxHeight = totalHeight
+            )
+        )
+
+        layout(totalWidth, totalHeight) {
+            if (lineWidth > 0) {
+                linePlaceable.placeRelative(
+                    x = centerX - linePlaceable.width / 2,
+                    y = (totalHeight - linePlaceable.height) / 2
+                )
+            }
+            centerHandlePlaceable.placeRelative(
+                x = centerX - centerHandlePlaceable.width / 2,
+                y = (totalHeight - centerHandlePlaceable.height) / 2
+            )
+            legendPlaceable?.placeRelative(
+                x = edgePaddingPx,
+                y = (totalHeight - legendPlaceable.height) / 2
+            )
+            modeBadgePlaceable.placeRelative(
+                x = totalWidth - edgePaddingPx - modeBadgePlaceable.width,
+                y = (totalHeight - modeBadgePlaceable.height) / 2
+            )
         }
     }
 }

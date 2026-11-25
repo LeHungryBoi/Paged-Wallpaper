@@ -287,16 +287,18 @@ class FeedbackReworkTest {
         composeRule.onNodeWithTag("crop_unified_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertDoesNotExist()
+        composeRule.onNodeWithTag("crop_parallax_legend_pill").assertDoesNotExist()
 
         composeRule.onNodeWithTag("crop_single_page_preview").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("crop_single_page_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertDoesNotExist()
 
-        // Tapping the mode toggle pill badge switches to full-image preview
+        // Tapping the mode toggle pill badge switches to full-image preview and reveals legend pill on divider
         composeRule.onNodeWithTag("crop_preview_mode_badge").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
+        composeRule.onNodeWithTag("crop_parallax_legend_pill").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
 
         // Clicking the full-image preview body itself does not toggle back
@@ -305,13 +307,32 @@ class FeedbackReworkTest {
         composeRule.onNodeWithTag("crop_parallax_bounds_preview").assertIsDisplayed()
         composeRule.onNodeWithTag("crop_single_page_preview").assertDoesNotExist()
 
-        // Drag split-screen separator downwards -> temporary in-memory adjustment only, storage stays at default
+        val initialPreviewBounds = composeRule.onNodeWithTag("crop_unified_preview").getBoundsInRoot()
+
+        // Dragging outside the center drag handle on the divider bar must NOT resize the preview
         composeRule.onNodeWithTag("crop_split_separator").performTouchInput {
+            down(Offset(left + 12f, centerY))
+            moveBy(Offset(0f, 120f))
+            up()
+        }
+        composeRule.waitForIdle()
+        assertEquals(
+            initialPreviewBounds.bottom.value,
+            composeRule.onNodeWithTag("crop_unified_preview").getBoundsInRoot().bottom.value,
+            0.5f
+        )
+
+        // Dragging the center resize handle downwards adjusts split temporarily; storage stays at default
+        composeRule.onNodeWithTag("crop_split_drag_handle").performTouchInput {
             down(center)
             moveBy(Offset(0f, 120f))
             up()
         }
         composeRule.waitForIdle()
+        assertTrue(
+            composeRule.onNodeWithTag("crop_unified_preview").getBoundsInRoot().bottom.value >
+                initialPreviewBounds.bottom.value + 10f
+        )
         assertEquals(
             WallpaperRepository.DEFAULT_EDITOR_PREVIEW_SPLIT_FRACTION,
             repository.getEditorPreviewSplitFraction(),
