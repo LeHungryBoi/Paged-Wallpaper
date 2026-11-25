@@ -1,0 +1,8 @@
+{
+  "name": "Remix MultiWall",
+  "description": "Custom Android live wallpaper manager that enables unique images for every home screen page and fixes alignment issues.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

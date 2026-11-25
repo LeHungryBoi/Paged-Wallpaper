@@ -1,0 +1,20 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+# debug.keystore is committed on purpose: CI (.github/workflows/build.yml) signs
+# every build with the same key so new APKs install over old ones.
+my-upload-key.jks
