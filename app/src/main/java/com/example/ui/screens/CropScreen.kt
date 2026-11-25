@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Grain
 import androidx.compose.material.icons.filled.LensBlur
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Vignette
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ZoomIn
@@ -119,6 +120,7 @@ import com.example.ui.blurStyleShortLabelRes
 import com.example.ui.blurTintModeLabelRes
 import com.example.ui.cropFillModeLabelRes
 import com.example.util.ImageProcessingUtils
+import com.example.util.ParallaxBounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -139,47 +141,21 @@ private fun calculatePreviewTravel(
     scale: Float,
     panX: Float,
     cropFillMode: CropFillMode,
-    amount: Float
+    amount: Float,
+    symmetricParallax: Boolean
 ): Pair<Float, Float> {
-    if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0f || targetHeight <= 0f) {
-        return 0f to 0f
-    }
-
-    val sourceRatio = sourceWidth.toFloat() / sourceHeight
-    val targetRatio = targetWidth / targetHeight
-    val baseCropWidth = if (sourceRatio > targetRatio) sourceHeight * targetRatio else sourceWidth.toFloat()
-    val cropWidth = if (cropFillMode == CropFillMode.CROP) {
-        baseCropWidth / scale.coerceIn(1f, 3f)
-    } else {
-        baseCropWidth
-    }
-    val left = if (cropFillMode == CropFillMode.CROP) {
-        val centerX = sourceWidth / 2f -
-            panX.coerceIn(-1f, 1f) * ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
-        (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
-    } else {
-        val fitScale = minOf(targetWidth / sourceWidth, targetHeight / sourceHeight) *
-            scale.coerceIn(1f, 3f)
-        val drawWidth = sourceWidth * fitScale
-        val centerX = targetWidth / 2f +
-            panX.coerceIn(-1f, 1f) * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
-        centerX - drawWidth / 2f
-    }
-    val availableLeftTravel: Float
-    val availableRightTravel: Float
-    if (cropFillMode == CropFillMode.CROP) {
-        availableLeftTravel = left * targetWidth / cropWidth
-        availableRightTravel = (sourceWidth - left - cropWidth) * targetWidth / cropWidth
-    } else {
-        availableLeftTravel = (-left).coerceAtLeast(0f)
-        availableRightTravel = (left + sourceWidth * minOf(
-            targetWidth / sourceWidth,
-            targetHeight / sourceHeight
-        ) * scale.coerceIn(1f, 3f) - targetWidth).coerceAtLeast(0f)
-    }
-    val travelAmount = amount.coerceIn(0f, 1f)
-    return (availableLeftTravel * travelAmount).coerceAtLeast(0f) to
-        (availableRightTravel * travelAmount).coerceAtLeast(0f)
+    val travel = ParallaxBounds.calculateTravel(
+        sourceWidth = sourceWidth,
+        sourceHeight = sourceHeight,
+        targetWidth = targetWidth,
+        targetHeight = targetHeight,
+        scale = scale,
+        panX = panX,
+        cropFillMode = cropFillMode,
+        parallaxAmount = amount,
+        symmetricParallax = symmetricParallax
+    )
+    return travel.leftTravelPx to travel.rightTravelPx
 }
 
 internal fun calculateFullImagePreviewPan(
@@ -293,6 +269,7 @@ fun MediaEditorScreen(
     var blurTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTintIntensity) }
     var blurRainbowStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurRainbowStyle) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
+    var symmetricParallax by remember(media.id, page.pageIndex) { mutableStateOf(page.symmetricParallax) }
     var previewMode by remember(media.id, page.pageIndex, repository) {
         mutableStateOf(
             if (repository.getEditorDefaultFullPreview()) {
@@ -449,7 +426,8 @@ fun MediaEditorScreen(
                                     cropPanX = panX,
                                     cropPanY = panY,
                                     cropScale = zoom,
-                                    parallaxAmount = parallaxAmount
+                                    parallaxAmount = parallaxAmount,
+                                    symmetricParallax = symmetricParallax
                                 )
                             )
                         },
@@ -496,7 +474,8 @@ fun MediaEditorScreen(
                     scale = zoom,
                     panX = panX,
                     cropFillMode = cropFillMode,
-                    amount = parallaxAmount
+                    amount = parallaxAmount,
+                    symmetricParallax = symmetricParallax
                 )
             } ?: (0f to 0f)
             val leftPreviewTravelPx = previewTravel.first
@@ -1219,6 +1198,44 @@ fun MediaEditorScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    Icons.Default.SwapHoriz,
+                                    contentDescription = null,
+                                    tint = if (symmetricParallax) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        stringResource(R.string.crop_symmetric_parallax),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        stringResource(R.string.crop_symmetric_parallax_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = symmetricParallax,
+                                onCheckedChange = { symmetricParallax = it },
+                                modifier = Modifier.testTag("toggle_symmetric_parallax")
+                            )
+                        }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             OutlinedButton(
                                 onClick = { panX = 0f; panY = 0f; zoom = 1f },

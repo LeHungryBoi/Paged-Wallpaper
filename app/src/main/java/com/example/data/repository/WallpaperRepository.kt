@@ -27,6 +27,7 @@ import com.example.data.model.WallpaperPreset
 import com.example.data.migration.PresetDataMigration
 import com.example.data.model.WallpaperAppState
 import com.example.util.ImageProcessingUtils
+import com.example.util.ParallaxBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -662,6 +663,7 @@ class WallpaperRepository private constructor(private val context: Context) {
             append(page.cropPanY).append('|')
             append(page.cropScale).append('|')
             append(if (usesParallax) page.parallaxAmount else 0f).append('|')
+            append(if (usesParallax) page.symmetricParallax else false).append('|')
             append(reqWidth).append('x').append(reqHeight).append('|')
             append(dimPercent)
         }
@@ -1198,36 +1200,19 @@ class WallpaperRepository private constructor(private val context: Context) {
                 ((sourceWidth + baseCropWidth) / 2f).toInt().coerceIn(1, sourceWidth),
                 ((sourceHeight + baseCropHeight) / 2f).toInt().coerceIn(1, sourceHeight)
             )
-            val availableLeftTravelPx: Float
-            val availableRightTravelPx: Float
-            if (page.cropFillMode == CropFillMode.CROP) {
-                val cropWidth = baseCropWidth / scale
-                val cropHeight = baseCropHeight / scale
-                val centerX = sourceWidth / 2f -
-                    panX * ((sourceWidth - cropWidth) / 2f).coerceAtLeast(0f)
-                val centerY = sourceHeight / 2f -
-                    panY * ((sourceHeight - cropHeight) / 2f).coerceAtLeast(0f)
-                val left = (centerX - cropWidth / 2f).coerceIn(0f, sourceWidth - cropWidth)
-                val top = (centerY - cropHeight / 2f).coerceIn(0f, sourceHeight - cropHeight)
-                availableLeftTravelPx = left * targetWidth / cropWidth
-                availableRightTravelPx =
-                    (sourceWidth - left - cropWidth) * targetWidth / cropWidth
-            } else {
-                val fitScale = minOf(
-                    targetWidth.toFloat() / sourceWidth,
-                    targetHeight.toFloat() / sourceHeight
-                ) * scale
-                val drawWidth = sourceWidth * fitScale
-                val centerX = targetWidth / 2f +
-                    panX * ((drawWidth - targetWidth) / 2f).coerceAtLeast(0f)
-                val imageLeft = centerX - drawWidth / 2f
-                availableLeftTravelPx = (-imageLeft).coerceAtLeast(0f)
-                availableRightTravelPx =
-                    (imageLeft + drawWidth - targetWidth).coerceAtLeast(0f)
-            }
-            val travelAmount = parallaxAmount.coerceIn(0f, 1f)
-            val leftTravelPx = (availableLeftTravelPx * travelAmount).toInt()
-            val rightTravelPx = (availableRightTravelPx * travelAmount).toInt()
+            val travel = ParallaxBounds.calculateTravel(
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
+                targetWidth = targetWidth.toFloat(),
+                targetHeight = targetHeight.toFloat(),
+                scale = scale,
+                panX = panX,
+                cropFillMode = page.cropFillMode,
+                parallaxAmount = parallaxAmount,
+                symmetricParallax = page.symmetricParallax
+            )
+            val leftTravelPx = travel.leftTravelPx.toInt()
+            val rightTravelPx = travel.rightTravelPx.toInt()
             val outputWidth = targetWidth + leftTravelPx + rightTravelPx
             outputBitmap = try {
                 Bitmap.createBitmap(outputWidth, targetHeight, Bitmap.Config.ARGB_8888)

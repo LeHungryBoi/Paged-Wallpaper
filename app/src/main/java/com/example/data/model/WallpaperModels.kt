@@ -169,6 +169,7 @@ data class PageItem(
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
     val parallaxAmount: Float = 0f,
+    val symmetricParallax: Boolean = false,
     val isBlank: Boolean = false,
     val dimFactor: Float = DEFAULT_DIM_FACTOR
 ) {
@@ -189,6 +190,7 @@ data class PageItem(
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
         put("parallaxAmount", parallaxAmount.toDouble())
+        put("symmetricParallax", symmetricParallax)
         put("isBlank", isBlank)
         put("dimFactor", dimFactor.coerceIn(MIN_DIM_FACTOR, MAX_DIM_FACTOR).toDouble())
     }
@@ -235,6 +237,7 @@ data class PageItem(
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),
                 parallaxAmount = json.optDouble("parallaxAmount", 0.0).toFloat().coerceIn(0f, 1f),
+                symmetricParallax = json.optBoolean("symmetricParallax", false),
                 isBlank = json.optBoolean("isBlank", false),
                 dimFactor = json.optDouble(
                     "dimFactor",

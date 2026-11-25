@@ -32,23 +32,24 @@ Multi-page live wallpaper Android application built with Kotlin, Jetpack Compose
     ├── darken/                     # ExtraDimDetector
     ├── power/                      # BatterySaverMonitor
     ├── diagnostics/                # WallpaperDiagnosticsRecorder, WallpaperSignalTracker, WallpaperSignalOverlayWindow
-    └── util/                       # ImageProcessingUtils
+    └── util/                       # ImageProcessingUtils, ParallaxBounds
 ```
 
 ## Core Components
 
 - **Host & Navigation (`MainActivity.kt`, `WallpaperViewModel.kt`)**: Hosts `MainAppScaffold` with four tabs (`Studio`, `Behavior`, `Media`, `Settings`) and overlays `MediaEditorScreen`, `MediaPickerScreen`, and `AdvancedFlagsScreen` above the scaffold.
-- **Page Framing Editor (`ui/screens/CropScreen.kt`)**: Provides `MediaEditorScreen` with a unified split-resizable preview supporting both Single Page (rounded 9:19.5 viewport) and Full Image (source image with cyan static frame and amber parallax reach overlay) modes, plus controls for fill mode (`CROP`, `BLUR`, `GLASS`), blur/tint styles, zoom (`1.0x..3.0x`), parallax travel, position presets, and darkening preview.
-- **Persistence & Image Pipeline (`data/repository/WallpaperRepository.kt`, `util/ImageProcessingUtils.kt`)**: Stores original media, page configurations, presets, and editor defaults; renders cropped/blurred/darkened bitmaps for wallpaper service consumption.
+- **Page Framing Editor (`ui/screens/CropScreen.kt`)**: Provides `MediaEditorScreen` with a unified split-resizable preview supporting both Single Page (rounded 9:19.5 viewport) and Full Image (source image with cyan static frame and amber parallax reach overlay) modes, plus controls for fill mode (`CROP`, `BLUR`, `GLASS`), blur/tint styles, zoom (`1.0x..3.0x`), parallax travel, symmetric parallax reach toggle, position presets, and darkening preview.
+- **Persistence & Image Pipeline (`data/repository/WallpaperRepository.kt`, `util/ImageProcessingUtils.kt`, `util/ParallaxBounds.kt`)**: Stores original media, page configurations, presets, and editor defaults; computes shared parallax reach bounds and renders cropped/blurred/darkened bitmaps for wallpaper service consumption.
 - **Live Wallpaper Engine (`service/MultiPageWallpaperService.kt`, `render/GpuWallpaperRenderer.kt`)**: Renders multi-page offsets, page transitions, overscroll scaling, motion blur, darken transitions, and adaptive `WallpaperColors` hints.
 
 ## Data & Control Flow
 
 1. User imports images into `MediaLibraryScreen` and assigns them to pages via `MediaPickerScreen` or `StudioScreen`.
-2. Editing a page opens `MediaEditorScreen`, which maintains draft `panX` (`-1..1`), `panY` (`-1..1`), `zoom` (`1..3`), `cropFillMode`, blur/tint, `parallaxAmount`, and `previewMode` state.
+2. Editing a page opens `MediaEditorScreen`, which maintains draft `panX` (`-1..1`), `panY` (`-1..1`), `zoom` (`1..3`), `cropFillMode`, blur/tint, `parallaxAmount`, `symmetricParallax`, and `previewMode` state.
 3. Saving emits an updated `PageItem` to `WallpaperViewModel.updatePageSettings`, which persists via `WallpaperRepository` and triggers `MultiPageWallpaperService` reload.
 
 ## Key Design Decisions
 
 - **Unified Preview Gesture Isolation (`CropScreen.kt`)**: Both Single Page and Full Image preview panes use `detectTransformGestures` keyed on `(media.id, page.pageIndex)` with `rememberUpdatedState` for dynamic parameters (`displayBitmap`, `cropFillMode`, viewport dimensions) so multi-touch pinch-to-zoom never cancels mid-gesture when `zoom` updates. Mode switching between Single Page and Full Image is isolated exclusively to the bottom-right mode toggle pill badge (`crop_preview_mode_badge`, 48dp minimum touch target) so preview drags and pinches never conflict with tap toggling.
 - **1:1 Direct Frame Tracking in Full-Image Preview (`calculateFullImagePreviewPan`)**: In Full Image mode, drag deltas are inverse-projected from fitted canvas pixels into source coordinates and normalized by the active pan slack (`maxPanX`/`maxPanY` in `CROP` mode, `maxOverflowX`/`maxOverflowY` scaled by `imageFitScale` in `BLUR`/`GLASS` mode) so the cyan static crop frame and amber parallax reach bounds follow the user's finger 1:1.
+- **Shared Half-Slack Parallax Reach (`util/ParallaxBounds.kt`)**: Both the editor preview and `WallpaperRepository` compute target per-side parallax travel from half of the total horizontal slack (`totalHorizontalSlack * 0.5f * parallaxAmount`), so panning the static frame leaves both left and right reach unchanged until a side meets an image border. By default each side clamps independently (`min(targetPerSide, availableSide)`); enabling `symmetricParallax` on a page locks both sides to `min(targetPerSide, availableLeft, availableRight)`.
