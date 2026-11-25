@@ -88,6 +88,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -854,11 +855,28 @@ fun MediaEditorScreen(
                     }
                 }
 
-                // Compact split divider bar hosting bounds legend (left, Full Image only), shortened divider + drag pill (center), and mode pill (right)
+                // Compact edge-to-edge split divider bar hosting bounds legend (left, Full Image only), shortened divider + drag pill (center), and mode pill (right)
+                val dividerBarBorderColor = MaterialTheme.colorScheme.outlineVariant
                 SplitDividerRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(dividerHeight)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .drawBehind {
+                            val strokePx = 1.dp.toPx()
+                            drawLine(
+                                color = dividerBarBorderColor,
+                                start = Offset(0f, strokePx / 2f),
+                                end = Offset(size.width, strokePx / 2f),
+                                strokeWidth = strokePx
+                            )
+                            drawLine(
+                                color = dividerBarBorderColor,
+                                start = Offset(0f, size.height - strokePx / 2f),
+                                end = Offset(size.width, size.height - strokePx / 2f),
+                                strokeWidth = strokePx
+                            )
+                        }
                         .testTag("crop_split_separator"),
                     showLegend = previewMode == EditorPreviewMode.FULL_IMAGE,
                     legendContent = {
@@ -964,7 +982,7 @@ fun MediaEditorScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 8.dp)
+                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
                         .testTag("crop_settings_scroll_area"),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
