@@ -1,7 +1,9 @@
 package com.example
 
 import com.example.diagnostics.WallpaperSignalTracker
+import com.example.render.EntryLifecycleGuard
 import com.example.render.EntryTransitionController
+import com.example.render.EntryTriggerDecision
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -147,5 +149,150 @@ class EntryTransitionAndSignalUnitTest {
         assertTrue(lines.any { it.contains("ZOOM:0.00") && it.contains("ENTRY:0.42") })
         assertTrue(lines.any { it.contains("CMD:android.wallpaper.transform_exit [x=540 y=1200 z=0]") })
         assertTrue(lines.any { it.contains("UNLOCK") })
+    }
+
+    @Test
+    fun lifecycleGuardDefersUntilSurfaceReadyAndTriggersOncePerSession() {
+        val guard = EntryLifecycleGuard()
+
+        val deferred = guard.onVisibilityChanged(
+            visible = true,
+            wasVisible = false,
+            entryEnabled = true,
+            surfaceReady = false,
+            keyguardLocked = false,
+            screenInteractive = true,
+            nowNanos = 1_000_000_000L
+        )
+        assertEquals(EntryTriggerDecision.DEFER_UNTIL_SURFACE_READY, deferred)
+        assertTrue(guard.pendingEntryOnSurfaceReady)
+        assertFalse(guard.entryTriggeredForVisibilitySession)
+
+        // Surface becomes ready -> fires once
+        assertTrue(guard.onSurfaceReady(isVisible = true, entryEnabled = true))
+        assertFalse(guard.pendingEntryOnSurfaceReady)
+        assertTrue(guard.entryTriggeredForVisibilitySession)
+
+        // Second surface callback in same session must NOT re-trigger
+        assertFalse(guard.onSurfaceReady(isVisible = true, entryEnabled = true))
+
+        // Duplicate visible=true transition while already visible must be ignored
+        assertEquals(
+            EntryTriggerDecision.NONE,
+            guard.onVisibilityChanged(
+                visible = true,
+                wasVisible = true,
+                entryEnabled = true,
+                surfaceReady = true,
+                keyguardLocked = false,
+                screenInteractive = true,
+                nowNanos = 1_100_000_000L
+            )
+        )
+
+        // Hiding resets session
+        assertEquals(
+            EntryTriggerDecision.RESET,
+            guard.onVisibilityChanged(
+                visible = false,
+                wasVisible = true,
+                entryEnabled = true,
+                surfaceReady = true,
+                keyguardLocked = false,
+                screenInteractive = true,
+                nowNanos = 1_200_000_000L
+            )
+        )
+        assertFalse(guard.entryTriggeredForVisibilitySession)
+    }
+
+    @Test
+    fun lifecycleGuardSuppressesLateUserPresentAfterUnlockedHomeInteraction() {
+        val guard = EntryLifecycleGuard()
+
+        val lockedVisible = guard.onVisibilityChanged(
+            visible = true,
+            wasVisible = false,
+            entryEnabled = true,
+            surfaceReady = true,
+            keyguardLocked = true,
+            screenInteractive = true,
+            nowNanos = 2_000_000_000L
+        )
+        assertEquals(EntryTriggerDecision.RESET, lockedVisible)
+        assertTrue(guard.pendingEntryOnUnlock)
+
+        // User interacts on unlocked home before a delayed USER_PRESENT arrives
+        guard.onUnlockedHomeInteraction(
+            isVisible = true,
+            keyguardLocked = false,
+            screenInteractive = true
+        )
+        assertFalse(guard.pendingEntryOnUnlock)
+
+        // Delayed USER_PRESENT broadcast must NOT flash black mid-use
+        val lateUnlock = guard.onUserPresent(
+            isVisible = true,
+            entryEnabled = true,
+            surfaceReady = true,
+            keyguardLocked = false,
+            screenInteractive = true
+        )
+        assertEquals(EntryTriggerDecision.NONE, lateUnlock)
+        assertFalse(guard.entryTriggeredForVisibilitySession)
+    }
+
+    @Test
+    fun lifecycleGuardHandlesScreenOnRecencyUnlockTriggerAndScreenOffReset() {
+        val guard = EntryLifecycleGuard()
+
+        // Screen turns on while keyguard still locked -> records recency timestamp
+        assertEquals(
+            EntryTriggerDecision.NONE,
+            guard.onScreenOn(
+                isVisible = false,
+                entryEnabled = true,
+                surfaceReady = true,
+                keyguardLocked = false,
+                nowNanos = 5_000_000_000L
+            )
+        )
+
+        // Visibility arrives within SCREEN_ON_RECENCY_NANOS while PowerManager still reports non-interactive
+        val wakeDecision = guard.onVisibilityChanged(
+            visible = true,
+            wasVisible = false,
+            entryEnabled = true,
+            surfaceReady = true,
+            keyguardLocked = false,
+            screenInteractive = false,
+            nowNanos = 5_100_000_000L
+        )
+        assertEquals(EntryTriggerDecision.TRIGGER_NOW, wakeDecision)
+        assertFalse(guard.pendingEntryOnUnlock)
+
+        // Screen off clears state; later locked visibility unlocks via onUserPresent
+        guard.onScreenOff()
+        assertEquals(
+            EntryTriggerDecision.RESET,
+            guard.onVisibilityChanged(
+                visible = true,
+                wasVisible = false,
+                entryEnabled = true,
+                surfaceReady = false,
+                keyguardLocked = true,
+                screenInteractive = true,
+                nowNanos = 6_000_000_000L
+            )
+        )
+        val unlockDecision = guard.onUserPresent(
+            isVisible = true,
+            entryEnabled = true,
+            surfaceReady = false,
+            keyguardLocked = false,
+            screenInteractive = true
+        )
+        assertEquals(EntryTriggerDecision.DEFER_UNTIL_SURFACE_READY, unlockDecision)
+        assertTrue(guard.onSurfaceReady(isVisible = true, entryEnabled = true))
     }
 }

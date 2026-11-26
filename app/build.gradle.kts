@@ -13,6 +13,7 @@ val configuredVersionName = providers.gradleProperty("appVersionName").orNull ?:
 
 android {
   namespace = "com.example"
+  ndkVersion = "27.3.13750724"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
@@ -23,6 +24,16 @@ android {
     versionName = configuredVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    ndk {
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path = file("src/main/cpp/CMakeLists.txt")
+      version = "3.31.6"
+    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

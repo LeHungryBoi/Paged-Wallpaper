@@ -40,13 +40,15 @@ import com.example.power.PowerSnapshot
 import com.example.render.DarkenTransitionController
 import com.example.render.EdgeOverScrollController
 import com.example.render.EdgeOverScrollScaling
-import com.example.render.EntryRenderState
+import com.example.render.EntryLifecycleGuard
 import com.example.render.EntryTransitionController
+import com.example.render.EntryTriggerDecision
 import com.example.render.GpuFrameRequest
-import com.example.render.GpuWallpaperRenderer
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
 import com.example.render.SwipeDirectionLock
+import com.example.render.WallpaperRenderBackend
+import com.example.render.WallpaperRenderCoordinator
 import com.example.transition.TransitionRegistry
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.math.abs
@@ -58,7 +60,6 @@ private const val STATIC_OFFSET_TOLERANCE = 0.002f
 private const val STATIC_OFFSET_SEGMENT_TOLERANCE_RATIO = 0.02f
 private const val NANOS_PER_SECOND = 1_000_000_000L
 private const val MAX_ENTRY_STEP_NANOS = 50_000_000L
-private const val ENTRY_FIRST_FRAME_WAIT_LIMIT_NANOS = 1_000_000_000L
 private const val MOTION_BLUR_DOWNSAMPLE_FACTOR = 2
 private const val MOTION_BLUR_SHUTTER_FRACTION = 1.0f
 private const val MAX_MOTION_BLUR_FRAME_GAP_NANOS = 200_000_000L
@@ -81,7 +82,7 @@ class MultiPageWallpaperService : WallpaperService() {
 
         private val repository by lazy { WallpaperRepository.getInstance(applicationContext) }
         private val mainHandler = Handler(Looper.getMainLooper())
-        private var gpuRenderer: GpuWallpaperRenderer? = null
+        private var gpuRenderer: WallpaperRenderBackend? = null
         private var gpuRenderingFailed = false
         private var engineDestroyed = false
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -165,9 +166,7 @@ class MultiPageWallpaperService : WallpaperService() {
         private var systemBroadcastReceiver: BroadcastReceiver? = null
         private var currentPowerSnapshot = PowerSnapshot()
         private var batterySaverMonitor: BatterySaverMonitor? = null
-        private var entryAwaitingFirstFrame = false
-        private var entryTriggeredAtNanos = 0L
-        private var pendingEntryOnUnlock = false
+        private val entryLifecycleGuard = EntryLifecycleGuard()
         private var lastNotifiedColorKey: WallpaperColorHelper.ColorStateKey? = null
 
         private val repoChangeListener: () -> Unit = {
@@ -241,8 +240,7 @@ class MultiPageWallpaperService : WallpaperService() {
             val state = repository.appState.value
             if (!state.resumeFadeEnabled) {
                 entryTransitionController.reset()
-                entryAwaitingFirstFrame = false
-                pendingEntryOnUnlock = false
+                entryLifecycleGuard.onEntryDisabled()
             }
             syncDarkenState(state = state, animateIfVisible = isVisible)
             if (!isOffsetAnimationNeeded()) {
@@ -296,8 +294,7 @@ class MultiPageWallpaperService : WallpaperService() {
             releaseMotionBlurBuffer()
             entryTransitionController.reset()
             darkenTransitionController.reset()
-            entryAwaitingFirstFrame = false
-            pendingEntryOnUnlock = false
+            entryLifecycleGuard.reset()
             signalOverlayWindow.detach()
             repository.removeChangeListener(repoChangeListener)
             batterySaverMonitor?.stop()
@@ -373,13 +370,16 @@ class MultiPageWallpaperService : WallpaperService() {
                     if (state.darken.isEnabled) {
                         repository.prewarmDarkenedCache(surfaceWidth, surfaceHeight)
                     }
-                    if (screenInteractive == false || keyguardLocked == true) {
-                        entryTransitionController.reset()
-                        entryAwaitingFirstFrame = false
-                        pendingEntryOnUnlock = state.resumeFadeEnabled
-                    } else {
-                        triggerEntryTransitionIfEnabled(state)
-                    }
+                    val decision = entryLifecycleGuard.onVisibilityChanged(
+                        visible = true,
+                        wasVisible = false,
+                        entryEnabled = state.resumeFadeEnabled,
+                        surfaceReady = isSurfaceReadyForEntry(),
+                        keyguardLocked = keyguardLocked,
+                        screenInteractive = screenInteractive,
+                        nowNanos = System.nanoTime()
+                    )
+                    applyEntryDecision(decision, state)
                 } else {
                     syncDarkenState(state = state, animateIfVisible = true)
                 }
@@ -394,10 +394,17 @@ class MultiPageWallpaperService : WallpaperService() {
                 edgeOverScrollController.reset()
                 stopOffsetAnimation()
                 releaseMotionBlurBuffer()
+                entryLifecycleGuard.onVisibilityChanged(
+                    visible = false,
+                    wasVisible = wasVisible,
+                    entryEnabled = false,
+                    surfaceReady = false,
+                    keyguardLocked = keyguardLocked,
+                    screenInteractive = screenInteractive,
+                    nowNanos = System.nanoTime()
+                )
                 entryTransitionController.reset()
                 darkenTransitionController.snapTo(darkenTransitionController.targetMix >= 0.5f)
-                entryAwaitingFirstFrame = false
-                pendingEntryOnUnlock = false
                 syncSignalOverlayWindow()
             }
         }
@@ -415,16 +422,27 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
-        private fun triggerEntryTransitionIfEnabled(state: WallpaperAppState) {
-            pendingEntryOnUnlock = false
+        private fun isSurfaceReadyForEntry(): Boolean =
+            surfaceHolder?.surface?.isValid == true && surfaceWidth > 0 && surfaceHeight > 0
+
+        private fun applyEntryDecision(decision: EntryTriggerDecision, state: WallpaperAppState) {
+            when (decision) {
+                EntryTriggerDecision.TRIGGER_NOW -> triggerEntryTransitionNow(state)
+                EntryTriggerDecision.RESET -> entryTransitionController.reset()
+                EntryTriggerDecision.DEFER_UNTIL_SURFACE_READY,
+                EntryTriggerDecision.NONE -> Unit
+            }
+        }
+
+        private fun triggerEntryTransitionNow(state: WallpaperAppState) {
             if (!state.resumeFadeEnabled) {
                 entryTransitionController.reset()
-                entryAwaitingFirstFrame = false
+                entryLifecycleGuard.onEntryDisabled()
                 return
             }
-            entryTriggeredAtNanos = System.nanoTime()
-            entryAwaitingFirstFrame = true
             entryTransitionController.trigger(state.entryDurationMs)
+            lastAnimationFrameTimeNanos = 0L
+            nextAnimationFrameDeadlineNanos = 0L
         }
 
         private fun syncSignalOverlayWindow(precomputedLines: List<String>? = null) {
@@ -466,6 +484,10 @@ class MultiPageWallpaperService : WallpaperService() {
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             super.onSurfaceCreated(holder)
             getGpuRenderer()?.onSurfaceChanged(holder.surface, surfaceWidth, surfaceHeight)
+            val state = repository.appState.value
+            if (isSurfaceReadyForEntry() && entryLifecycleGuard.onSurfaceReady(isVisible, state.resumeFadeEnabled)) {
+                triggerEntryTransitionNow(state)
+            }
             if (isVisible && surfaceWidth > 0 && surfaceHeight > 0) {
                 drawFrame()
                 if (isOffsetAnimationNeeded()) {
@@ -480,6 +502,10 @@ class MultiPageWallpaperService : WallpaperService() {
             surfaceHeight = height
             repository.updateRenderDimensions(width, height)
             getGpuRenderer()?.onSurfaceChanged(holder.surface, width, height)
+            val state = repository.appState.value
+            if (isSurfaceReadyForEntry() && entryLifecycleGuard.onSurfaceReady(isVisible, state.resumeFadeEnabled)) {
+                triggerEntryTransitionNow(state)
+            }
             preferredSurfaceFrameRate = null
             updateSurfaceFrameRate()
             drawFrame()
@@ -540,9 +566,9 @@ class MultiPageWallpaperService : WallpaperService() {
             }
         }
 
-        private fun getGpuRenderer(): GpuWallpaperRenderer? {
+        private fun getGpuRenderer(): WallpaperRenderBackend? {
             if (gpuRenderingFailed || engineDestroyed) return null
-            return gpuRenderer ?: GpuWallpaperRenderer(repository).also { gpuRenderer = it }
+            return gpuRenderer ?: WallpaperRenderCoordinator(repository).also { gpuRenderer = it }
         }
 
         override fun onOffsetsChanged(
@@ -660,6 +686,11 @@ class MultiPageWallpaperService : WallpaperService() {
 
             if (offsetChanged && xOffsetStep > 0f) {
                 suppressedForRecents = false
+                entryLifecycleGuard.onUnlockedHomeInteraction(
+                    isVisible = isVisible,
+                    keyguardLocked = isKeyguardLockedOrNull(),
+                    screenInteractive = isScreenInteractiveOrNull()
+                )
                 if (isVisible && entryTransitionController.isActive) {
                     entryTransitionController.interrupt()
                 }
@@ -693,6 +724,11 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
                 return
             }
+            entryLifecycleGuard.onUnlockedHomeInteraction(
+                isVisible = isVisible,
+                keyguardLocked = isKeyguardLockedOrNull(),
+                screenInteractive = isScreenInteractiveOrNull()
+            )
             val calib = repository.appState.value.calibration
             val wasTouchActive = edgeOverScrollController.isTouchActive
             val result = edgeOverScrollController.onTouchEvent(
@@ -759,6 +795,11 @@ class MultiPageWallpaperService : WallpaperService() {
             signalTracker.recordCommand(action, extrasSummary)
             if (action == "android.home") {
                 suppressedForRecents = false
+                entryLifecycleGuard.onUnlockedHomeInteraction(
+                    isVisible = isVisible,
+                    keyguardLocked = isKeyguardLockedOrNull(),
+                    screenInteractive = isScreenInteractiveOrNull()
+                )
                 val calib = repository.appState.value.calibration
                 currentXOffset = calib.getHomeOffset()
                 renderedXOffset = currentXOffset
@@ -811,6 +852,11 @@ class MultiPageWallpaperService : WallpaperService() {
                                 }
                                 if (reason == "homekey") {
                                     suppressedForRecents = false
+                                    entryLifecycleGuard.onUnlockedHomeInteraction(
+                                        isVisible = isVisible,
+                                        keyguardLocked = isKeyguardLockedOrNull(),
+                                        screenInteractive = isScreenInteractiveOrNull()
+                                    )
                                     // User swiped or tapped home button to return to launcher
                                     val calib = repository.appState.value.calibration
                                     currentXOffset = calib.getHomeOffset()
@@ -855,9 +901,14 @@ class MultiPageWallpaperService : WallpaperService() {
                                     }
                                     repository.saveLastKnownOffset(currentXOffset)
                                 }
-                                if (isVisible && pendingEntryOnUnlock) {
-                                    triggerEntryTransitionIfEnabled(state)
-                                }
+                                val decision = entryLifecycleGuard.onUserPresent(
+                                    isVisible = isVisible,
+                                    entryEnabled = state.resumeFadeEnabled,
+                                    surfaceReady = isSurfaceReadyForEntry(),
+                                    keyguardLocked = isKeyguardLockedOrNull(),
+                                    screenInteractive = isScreenInteractiveOrNull()
+                                )
+                                applyEntryDecision(decision, state)
                                 syncDarkenState(state = state, animateIfVisible = false)
                                 syncSignalOverlayWindow()
                                 if (isVisible) {
@@ -875,9 +926,14 @@ class MultiPageWallpaperService : WallpaperService() {
                                 lastKnownDarkMode = ExtraDimDetector.isSystemDarkThemeActive(applicationContext)
                                 syncDarkenState(state = state, animateIfVisible = false)
                                 val darkChanged = abs(darkenTransitionController.currentMix - prevDarkMix) > 0.001f
-                                if (isVisible && pendingEntryOnUnlock && keyguardLocked == false) {
-                                    triggerEntryTransitionIfEnabled(state)
-                                }
+                                val decision = entryLifecycleGuard.onScreenOn(
+                                    isVisible = isVisible,
+                                    entryEnabled = state.resumeFadeEnabled,
+                                    surfaceReady = isSurfaceReadyForEntry(),
+                                    keyguardLocked = keyguardLocked,
+                                    nowNanos = System.nanoTime()
+                                )
+                                applyEntryDecision(decision, state)
                                 syncSignalOverlayWindow()
                                 if (isVisible) {
                                     if (entryTransitionController.isActive || darkChanged) {
@@ -891,6 +947,7 @@ class MultiPageWallpaperService : WallpaperService() {
                                 }
                             }
                             Intent.ACTION_SCREEN_OFF -> {
+                                entryLifecycleGuard.onScreenOff()
                                 signalTracker.recordScreenPower(false, isKeyguardLockedOrNull())
                                 syncSignalOverlayWindow()
                             }
@@ -1008,19 +1065,11 @@ class MultiPageWallpaperService : WallpaperService() {
 
             if (entryTransitionController.isActive) {
                 if (repository.appState.value.resumeFadeEnabled) {
-                    val waitTimedOut = entryAwaitingFirstFrame &&
-                        entryTriggeredAtNanos > 0L &&
-                        (System.nanoTime() - entryTriggeredAtNanos) >= ENTRY_FIRST_FRAME_WAIT_LIMIT_NANOS
-                    if (waitTimedOut) {
-                        entryAwaitingFirstFrame = false
-                    }
-                    if (!entryAwaitingFirstFrame) {
-                        val clampedStepNanos = elapsedNanos.coerceAtMost(MAX_ENTRY_STEP_NANOS)
-                        entryTransitionController.step(clampedStepNanos)
-                    }
+                    val clampedStepNanos = elapsedNanos.coerceAtMost(MAX_ENTRY_STEP_NANOS)
+                    entryTransitionController.step(clampedStepNanos)
                 } else {
                     entryTransitionController.reset()
-                    entryAwaitingFirstFrame = false
+                    entryLifecycleGuard.onEntryDisabled()
                 }
             }
 
@@ -1230,11 +1279,6 @@ class MultiPageWallpaperService : WallpaperService() {
 
         private fun onFrameSubmitted(request: GpuFrameRequest, debugIndicatorDrawn: Boolean) {
             if (engineDestroyed) return
-            if (entryAwaitingFirstFrame && request.isVisible && request.frameTimeNanos >= entryTriggeredAtNanos) {
-                entryAwaitingFirstFrame = false
-                lastAnimationFrameTimeNanos = 0L
-                nextAnimationFrameDeadlineNanos = 0L
-            }
             if (debugIndicatorDrawn) {
                 frameDebugSequenceIndex = (frameDebugSequenceIndex + 1) % frameDebugColors.size
             }

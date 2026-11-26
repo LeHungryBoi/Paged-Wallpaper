@@ -20,7 +20,6 @@ import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.example.data.model.PageItem
-import com.example.data.model.WallpaperAppState
 import com.example.data.repository.WallpaperRepository
 import com.example.transition.TransitionRegistry
 import com.example.util.ImageProcessingUtils
@@ -30,36 +29,9 @@ import java.nio.FloatBuffer
 import kotlin.math.ceil
 import kotlin.math.sin
 
-data class GpuFrameRequest(
-    val state: WallpaperAppState,
-    val width: Int,
-    val height: Int,
-    val pageA: Int,
-    val pageB: Int,
-    val progress: Float,
-    val pagePosition: Float,
-    val continuousPagePosition: Float,
-    val frameTimeNanos: Long,
-    val fromOffsetUpdate: Boolean,
-    val isVisible: Boolean,
-    val swipeForward: Boolean,
-    val entryScale: Float = 1f,
-    val entryBlackFadeAlpha: Float = 0f,
-    val entryBlurMix: Float = 0f,
-    val motionBlurRadius: Int,
-    val motionBlurDirection: Int,
-    val darkenMix: Float = 0f,
-    val receivedXOffset: Float?,
-    val receivedYOffset: Float?,
-    val signalOverlayLines: List<String> = emptyList(),
-    val density: Float,
-    val frameDebugColor: Int,
-    val edgeOverScrollFraction: Float = 0f
-)
-
 class GpuWallpaperRenderer(
     private val repository: WallpaperRepository
-) {
+) : WallpaperRenderBackend {
     private data class PendingFrame(
         val request: GpuFrameRequest,
         val onSubmitted: (GpuFrameRequest) -> Unit,
@@ -178,7 +150,7 @@ class GpuWallpaperRenderer(
             position(0)
         }
 
-    fun onSurfaceChanged(surface: Surface, width: Int, height: Int) {
+    override fun onSurfaceChanged(surface: Surface, width: Int, height: Int) {
         if (released || width <= 0 || height <= 0) return
         val sizeChanged = surfaceWidth != width || surfaceHeight != height
         windowSurface = surface
@@ -193,17 +165,17 @@ class GpuWallpaperRenderer(
         }
     }
 
-    fun onSurfaceDestroyed() {
+    override fun onSurfaceDestroyed() {
         windowSurface = null
         synchronized(frameLock) { pendingFrame = null }
-        renderHandler.post { destroyGl() }
+        renderHandler.post { detachWindowSurface() }
     }
 
-    fun render(
+    override fun render(
         request: GpuFrameRequest,
         onSubmitted: (GpuFrameRequest) -> Unit,
         onFailure: () -> Unit,
-        onRetryNeeded: () -> Unit = {}
+        onRetryNeeded: () -> Unit
     ) {
         if (released) return
         val shouldSchedule = synchronized(frameLock) {
@@ -218,7 +190,7 @@ class GpuWallpaperRenderer(
         if (shouldSchedule) renderHandler.post { drainFrame() }
     }
 
-    fun release() {
+    override fun release() {
         if (released) return
         released = true
         windowSurface = null
@@ -1642,6 +1614,19 @@ class GpuWallpaperRenderer(
         motionBlurTexture = 0
         motionBlurWidth = 0
         motionBlurHeight = 0
+    }
+
+    private fun detachWindowSurface() {
+        val display = eglDisplay ?: return
+        EGL14.eglMakeCurrent(
+            display,
+            EGL14.EGL_NO_SURFACE,
+            EGL14.EGL_NO_SURFACE,
+            EGL14.EGL_NO_CONTEXT
+        )
+        eglSurface?.let { EGL14.eglDestroySurface(display, it) }
+        eglSurface = null
+        boundWindowSurface = null
     }
 
     private fun destroyGl() {
