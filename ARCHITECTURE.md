@@ -17,7 +17,8 @@ Multi-page live wallpaper Android application built with Kotlin, Jetpack Compose
     ├── data/
     │   ├── model/                  # WallpaperModels (PageItem, OriginalMedia, CalibrationConfig, DarkenConfig)
     │   ├── migration/              # PresetDataMigration
-    │   └── repository/             # WallpaperRepository (JSON/file persistence, rendered page generation)
+    │   └── repository/             # WallpaperRepository (JSON/file persistence, rendered page generation),
+    │                               # BundledSampleSeeder (fresh-launch extraction of bundled sample drawables)
     ├── ui/
     │   ├── WallpaperViewModel.kt   # StateFlow orchestration for pages, presets, darken, calibration, effects
     │   ├── screens/                # StudioScreen, CropScreen (MediaEditorScreen), EffectsScreen,
@@ -39,12 +40,12 @@ Multi-page live wallpaper Android application built with Kotlin, Jetpack Compose
 
 - **Host & Navigation (`MainActivity.kt`, `WallpaperViewModel.kt`)**: Hosts `MainAppScaffold` with four tabs (`Studio`, `Behavior`, `Media`, `Settings`) and overlays `MediaEditorScreen`, `MediaPickerScreen`, and `AdvancedFlagsScreen` above the scaffold.
 - **Page Framing Editor (`ui/screens/CropScreen.kt`)**: Provides `MediaEditorScreen` with a unified split-resizable preview supporting both Single Page (rounded 9:19.5 viewport) and Full Image (source image with cyan static frame and amber parallax reach overlay) modes, plus controls for fill mode (`CROP`, `BLUR`, `GLASS`), blur/tint styles, zoom (`1.0x..3.0x`), parallax travel, symmetric parallax reach toggle, position presets, and darkening preview.
-- **Persistence & Image Pipeline (`data/repository/WallpaperRepository.kt`, `util/ImageProcessingUtils.kt`, `util/ParallaxBounds.kt`)**: Stores original media, page configurations, presets, and editor defaults; computes shared parallax reach bounds and renders cropped/blurred/darkened bitmaps for wallpaper service consumption.
+- **Persistence, Sample Seeding & Image Pipeline (`data/repository/WallpaperRepository.kt`, `data/repository/BundledSampleSeeder.kt`, `util/ImageProcessingUtils.kt`, `util/ParallaxBounds.kt`)**: Stores original media, page configurations, presets, and editor defaults; on first initialization (tracked via a one-time `SharedPreferences` flag), seeds three bundled drawable samples (tall 3:4, wide 16:9, and square 1:1) into `originals/` and assigns them to the three default pages wherever a page has no user media; computes shared parallax reach bounds and renders cropped/blurred/darkened bitmaps for wallpaper service consumption.
 - **Live Wallpaper Engine (`service/MultiPageWallpaperService.kt`, `render/GpuWallpaperRenderer.kt`)**: Renders multi-page offsets, page transitions, overscroll scaling, motion blur, darken transitions, and adaptive `WallpaperColors` hints.
 
 ## Data & Control Flow
 
-1. User imports images into `MediaLibraryScreen` and assigns them to pages via `MediaPickerScreen` or `StudioScreen`.
+1. On first initialization, `BundledSampleSeeder` materializes three bundled sample images into `originals/` and `WallpaperRepository` assigns them as the default pages (tall on Page 1, wide on Home Page 2, square on Page 3); users can also import images into `MediaLibraryScreen` and assign them to any page via `MediaPickerScreen` or `StudioScreen`.
 2. Editing a page opens `MediaEditorScreen`, which maintains draft `panX` (`-1..1`), `panY` (`-1..1`), `zoom` (`1..3`), `cropFillMode`, blur/tint, `parallaxAmount`, `symmetricParallax`, and `previewMode` state.
 3. Saving emits an updated `PageItem` to `WallpaperViewModel.updatePageSettings`, which persists via `WallpaperRepository` and triggers `MultiPageWallpaperService` reload.
 

@@ -30,6 +30,7 @@ import com.example.util.ImageProcessingUtils
 import com.example.util.ParallaxBounds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,6 +92,7 @@ class WallpaperRepository private constructor(private val context: Context) {
     private val backupMutex = Mutex()
     private val prewarmScope = CoroutineScope(Dispatchers.IO)
     private var prewarmJob: kotlinx.coroutines.Job? = null
+    private var startupJob: kotlinx.coroutines.Job? = null
 
     @Volatile
     private var lastRenderWidth: Int = context.resources.displayMetrics.widthPixels.coerceAtLeast(1)
@@ -200,7 +202,11 @@ class WallpaperRepository private constructor(private val context: Context) {
         }
     }
 
-    private fun loadInitialData() {
+    internal suspend fun awaitStartupForTesting() {
+        startupJob?.join()
+    }
+
+    private fun loadInitialData(allowSampleSeeding: Boolean = true) {
         // Load originals metadata
         val legacyMediaMetadata = loadOriginalsMeta()
 
@@ -231,9 +237,39 @@ class WallpaperRepository private constructor(private val context: Context) {
             initDefaultState()
         }
 
-        // Check if starter wallpapers should be created
-        CoroutineScope(Dispatchers.IO).launch {
+        // Check if starter wallpapers and bundled sample media should be created
+        startupJob?.cancel()
+        startupJob = CoroutineScope(Dispatchers.IO).launch {
             ensureStarterWallpapersExist()
+            if (allowSampleSeeding && !prefs.getBoolean(KEY_BUNDLED_SAMPLES_SEEDED, false)) {
+                val addedSamples = BundledSampleSeeder.materializeSamples(
+                    context = context,
+                    originalsDir = originalsDir,
+                    existingOriginals = _originals.value,
+                    luminanceThreshold = _appState.value.darken.luminanceThreshold
+                )
+                if (addedSamples.isNotEmpty()) {
+                    saveOriginalsMeta(_originals.value + addedSamples)
+                }
+                val specs = BundledSampleSeeder.defaultSpecs()
+                val originalsById = _originals.value.associateBy { it.id }
+                specs.forEach { spec ->
+                    val page = _appState.value.pages.find { it.pageIndex == spec.defaultPageIndex }
+                    if (page != null && page.originalId == null && !page.isBlank &&
+                        originalsById.containsKey(spec.id)
+                    ) {
+                        assignOriginalToPage(
+                            originalId = spec.id,
+                            pageIndex = spec.defaultPageIndex,
+                            targetWidth = lastRenderWidth,
+                            targetHeight = lastRenderHeight
+                        )
+                    }
+                }
+                if (specs.all { originalsById.containsKey(it.id) }) {
+                    prefs.edit().putBoolean(KEY_BUNDLED_SAMPLES_SEEDED, true).apply()
+                }
+            }
             invalidateCache()
             if (_appState.value.darken.isEnabled) {
                 prewarmDarkenedCache()
@@ -1523,10 +1559,12 @@ class WallpaperRepository private constructor(private val context: Context) {
             val migratedLegacy = PresetDataMigration.migrateLegacy(backupState, legacyMetadata)
             PresetDataMigration.migrateTransitionStorage(migratedLegacy)
 
+            startupJob?.cancelAndJoin()
             installRestoredFiles(stagingDir)
             darkenedCacheDir.deleteRecursively()
             darkenedCacheDir.mkdirs()
-            loadInitialData()
+            prefs.edit().putBoolean(KEY_BUNDLED_SAMPLES_SEEDED, true).apply()
+            loadInitialData(allowSampleSeeding = false)
             invalidateCache()
             notifyListeners()
             true
@@ -1691,6 +1729,7 @@ class WallpaperRepository private constructor(private val context: Context) {
         const val DEFAULT_EDITOR_FULL_PREVIEW = false
         private const val BACKUP_FILE_NAME = "paperpages_backup.zip"
         private const val MAX_BACKUP_UNCOMPRESSED_BYTES = 1024L * 1024L * 1024L
+        private const val KEY_BUNDLED_SAMPLES_SEEDED = "bundled_samples_seeded_v2"
 
         @Volatile
         private var instance: WallpaperRepository? = null
