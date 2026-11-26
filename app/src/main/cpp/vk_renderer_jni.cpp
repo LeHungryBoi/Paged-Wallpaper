@@ -2,164 +2,245 @@
 
 #include <android/bitmap.h>
 #include <android/native_window_jni.h>
+#include <jni.h>
+
+#include <cstdint>
 #include <cstring>
 #include <vector>
 
-using paperpages_vk::VulkanEngine;
+namespace {
+
+inline paperpages_vk::VulkanEngine* fromHandle(jlong handle) {
+    return reinterpret_cast<paperpages_vk::VulkanEngine*>(handle);
+}
+
+} // namespace
 
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeCreate(JNIEnv*, jclass) {
-    auto* engine = new VulkanEngine();
+Java_com_example_render_VulkanNativeBridge_nativeCreate(JNIEnv* /*env*/, jclass /*clazz*/) {
+    auto* engine = new paperpages_vk::VulkanEngine();
     if (!engine->initDevice()) {
         delete engine;
-        return 0L;
+        return 0;
     }
     return reinterpret_cast<jlong>(engine);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeDestroy(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine) return;
+Java_com_example_render_VulkanNativeBridge_nativeDestroy(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return;
     engine->destroyDevice();
     delete engine;
 }
 
 JNIEXPORT jint JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeGetMaxTextureSize(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    return engine ? static_cast<jint>(engine->maxImageDimension2D) : 4096;
+Java_com_example_render_VulkanNativeBridge_nativeGetMaxTextureSize(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return 4096;
+    return static_cast<jint>(engine->maxImageDimension2D);
 }
 
 JNIEXPORT jint JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeGetWhiteTextureId(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    return engine ? static_cast<jint>(engine->whiteTextureId) : 0;
+Java_com_example_render_VulkanNativeBridge_nativeGetWhiteTextureId(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return 0;
+    return static_cast<jint>(engine->whiteTextureId);
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeOnSurfaceChanged(
-    JNIEnv* env, jclass, jlong handle, jobject surface, jint width, jint height
+    JNIEnv* env,
+    jclass /*clazz*/,
+    jlong handle,
+    jobject surface,
+    jint width,
+    jint height
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine || !surface || width <= 0 || height <= 0) return JNI_FALSE;
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr || surface == nullptr || width <= 0 || height <= 0) {
+        return JNI_FALSE;
+    }
     ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
-    if (!window) return JNI_FALSE;
+    if (window == nullptr) {
+        return JNI_FALSE;
+    }
     const bool ok = engine->bindSurface(window, static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     ANativeWindow_release(window);
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeOnSurfaceDestroyed(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (engine) engine->unbindSurface();
+Java_com_example_render_VulkanNativeBridge_nativeOnSurfaceDestroyed(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return;
+    engine->unbindSurface();
 }
 
 JNIEXPORT jint JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeUploadBitmap(
-    JNIEnv* env, jclass, jlong handle, jobject bitmap
+    JNIEnv* env,
+    jclass /*clazz*/,
+    jlong handle,
+    jobject bitmap
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine || !bitmap) return 0;
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr || bitmap == nullptr) return 0;
 
     AndroidBitmapInfo info{};
-    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) return 0;
-    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0) return 0;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS) {
+        return 0;
+    }
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || info.width == 0 || info.height == 0) {
+        return 0;
+    }
 
     void* pixels = nullptr;
-    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS || !pixels) {
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS || pixels == nullptr) {
         return 0;
     }
 
     int32_t texId = 0;
-    const uint32_t rowBytes = info.width * 4;
-    if (info.stride == rowBytes) {
+    const uint32_t tightStride = info.width * 4u;
+    if (info.stride == tightStride) {
         texId = engine->uploadRgbaTexture(pixels, info.width, info.height);
     } else {
-        std::vector<uint8_t> packed(static_cast<size_t>(rowBytes) * info.height);
+        std::vector<uint8_t> tightPixels(static_cast<size_t>(tightStride) * info.height);
         const auto* src = static_cast<const uint8_t*>(pixels);
         for (uint32_t y = 0; y < info.height; ++y) {
-            std::memcpy(packed.data() + static_cast<size_t>(y) * rowBytes, src + static_cast<size_t>(y) * info.stride, rowBytes);
+            std::memcpy(tightPixels.data() + static_cast<size_t>(y) * tightStride,
+                        src + static_cast<size_t>(y) * info.stride,
+                        tightStride);
         }
-        texId = engine->uploadRgbaTexture(packed.data(), info.width, info.height);
+        texId = engine->uploadRgbaTexture(tightPixels.data(), info.width, info.height);
     }
+
     AndroidBitmap_unlockPixels(env, bitmap);
-    return texId;
+    return static_cast<jint>(texId);
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeDeleteTexture(JNIEnv*, jclass, jlong handle, jint textureId) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (engine) engine->deleteTexture(textureId);
+Java_com_example_render_VulkanNativeBridge_nativeDeleteTexture(
+    JNIEnv* /*env*/,
+    jclass /*clazz*/,
+    jlong handle,
+    jint textureId
+) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return;
+    engine->deleteTexture(static_cast<int32_t>(textureId));
 }
 
 JNIEXPORT void JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeClearUserTextures(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (engine) engine->clearUserTextures();
+Java_com_example_render_VulkanNativeBridge_nativeClearUserTextures(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return;
+    engine->clearUserTextures();
 }
 
 JNIEXPORT jint JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeBeginFrame(
-    JNIEnv*, jclass, jlong handle, jboolean useMotionBlur, jint mbWidth, jint mbHeight,
-    jfloat clearR, jfloat clearG, jfloat clearB
+    JNIEnv* /*env*/,
+    jclass /*clazz*/,
+    jlong handle,
+    jboolean useMotionBlur,
+    jint mbWidth,
+    jint mbHeight,
+    jfloat clearR,
+    jfloat clearG,
+    jfloat clearB
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine) return -1;
-    return engine->beginFrame(
-        useMotionBlur == JNI_TRUE,
-        static_cast<uint32_t>(mbWidth > 0 ? mbWidth : 0),
-        static_cast<uint32_t>(mbHeight > 0 ? mbHeight : 0),
-        clearR, clearG, clearB
-    );
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return -1;
+    const uint32_t w = mbWidth > 0 ? static_cast<uint32_t>(mbWidth) : 0u;
+    const uint32_t h = mbHeight > 0 ? static_cast<uint32_t>(mbHeight) : 0u;
+    return static_cast<jint>(engine->beginFrame(useMotionBlur == JNI_TRUE, w, h, clearR, clearG, clearB));
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeBeginMainPass(
-    JNIEnv*, jclass, jlong handle, jfloat clearR, jfloat clearG, jfloat clearB
+    JNIEnv* /*env*/,
+    jclass /*clazz*/,
+    jlong handle,
+    jfloat clearR,
+    jfloat clearG,
+    jfloat clearB
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (engine) engine->beginMainPass(clearR, clearG, clearB);
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return;
+    engine->beginMainPass(clearR, clearG, clearB);
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeDrawQuad(
-    JNIEnv* env, jclass, jlong handle,
-    jint textureId, jint darkTextureId, jfloat darkMix,
+    JNIEnv* env,
+    jclass /*clazz*/,
+    jlong handle,
+    jint textureId,
+    jint darkTextureId,
+    jfloat darkMix,
     jfloatArray mvpArray,
-    jfloat uvOffsetX, jfloat uvOffsetY, jfloat uvScaleX, jfloat uvScaleY,
-    jfloat r, jfloat g, jfloat b, jfloat a
+    jfloat uvOffsetX,
+    jfloat uvOffsetY,
+    jfloat uvScaleX,
+    jfloat uvScaleY,
+    jfloat r,
+    jfloat g,
+    jfloat b,
+    jfloat a
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine || !mvpArray) return;
-    float mvp[16];
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr || mvpArray == nullptr || env->GetArrayLength(mvpArray) < 16) return;
+    jfloat mvp[16]{};
     env->GetFloatArrayRegion(mvpArray, 0, 16, mvp);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return;
+    }
     engine->drawQuad(
-        textureId, darkTextureId, darkMix, mvp,
-        uvOffsetX, uvOffsetY, uvScaleX, uvScaleY,
-        r, g, b, a
+        static_cast<int32_t>(textureId),
+        static_cast<int32_t>(darkTextureId),
+        darkMix,
+        mvp,
+        uvOffsetX,
+        uvOffsetY,
+        uvScaleX,
+        uvScaleY,
+        r,
+        g,
+        b,
+        a
     );
 }
 
 JNIEXPORT void JNICALL
 Java_com_example_render_VulkanNativeBridge_nativeDrawMotionBlurPass(
-    JNIEnv* env, jclass, jlong handle,
-    jfloatArray mvpArray, jint radius, jfloat sampleStep, jfloat direction
+    JNIEnv* env,
+    jclass /*clazz*/,
+    jlong handle,
+    jfloatArray mvpArray,
+    jint radius,
+    jfloat sampleStep,
+    jfloat direction
 ) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    if (!engine || !mvpArray) return;
-    float mvp[16];
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr || mvpArray == nullptr || env->GetArrayLength(mvpArray) < 16) return;
+    jfloat mvp[16]{};
     env->GetFloatArrayRegion(mvpArray, 0, 16, mvp);
-    engine->drawMotionBlurPass(mvp, radius, sampleStep, direction);
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        return;
+    }
+    engine->drawMotionBlurPass(mvp, static_cast<int32_t>(radius), sampleStep, direction);
 }
 
 JNIEXPORT jint JNICALL
-Java_com_example_render_VulkanNativeBridge_nativeEndFrame(JNIEnv*, jclass, jlong handle) {
-    auto* engine = reinterpret_cast<VulkanEngine*>(handle);
-    return engine ? engine->endFrame() : -1;
+Java_com_example_render_VulkanNativeBridge_nativeEndFrame(JNIEnv* /*env*/, jclass /*clazz*/, jlong handle) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return -1;
+    return static_cast<jint>(engine->endFrame());
 }
 
 } // extern "C"

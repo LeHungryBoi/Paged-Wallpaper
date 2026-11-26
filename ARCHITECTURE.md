@@ -13,7 +13,7 @@ Multi-page live wallpaper Android application built with Kotlin, Jetpack Compose
 ├── AGENTS.md                       # Engineering guidelines and file-length rules
 ├── ARCHITECTURE.md                 # System architecture and module map (this file)
 ├── app/src/main/cpp/               # Native NDK Vulkan renderer (libpaperpages_vk.so, CMake + glslc SPIR-V)
-│   ├── CMakeLists.txt              # Compiles GLSL 450 shaders to C SPIR-V headers and links libvulkan
+│   ├── CMakeLists.txt              # Compiles GLSL 450 shaders to C SPIR-V headers, links libvulkan with 16 KB ELF alignment
 │   ├── vk_engine.h / vk_context.cpp / vk_swapchain.cpp / vk_renderer_jni.cpp
 │   └── shaders/                    # wallpaper.vert|frag, motion_blur.vert|frag
 └── app/src/main/java/com/example/

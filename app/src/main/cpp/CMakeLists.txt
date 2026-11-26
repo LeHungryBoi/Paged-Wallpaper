@@ -59,6 +59,13 @@ target_compile_options(
     -Wextra
 )
 
+target_link_options(
+    paperpages_vk
+    PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,-z,common-page-size=16384"
+)
+
 target_link_libraries(
     paperpages_vk
     vulkan
