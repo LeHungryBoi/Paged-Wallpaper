@@ -388,27 +388,41 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
     return tex.id;
 }
 
+void VulkanEngine::destroyTextureResources(const GpuTexture& texture) {
+    if (texture.view) vkDestroyImageView(device, texture.view, nullptr);
+    if (texture.image) vkDestroyImage(device, texture.image, nullptr);
+    if (texture.memory) vkFreeMemory(device, texture.memory, nullptr);
+}
+
+void VulkanEngine::collectDeferredTextures() {
+    auto it = deferredTextures.begin();
+    while (it != deferredTextures.end()) {
+        if (it->retireAfterSerial <= completedFrameSerial) {
+            destroyTextureResources(it->texture);
+            it = deferredTextures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void VulkanEngine::deleteTexture(int32_t textureId) {
-    if (textureId == 0 || textureId == whiteTextureId) return;
+    if (textureId == 0 || textureId == whiteTextureId || device == VK_NULL_HANDLE) return;
     auto it = textures.find(textureId);
     if (it == textures.end()) return;
-    vkDeviceWaitIdle(device);
-    if (it->second.view) vkDestroyImageView(device, it->second.view, nullptr);
-    if (it->second.image) vkDestroyImage(device, it->second.image, nullptr);
-    if (it->second.memory) vkFreeMemory(device, it->second.memory, nullptr);
+    const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
+    deferredTextures.push_back({it->second, retireAfter});
     textures.erase(it);
 }
 
 void VulkanEngine::clearUserTextures() {
     if (device == VK_NULL_HANDLE) return;
-    vkDeviceWaitIdle(device);
+    const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
     for (auto it = textures.begin(); it != textures.end();) {
         if (it->first == whiteTextureId) {
             ++it;
         } else {
-            if (it->second.view) vkDestroyImageView(device, it->second.view, nullptr);
-            if (it->second.image) vkDestroyImage(device, it->second.image, nullptr);
-            if (it->second.memory) vkFreeMemory(device, it->second.memory, nullptr);
+            deferredTextures.push_back({it->second, retireAfter});
             it = textures.erase(it);
         }
     }
@@ -490,8 +504,11 @@ int32_t VulkanEngine::beginFrame(
         return -1;
     }
 
-    vkResetFences(device, 1, &frame.inFlight);
+    completedFrameSerial = std::max(completedFrameSerial, frame.submissionSerial);
+    collectDeferredTextures();
     vkResetDescriptorPool(device, frame.descriptorPool, 0);
+    frame.compositeDescriptors.clear();
+    frame.blurDescriptor = VK_NULL_HANDLE;
     vkResetCommandBuffer(frame.commandBuffer, 0);
 
     if (useMotionBlur && mbWidth > 0 && mbHeight > 0) {
@@ -597,32 +614,43 @@ void VulkanEngine::drawQuad(
     if (darkIt == textures.end()) darkIt = primaryIt;
 
     FrameSync& frame = frames[currentFrame];
+    const int32_t primaryId = textureId != 0 ? textureId : whiteTextureId;
+    const int32_t darkId = darkTextureId != 0 && darkMix > 0.001f ? darkTextureId : primaryId;
+    const uint64_t descriptorKey =
+        (static_cast<uint64_t>(static_cast<uint32_t>(primaryId)) << 32) |
+        static_cast<uint32_t>(darkId);
     VkDescriptorSet descSet = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = frame.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &compositeSetLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
+    auto cachedDescriptor = frame.compositeDescriptors.find(descriptorKey);
+    if (cachedDescriptor != frame.compositeDescriptors.end()) {
+        descSet = cachedDescriptor->second;
+    } else {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = frame.descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &compositeSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
 
-    VkDescriptorImageInfo imgInfos[2]{
-        {linearSampler, primaryIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {linearSampler, darkIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
-    };
-    VkWriteDescriptorSet writes[2]{};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = descSet;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[0].pImageInfo = &imgInfos[0];
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = descSet;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[1].pImageInfo = &imgInfos[1];
-    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        VkDescriptorImageInfo imgInfos[2]{
+            {linearSampler, primaryIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {linearSampler, darkIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+        };
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = descSet;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &imgInfos[0];
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = descSet;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo = &imgInfos[1];
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        frame.compositeDescriptors.emplace(descriptorKey, descSet);
+    }
 
     WallpaperPushConstants pc{};
     std::memcpy(pc.mvp, mvp, sizeof(pc.mvp));
@@ -654,23 +682,26 @@ void VulkanEngine::drawQuad(
 void VulkanEngine::drawMotionBlurPass(const float* mvp, int32_t radius, float sampleStep, float direction) {
     if (!recordingFrame || blurView == VK_NULL_HANDLE) return;
     FrameSync& frame = frames[currentFrame];
-    VkDescriptorSet descSet = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = frame.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &blurSetLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
+    VkDescriptorSet descSet = frame.blurDescriptor;
+    if (descSet == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = frame.descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &blurSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
 
-    VkDescriptorImageInfo imgInfo{linearSampler, blurView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = descSet;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &imgInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        VkDescriptorImageInfo imgInfo{linearSampler, blurView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = descSet;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imgInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        frame.blurDescriptor = descSet;
+    }
 
     MotionBlurPushConstants pc{};
     std::memcpy(pc.mvp, mvp, sizeof(pc.mvp));
@@ -708,7 +739,17 @@ int32_t VulkanEngine::endFrame() {
     submit.pCommandBuffers = &frame.commandBuffer;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &frame.renderFinished;
-    if (vkQueueSubmit(graphicsQueue, 1, &submit, frame.inFlight) != VK_SUCCESS) return -1;
+    // Keep the fence signaled while recording so early returns cannot strand
+    // this frame slot in an unsignaled state.
+    if (vkResetFences(device, 1, &frame.inFlight) != VK_SUCCESS) return -1;
+    if (vkQueueSubmit(graphicsQueue, 1, &submit, frame.inFlight) != VK_SUCCESS) {
+        VkFenceCreateInfo signaledFence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
+        vkDestroyFence(device, frame.inFlight, nullptr);
+        frame.inFlight = VK_NULL_HANDLE;
+        vkCreateFence(device, &signaledFence, nullptr, &frame.inFlight);
+        return -1;
+    }
+    frame.submissionSerial = ++submittedFrameSerial;
 
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
