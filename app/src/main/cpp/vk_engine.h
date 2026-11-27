@@ -6,6 +6,7 @@
 #include <vulkan/vulkan_android.h>
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -89,6 +90,12 @@ struct VulkanEngine {
     uint64_t submittedFrameSerial = 0;
     uint64_t completedFrameSerial = 0;
     std::vector<DeferredTexture> deferredTextures;
+    uint32_t timingSampleCount = 0;
+    uint64_t timingFenceWaitNs[120]{};
+    uint64_t timingAcquireNs[120]{};
+    uint64_t timingSubmitNs[120]{};
+    uint64_t timingPresentNs[120]{};
+    uint64_t timingUploadNs[120]{};
 
     // Window / swapchain (recreated on surface bind, independent of VkDevice & textures)
     ANativeWindow* window = nullptr;
@@ -156,6 +163,7 @@ struct VulkanEngine {
     bool ensureOffscreenTarget(uint32_t width, uint32_t height);
     bool ensureStagingBuffer(VkDeviceSize size);
     void collectDeferredTextures();
+    void recordTimingSample(const char* label, uint64_t elapsedNs);
     void destroyTextureResources(const GpuTexture& texture);
     VkFormat preferredTextureFormat() const;
     bool isSrgbSwapchain() const;
