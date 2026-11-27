@@ -90,7 +90,11 @@ struct VulkanEngine {
     uint64_t submittedFrameSerial = 0;
     uint64_t completedFrameSerial = 0;
     std::vector<DeferredTexture> deferredTextures;
-    uint32_t timingSampleCount = 0;
+    uint32_t timingFenceWaitCount = 0;
+    uint32_t timingAcquireCount = 0;
+    uint32_t timingSubmitCount = 0;
+    uint32_t timingPresentCount = 0;
+    uint32_t timingUploadCount = 0;
     uint64_t timingFenceWaitNs[120]{};
     uint64_t timingAcquireNs[120]{};
     uint64_t timingSubmitNs[120]{};
