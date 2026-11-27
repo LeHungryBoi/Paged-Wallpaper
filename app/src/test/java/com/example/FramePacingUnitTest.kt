@@ -14,32 +14,46 @@ class FramePacingUnitTest {
     fun renderFrameGateAllowsOnlyOneInFlightRequestAndCoalescesDeferredRedraws() {
         val gate = RenderFrameGate()
 
-        assertTrue(gate.tryBeginFrame(fromOffsetUpdate = false))
+        val firstFrameId = gate.beginFrame(fromOffsetUpdate = false)
+        assertTrue(firstFrameId != null)
         assertTrue(gate.isInFlight)
 
-        assertFalse(gate.tryBeginFrame(fromOffsetUpdate = false))
-        assertFalse(gate.tryBeginFrame(fromOffsetUpdate = true))
+        assertNull(gate.beginFrame(fromOffsetUpdate = false))
+        assertNull(gate.beginFrame(fromOffsetUpdate = true))
         assertTrue(gate.isInFlight)
 
-        val deferred = gate.completeFrame()
-        assertEquals(true, deferred?.fromOffsetUpdate)
+        val completion = gate.completeFrame(checkNotNull(firstFrameId))
+        assertEquals(true, completion?.deferredRedraw?.fromOffsetUpdate)
         assertFalse(gate.isInFlight)
-        assertNull(gate.completeFrame())
+        assertNull(gate.completeFrame(checkNotNull(firstFrameId)))
 
-        assertTrue(gate.tryBeginFrame(fromOffsetUpdate = false))
+        assertTrue(gate.beginFrame(fromOffsetUpdate = false) != null)
+    }
+
+    @Test
+    fun staleCompletionCannotReleaseANewerFrame() {
+        val gate = RenderFrameGate()
+        val firstFrameId = checkNotNull(gate.beginFrame(fromOffsetUpdate = false))
+        assertNotNull(gate.completeFrame(firstFrameId))
+
+        val secondFrameId = checkNotNull(gate.beginFrame(fromOffsetUpdate = true))
+        assertNull(gate.completeFrame(firstFrameId))
+        assertTrue(gate.isCurrent(secondFrameId))
+        assertTrue(gate.isInFlight)
     }
 
     @Test
     fun renderFrameGateCancelDropsDeferredWorkWhenSurfaceIsDestroyed() {
         val gate = RenderFrameGate()
-        assertTrue(gate.tryBeginFrame(fromOffsetUpdate = true))
-        assertFalse(gate.tryBeginFrame(fromOffsetUpdate = false))
+        assertTrue(gate.beginFrame(fromOffsetUpdate = true) != null)
+        assertNull(gate.beginFrame(fromOffsetUpdate = false))
 
         gate.cancel()
 
         assertFalse(gate.isInFlight)
-        assertNull(gate.completeFrame())
-        assertTrue(gate.tryBeginFrame(fromOffsetUpdate = false))
+        assertNull(gate.beginFrame(fromOffsetUpdate = false).let { id ->
+            if (id == null) null else gate.completeFrame(id)
+        }?.deferredRedraw)
     }
 
     @Test
@@ -60,5 +74,10 @@ class FramePacingUnitTest {
         assertTrue(longInterval > shortInterval)
         assertTrue(longInterval < 1f)
         assertEquals(1f, FrameSmoothing.fraction(1_000_000_000L), 0.00001f)
+        assertEquals(0f, FrameSmoothing.fraction(0L), 0f)
+    }
+
+    private fun assertNotNull(value: Any?) {
+        assertTrue(value != null)
     }
 }
