@@ -56,6 +56,9 @@ VkShaderModule VulkanEngine::createShaderModule(const uint32_t* code, size_t siz
 
 bool VulkanEngine::initDevice() {
     if (device != VK_NULL_HANDLE) return true;
+    timestampValidBits = 0;
+    timestampPeriodNs = 0.0;
+    gpuTimestampsEnabled = false;
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -97,13 +100,22 @@ bool VulkanEngine::initDevice() {
         std::vector<VkQueueFamilyProperties> qProps(qCount);
         vkGetPhysicalDeviceQueueFamilyProperties(gpu, &qCount, qProps.data());
         for (uint32_t i = 0; i < qCount; ++i) {
-            if (qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            if ((qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) continue;
+            // Keep the first graphics queue as a fallback, but prefer one that
+            // can provide timestamp queries for GPU-side frame diagnostics.
+            if (physicalDevice == VK_NULL_HANDLE) {
                 physicalDevice = gpu;
                 graphicsQueueFamily = i;
+                timestampValidBits = qProps[i].timestampValidBits;
+            }
+            if (qProps[i].timestampValidBits > 0) {
+                physicalDevice = gpu;
+                graphicsQueueFamily = i;
+                timestampValidBits = qProps[i].timestampValidBits;
                 break;
             }
         }
-        if (physicalDevice != VK_NULL_HANDLE) break;
+        if (timestampValidBits > 0) break;
     }
 
     if (physicalDevice == VK_NULL_HANDLE) {
@@ -115,6 +127,8 @@ bool VulkanEngine::initDevice() {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
     maxImageDimension2D = props.limits.maxImageDimension2D;
+    timestampPeriodNs = static_cast<double>(props.limits.timestampPeriod);
+    gpuTimestampsEnabled = timestampValidBits > 0 && timestampPeriodNs > 0.0;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProps);
 
     float priority = 1.0f;
@@ -304,6 +318,33 @@ bool VulkanEngine::initDevice() {
         }
     }
 
+    if (gpuTimestampsEnabled) {
+        for (auto& frame : frames) {
+            VkQueryPoolCreateInfo queryInfo{};
+            queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            queryInfo.queryCount = 3;
+            if (vkCreateQueryPool(device, &queryInfo, nullptr, &frame.timestampQueryPool) != VK_SUCCESS) {
+                gpuTimestampsEnabled = false;
+                for (auto& createdFrame : frames) {
+                    if (createdFrame.timestampQueryPool != VK_NULL_HANDLE) {
+                        vkDestroyQueryPool(device, createdFrame.timestampQueryPool, nullptr);
+                        createdFrame.timestampQueryPool = VK_NULL_HANDLE;
+                    }
+                }
+                LOGI("GPU timestamp queries disabled: query-pool creation failed");
+                break;
+            }
+        }
+    }
+    if (gpuTimestampsEnabled) {
+        LOGI("GPU timestamp queries enabled (queue=%u validBits=%u periodNs=%.3f)",
+             graphicsQueueFamily, timestampValidBits, timestampPeriodNs);
+    } else {
+        LOGI("GPU timestamp queries unavailable (queue=%u validBits=%u)",
+             graphicsQueueFamily, timestampValidBits);
+    }
+
     const uint32_t whitePixel = 0xFFFFFFFFu;
     whiteTextureId = uploadRgbaTexture(&whitePixel, 1, 1);
     if (whiteTextureId == 0) {
@@ -311,7 +352,8 @@ bool VulkanEngine::initDevice() {
         return false;
     }
 
-    LOGI("Initialized Vulkan device (%s, maxTex=%u)", props.deviceName, maxImageDimension2D);
+    LOGI("Initialized Vulkan device (%s, maxTex=%u, gpuTimestamps=%s)",
+         props.deviceName, maxImageDimension2D, gpuTimestampsEnabled ? "yes" : "no");
     return true;
 }
 
@@ -532,6 +574,7 @@ void VulkanEngine::destroyDevice() {
             if (f.inFlight) vkDestroyFence(device, f.inFlight, nullptr);
             if (f.imageAvailable) vkDestroySemaphore(device, f.imageAvailable, nullptr);
             if (f.renderFinished) vkDestroySemaphore(device, f.renderFinished, nullptr);
+            if (f.timestampQueryPool) vkDestroyQueryPool(device, f.timestampQueryPool, nullptr);
             f = FrameSync{};
         }
         if (commandPool) vkDestroyCommandPool(device, commandPool, nullptr);
@@ -543,6 +586,9 @@ void VulkanEngine::destroyDevice() {
         instance = VK_NULL_HANDLE;
     }
     physicalDevice = VK_NULL_HANDLE;
+    timestampValidBits = 0;
+    timestampPeriodNs = 0.0;
+    gpuTimestampsEnabled = false;
 }
 
 } // namespace paperpages_vk

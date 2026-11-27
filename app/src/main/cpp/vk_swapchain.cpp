@@ -411,6 +411,9 @@ void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
     else if (std::strcmp(label, "submit") == 0) { samples = timingSubmitNs; count = &timingSubmitCount; }
     else if (std::strcmp(label, "present") == 0) { samples = timingPresentNs; count = &timingPresentCount; }
     else if (std::strcmp(label, "upload") == 0) { samples = timingUploadNs; count = &timingUploadCount; }
+    else if (std::strcmp(label, "gpu_frame") == 0) { samples = timingGpuFrameNs; count = &timingGpuFrameCount; }
+    else if (std::strcmp(label, "gpu_offscreen") == 0) { samples = timingGpuOffscreenNs; count = &timingGpuOffscreenCount; }
+    else if (std::strcmp(label, "gpu_main") == 0) { samples = timingGpuMainNs; count = &timingGpuMainCount; }
     if (samples == nullptr || count == nullptr) return;
 
     samples[*count] = elapsed;
@@ -426,6 +429,51 @@ void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
          sorted[113] / 1e6,
          sorted[118] / 1e6);
     *count = 0;
+}
+
+void VulkanEngine::collectGpuTimestamps(FrameSync& frame) {
+    if (!gpuTimestampsEnabled ||
+        frame.timestampQueryPool == VK_NULL_HANDLE ||
+        !frame.timestampPending) {
+        return;
+    }
+
+    uint64_t timestamps[3]{};
+    const VkResult result = vkGetQueryPoolResults(
+        device,
+        frame.timestampQueryPool,
+        0,
+        3,
+        sizeof(timestamps),
+        timestamps,
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT
+    );
+    frame.timestampPending = false;
+    if (result != VK_SUCCESS) {
+        if (result != VK_NOT_READY) {
+            LOGE("vkGetQueryPoolResults failed: %d", result);
+        }
+        return;
+    }
+
+    const uint64_t timestampMask = timestampValidBits >= 64
+        ? UINT64_MAX
+        : ((uint64_t{1} << timestampValidBits) - 1u);
+    const auto elapsedTicks = [timestampMask](uint64_t start, uint64_t end) {
+        return (end - start) & timestampMask;
+    };
+    const auto ticksToNs = [this](uint64_t ticks) {
+        return static_cast<uint64_t>(static_cast<double>(ticks) * timestampPeriodNs);
+    };
+
+    recordTimingSample("gpu_frame", ticksToNs(elapsedTicks(timestamps[0], timestamps[2])));
+    if (frame.timestampHasOffscreenPass) {
+        recordTimingSample("gpu_offscreen", ticksToNs(elapsedTicks(timestamps[0], timestamps[1])));
+        recordTimingSample("gpu_main", ticksToNs(elapsedTicks(timestamps[1], timestamps[2])));
+    } else {
+        recordTimingSample("gpu_main", ticksToNs(elapsedTicks(timestamps[0], timestamps[2])));
+    }
 }
 
 void VulkanEngine::destroyTextureResources(const GpuTexture& texture) {
@@ -534,6 +582,9 @@ int32_t VulkanEngine::beginFrame(
     const auto fenceWaitStartedAt = SteadyClock::now();
     vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
     recordTimingSample("fence_wait", elapsedNs(fenceWaitStartedAt));
+    // The frame fence guarantees these timestamp results are ready. Never wait
+    // on query availability separately; a missing result is simply skipped.
+    collectGpuTimestamps(frame);
 
     const auto acquireStartedAt = SteadyClock::now();
     VkResult acq = vkAcquireNextImageKHR(
@@ -566,6 +617,21 @@ int32_t VulkanEngine::beginFrame(
 
     recordingFrame = true;
     usingOffscreenPass = useMotionBlur && blurFramebuffer != VK_NULL_HANDLE;
+
+    if (gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE) {
+        vkCmdResetQueryPool(frame.commandBuffer, frame.timestampQueryPool, 0, 3);
+        vkCmdWriteTimestamp(
+            frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.timestampQueryPool, 0
+        );
+        frame.timestampHasOffscreenPass = usingOffscreenPass;
+        // Without an offscreen pass, use the start marker as the main-pass
+        // baseline so gpu_main reports the whole render workload.
+        if (!usingOffscreenPass) {
+            vkCmdWriteTimestamp(
+                frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.timestampQueryPool, 1
+            );
+        }
+    }
 
     VkClearValue clearVal{};
     clearVal.color = {{clearR, clearG, clearB, 1.0f}};
@@ -614,6 +680,12 @@ void VulkanEngine::beginMainPass(float clearR, float clearG, float clearB) {
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
     );
+
+    if (gpuTimestampsEnabled && frames[currentFrame].timestampQueryPool != VK_NULL_HANDLE) {
+        vkCmdWriteTimestamp(
+            cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frames[currentFrame].timestampQueryPool, 1
+        );
+    }
 
     VkClearValue clearVal{};
     clearVal.color = {{clearR, clearG, clearB, 1.0f}};
@@ -770,7 +842,20 @@ int32_t VulkanEngine::endFrame() {
     if (!recordingFrame) return -1;
     recordingFrame = false;
     FrameSync& frame = frames[currentFrame];
+    const bool endingOffscreenPass = usingOffscreenPass;
     vkCmdEndRenderPass(frame.commandBuffer);
+    if (gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE) {
+        if (endingOffscreenPass) {
+            // Covers the early-out path where the offscreen pass was recorded
+            // but the caller did not transition to the swapchain pass.
+            vkCmdWriteTimestamp(
+                frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.timestampQueryPool, 1
+            );
+        }
+        vkCmdWriteTimestamp(
+            frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.timestampQueryPool, 2
+        );
+    }
     if (vkEndCommandBuffer(frame.commandBuffer) != VK_SUCCESS) return -1;
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -795,6 +880,7 @@ int32_t VulkanEngine::endFrame() {
         return -1;
     }
     frame.submissionSerial = ++submittedFrameSerial;
+    frame.timestampPending = gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE;
     recordTimingSample("submit", elapsedNs(submitStartedAt));
 
     VkPresentInfoKHR present{};

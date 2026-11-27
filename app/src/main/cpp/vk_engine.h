@@ -47,6 +47,9 @@ struct FrameSync {
     VkSemaphore renderFinished = VK_NULL_HANDLE;
     VkFence inFlight = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+    VkQueryPool timestampQueryPool = VK_NULL_HANDLE;
+    bool timestampPending = false;
+    bool timestampHasOffscreenPass = false;
 };
 
 struct DeferredTexture {
@@ -62,6 +65,9 @@ struct VulkanEngine {
     uint32_t graphicsQueueFamily = 0;
     VkPhysicalDeviceMemoryProperties memoryProps{};
     uint32_t maxImageDimension2D = 4096;
+    uint32_t timestampValidBits = 0;
+    double timestampPeriodNs = 0.0;
+    bool gpuTimestampsEnabled = false;
 
     VkCommandPool commandPool = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -95,11 +101,17 @@ struct VulkanEngine {
     uint32_t timingSubmitCount = 0;
     uint32_t timingPresentCount = 0;
     uint32_t timingUploadCount = 0;
+    uint32_t timingGpuFrameCount = 0;
+    uint32_t timingGpuOffscreenCount = 0;
+    uint32_t timingGpuMainCount = 0;
     uint64_t timingFenceWaitNs[120]{};
     uint64_t timingAcquireNs[120]{};
     uint64_t timingSubmitNs[120]{};
     uint64_t timingPresentNs[120]{};
     uint64_t timingUploadNs[120]{};
+    uint64_t timingGpuFrameNs[120]{};
+    uint64_t timingGpuOffscreenNs[120]{};
+    uint64_t timingGpuMainNs[120]{};
 
     // Window / swapchain (recreated on surface bind, independent of VkDevice & textures)
     ANativeWindow* window = nullptr;
@@ -168,6 +180,7 @@ struct VulkanEngine {
     bool ensureStagingBuffer(VkDeviceSize size);
     void collectDeferredTextures();
     void recordTimingSample(const char* label, uint64_t elapsedNs);
+    void collectGpuTimestamps(FrameSync& frame);
     void destroyTextureResources(const GpuTexture& texture);
     VkFormat preferredTextureFormat() const;
     bool isSrgbSwapchain() const;
