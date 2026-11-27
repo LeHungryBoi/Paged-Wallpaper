@@ -5,44 +5,57 @@ import kotlin.math.exp
 /**
  * Allows at most one frame request to be in flight for a wallpaper engine.
  *
- * State changes arriving during a render are coalesced into one deferred redraw. The animation
- * itself is not advanced while a frame is in flight; the next Choreographer callback is requested
- * only after the submitted frame completes.
+ * State changes arriving during a render are coalesced into one deferred redraw. Animation
+ * advancement is paused while a frame is in flight, so the displayed offset cannot be overwritten
+ * by a succession of newer requests.
  */
 internal class RenderFrameGate {
-    var isInFlight: Boolean = false
-        private set
-
+    private var nextFrameId = 1L
+    private var activeFrameId: Long? = null
     private var hasDeferredRedraw = false
     private var deferredFromOffsetUpdate = false
 
-    fun tryBeginFrame(fromOffsetUpdate: Boolean): Boolean {
-        if (isInFlight) {
+    val isInFlight: Boolean
+        get() = activeFrameId != null
+
+    fun beginFrame(fromOffsetUpdate: Boolean): Long? {
+        if (activeFrameId != null) {
             hasDeferredRedraw = true
             deferredFromOffsetUpdate = deferredFromOffsetUpdate || fromOffsetUpdate
-            return false
+            return null
         }
-        isInFlight = true
-        return true
+
+        val frameId = nextFrameId++
+        activeFrameId = frameId
+        return frameId
     }
 
-    fun completeFrame(): DeferredFrameRequest? {
-        if (!isInFlight) return null
-        isInFlight = false
-        if (!hasDeferredRedraw) return null
+    fun isCurrent(frameId: Long): Boolean = activeFrameId == frameId
 
-        val deferred = DeferredFrameRequest(deferredFromOffsetUpdate)
+    fun completeFrame(frameId: Long): FrameCompletion? {
+        if (!isCurrent(frameId)) return null
+        activeFrameId = null
+
+        val deferred = if (hasDeferredRedraw) {
+            DeferredFrameRequest(deferredFromOffsetUpdate)
+        } else {
+            null
+        }
         hasDeferredRedraw = false
         deferredFromOffsetUpdate = false
-        return deferred
+        return FrameCompletion(deferred)
     }
 
     fun cancel() {
-        isInFlight = false
+        activeFrameId = null
         hasDeferredRedraw = false
         deferredFromOffsetUpdate = false
     }
 }
+
+internal data class FrameCompletion(
+    val deferredRedraw: DeferredFrameRequest?
+)
 
 internal data class DeferredFrameRequest(
     val fromOffsetUpdate: Boolean
@@ -52,7 +65,7 @@ internal data class DeferredFrameRequest(
  * Exponential smoothing with a fixed wall-clock time constant, independent of refresh rate.
  *
  * A 25 ms time constant preserves approximately the existing 60 Hz response while allowing
- * higher-refresh devices to use smaller per-frame steps without changing the real-time response.
+ * higher-refresh devices to use smaller per-frame steps without changing real-time response.
  */
 internal object FrameSmoothing {
     const val TIME_CONSTANT_NANOS = 25_000_000L
