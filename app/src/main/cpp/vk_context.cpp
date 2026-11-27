@@ -59,6 +59,12 @@ bool VulkanEngine::initDevice() {
     timestampValidBits = 0;
     timestampPeriodNs = 0.0;
     gpuTimestampsEnabled = false;
+    displayTimingExtensionEnabled = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    pfnGetRefreshCycleDurationGOOGLE = nullptr;
+    pfnGetPastPresentationTimingGOOGLE = nullptr;
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -138,13 +144,32 @@ bool VulkanEngine::initDevice() {
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    bool hasGoogleDisplayTiming = false;
+    uint32_t availableDeviceExtensionCount = 0;
+    if (vkEnumerateDeviceExtensionProperties(
+            physicalDevice, nullptr, &availableDeviceExtensionCount, nullptr) == VK_SUCCESS &&
+        availableDeviceExtensionCount > 0) {
+        std::vector<VkExtensionProperties> availableDeviceExtensions(availableDeviceExtensionCount);
+        if (vkEnumerateDeviceExtensionProperties(
+                physicalDevice, nullptr, &availableDeviceExtensionCount, availableDeviceExtensions.data()) == VK_SUCCESS) {
+            for (const auto& extension : availableDeviceExtensions) {
+                if (std::strcmp(extension.extensionName, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) == 0) {
+                    hasGoogleDisplayTiming = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    if (hasGoogleDisplayTiming) devExts.push_back(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME);
+
     VkDeviceCreateInfo devInfo{};
     devInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     devInfo.queueCreateInfoCount = 1;
     devInfo.pQueueCreateInfos = &queueInfo;
-    devInfo.enabledExtensionCount = 1;
-    devInfo.ppEnabledExtensionNames = devExts;
+    devInfo.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
+    devInfo.ppEnabledExtensionNames = devExts.data();
 
     if (vkCreateDevice(physicalDevice, &devInfo, nullptr, &device) != VK_SUCCESS) {
         LOGE("vkCreateDevice failed");
@@ -152,6 +177,19 @@ bool VulkanEngine::initDevice() {
         return false;
     }
     vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
+    if (hasGoogleDisplayTiming) {
+        pfnGetRefreshCycleDurationGOOGLE = reinterpret_cast<PFN_vkGetRefreshCycleDurationGOOGLE>(
+            vkGetDeviceProcAddr(device, "vkGetRefreshCycleDurationGOOGLE")
+        );
+        pfnGetPastPresentationTimingGOOGLE = reinterpret_cast<PFN_vkGetPastPresentationTimingGOOGLE>(
+            vkGetDeviceProcAddr(device, "vkGetPastPresentationTimingGOOGLE")
+        );
+        displayTimingExtensionEnabled =
+            pfnGetRefreshCycleDurationGOOGLE != nullptr &&
+            pfnGetPastPresentationTimingGOOGLE != nullptr;
+    }
+    LOGI("Vulkan display timing %s",
+         displayTimingExtensionEnabled ? "enabled" : "unavailable");
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -588,6 +626,12 @@ void VulkanEngine::destroyDevice() {
     timestampValidBits = 0;
     timestampPeriodNs = 0.0;
     gpuTimestampsEnabled = false;
+    displayTimingExtensionEnabled = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    pfnGetRefreshCycleDurationGOOGLE = nullptr;
+    pfnGetPastPresentationTimingGOOGLE = nullptr;
 }
 
 } // namespace paperpages_vk

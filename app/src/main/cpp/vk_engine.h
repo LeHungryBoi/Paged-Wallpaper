@@ -89,6 +89,12 @@ struct VulkanEngine {
     uint32_t timestampValidBits = 0;
     double timestampPeriodNs = 0.0;
     bool gpuTimestampsEnabled = false;
+    bool displayTimingExtensionEnabled = false;
+    uint64_t displayRefreshDurationNs = 0;
+    uint32_t nextPresentId = 1;
+    uint64_t lastActualPresentTimeNs = 0;
+    PFN_vkGetRefreshCycleDurationGOOGLE pfnGetRefreshCycleDurationGOOGLE = nullptr;
+    PFN_vkGetPastPresentationTimingGOOGLE pfnGetPastPresentationTimingGOOGLE = nullptr;
 
     VkCommandPool commandPool = VK_NULL_HANDLE;
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -122,6 +128,8 @@ struct VulkanEngine {
     uint32_t timingGpuFrameCount = 0;
     uint32_t timingGpuOffscreenCount = 0;
     uint32_t timingGpuMainCount = 0;
+    uint32_t timingDisplayIntervalCount = 0;
+    uint32_t timingPresentMarginCount = 0;
     uint64_t timingFenceWaitNs[120]{};
     uint64_t timingAcquireNs[120]{};
     uint64_t timingSubmitNs[120]{};
@@ -130,6 +138,8 @@ struct VulkanEngine {
     uint64_t timingGpuFrameNs[120]{};
     uint64_t timingGpuOffscreenNs[120]{};
     uint64_t timingGpuMainNs[120]{};
+    uint64_t timingDisplayIntervalNs[120]{};
+    uint64_t timingPresentMarginNs[120]{};
 
     // Window / swapchain (recreated on surface bind, independent of VkDevice & textures)
     ANativeWindow* window = nullptr;
@@ -201,6 +211,7 @@ struct VulkanEngine {
     void collectDeferredTextures();
     void recordTimingSample(const char* label, uint64_t elapsedNs);
     void collectGpuTimestamps(FrameSync& frame);
+    void collectDisplayTimingSamples();
     void destroyTextureResources(const GpuTexture& texture);
     VkFormat preferredTextureFormat() const;
     bool isSrgbSwapchain() const;

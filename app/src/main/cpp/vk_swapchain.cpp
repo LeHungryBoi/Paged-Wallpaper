@@ -44,6 +44,9 @@ void VulkanEngine::destroySwapchainResources() {
         vkDestroySwapchainKHR(device, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;
     }
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
 }
 
 void VulkanEngine::destroyOffscreenTarget() {
@@ -200,6 +203,22 @@ bool VulkanEngine::bindSurface(ANativeWindow* newWindow, uint32_t width, uint32_
     swapchain = newSwapchain;
     swapchainExtent = extent;
     swapchainOutOfDate = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    if (displayTimingExtensionEnabled && pfnGetRefreshCycleDurationGOOGLE != nullptr) {
+        VkRefreshCycleDurationGOOGLE refreshCycle{};
+        const VkResult timingResult =
+            pfnGetRefreshCycleDurationGOOGLE(device, swapchain, &refreshCycle);
+        if (timingResult == VK_SUCCESS && refreshCycle.refreshDuration > 0) {
+            displayRefreshDurationNs = refreshCycle.refreshDuration;
+            LOGI("vk_display_timing refresh_ms=%.3f hz=%.2f",
+                 displayRefreshDurationNs / 1e6,
+                 1e9 / static_cast<double>(displayRefreshDurationNs));
+        } else {
+            LOGI("vk_display_timing refresh query unavailable: %d", timingResult);
+        }
+    }
 
     uint32_t scImgCount = 0;
     vkGetSwapchainImagesKHR(device, swapchain, &scImgCount, nullptr);
@@ -504,6 +523,8 @@ void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
     else if (std::strcmp(label, "gpu_frame") == 0) { samples = timingGpuFrameNs; count = &timingGpuFrameCount; }
     else if (std::strcmp(label, "gpu_offscreen") == 0) { samples = timingGpuOffscreenNs; count = &timingGpuOffscreenCount; }
     else if (std::strcmp(label, "gpu_main") == 0) { samples = timingGpuMainNs; count = &timingGpuMainCount; }
+    else if (std::strcmp(label, "display_interval") == 0) { samples = timingDisplayIntervalNs; count = &timingDisplayIntervalCount; }
+    else if (std::strcmp(label, "present_margin") == 0) { samples = timingPresentMarginNs; count = &timingPresentMarginCount; }
     if (samples == nullptr || count == nullptr) return;
 
     samples[*count] = elapsed;
@@ -519,6 +540,45 @@ void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
          sorted[113] / 1e6,
          sorted[118] / 1e6);
     *count = 0;
+}
+
+void VulkanEngine::collectDisplayTimingSamples() {
+    if (!displayTimingExtensionEnabled ||
+        pfnGetPastPresentationTimingGOOGLE == nullptr ||
+        swapchain == VK_NULL_HANDLE) {
+        return;
+    }
+
+    uint32_t timingCount = 0;
+    VkResult result = pfnGetPastPresentationTimingGOOGLE(device, swapchain, &timingCount, nullptr);
+    if (result != VK_SUCCESS || timingCount == 0) return;
+
+    std::vector<VkPastPresentationTimingGOOGLE> timings(timingCount);
+    result = pfnGetPastPresentationTimingGOOGLE(device, swapchain, &timingCount, timings.data());
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
+    timings.resize(timingCount);
+    std::sort(
+        timings.begin(),
+        timings.end(),
+        [](const VkPastPresentationTimingGOOGLE& left, const VkPastPresentationTimingGOOGLE& right) {
+            return left.actualPresentTime < right.actualPresentTime;
+        }
+    );
+
+    for (const auto& timing : timings) {
+        if (timing.actualPresentTime == 0 ||
+            timing.actualPresentTime <= lastActualPresentTimeNs) {
+            continue;
+        }
+        if (lastActualPresentTimeNs != 0) {
+            recordTimingSample(
+                "display_interval",
+                timing.actualPresentTime - lastActualPresentTimeNs
+            );
+        }
+        recordTimingSample("present_margin", timing.presentMargin);
+        lastActualPresentTimeNs = timing.actualPresentTime;
+    }
 }
 
 void VulkanEngine::collectGpuTimestamps(FrameSync& frame) {
@@ -711,6 +771,7 @@ int32_t VulkanEngine::beginFrame(
 
     completedFrameSerial = std::max(completedFrameSerial, frame.submissionSerial);
     collectDeferredTextures();
+    collectDisplayTimingSamples();
 
     // This slot's previous submission is finished, so its staging data is safe
     // to recycle. CPU uploads created outside a frame are staged here.
@@ -1017,8 +1078,21 @@ int32_t VulkanEngine::endFrame() {
     if (hasPendingUploads) frame.pendingUploads.clear();
     recordTimingSample("submit", elapsedNs(submitStartedAt));
 
+    VkPresentTimeGOOGLE presentTime{};
+    VkPresentTimesInfoGOOGLE presentTimesInfo{};
+    if (displayTimingExtensionEnabled) {
+        presentTime.presentID = nextPresentId++;
+        if (nextPresentId == 0) nextPresentId = 1;
+        // Keep desiredPresentTime at zero: collect display feedback without
+        // changing the existing FIFO presentation scheduling policy.
+        presentTimesInfo.sType = VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE;
+        presentTimesInfo.swapchainCount = 1;
+        presentTimesInfo.pTimes = &presentTime;
+    }
+
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    if (displayTimingExtensionEnabled) present.pNext = &presentTimesInfo;
     present.waitSemaphoreCount = 1;
     present.pWaitSemaphores = &frame.renderFinished;
     present.swapchainCount = 1;
