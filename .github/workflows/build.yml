@@ -1,6 +1,6 @@
 name: Build APK
 
-# Build a fresh APK on every push; main-branch builds are also published as releases.
+# Build a fresh APK on every push; default-branch builds are also published as releases.
 
 on:
   push:
@@ -54,7 +54,7 @@ jobs:
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
 
       - name: Publish APK GitHub release
-        if: github.ref == 'refs/heads/main'
+        if: github.ref_name == github.event.repository.default_branch
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -79,7 +79,7 @@ jobs:
           fi
 
       - name: Keep only the latest three APK releases
-        if: github.ref == 'refs/heads/main'
+        if: github.ref_name == github.event.repository.default_branch
         uses: actions/github-script@v9
         with:
           script: |
