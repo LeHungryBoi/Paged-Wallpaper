@@ -38,11 +38,19 @@ struct GpuTexture {
 };
 
 struct FrameSync {
+    uint64_t submissionSerial = 0;
+    std::unordered_map<uint64_t, VkDescriptorSet> compositeDescriptors;
+    VkDescriptorSet blurDescriptor = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
     VkSemaphore imageAvailable = VK_NULL_HANDLE;
     VkSemaphore renderFinished = VK_NULL_HANDLE;
     VkFence inFlight = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+};
+
+struct DeferredTexture {
+    GpuTexture texture;
+    uint64_t retireAfterSerial = 0;
 };
 
 struct VulkanEngine {
@@ -78,6 +86,9 @@ struct VulkanEngine {
 
     FrameSync frames[kMaxFramesInFlight]{};
     uint32_t currentFrame = 0;
+    uint64_t submittedFrameSerial = 0;
+    uint64_t completedFrameSerial = 0;
+    std::vector<DeferredTexture> deferredTextures;
 
     // Window / swapchain (recreated on surface bind, independent of VkDevice & textures)
     ANativeWindow* window = nullptr;
@@ -144,6 +155,8 @@ struct VulkanEngine {
     void destroyOffscreenTarget();
     bool ensureOffscreenTarget(uint32_t width, uint32_t height);
     bool ensureStagingBuffer(VkDeviceSize size);
+    void collectDeferredTextures();
+    void destroyTextureResources(const GpuTexture& texture);
     VkFormat preferredTextureFormat() const;
     bool isSrgbSwapchain() const;
     VkShaderModule createShaderModule(const uint32_t* code, size_t sizeBytes) const;
