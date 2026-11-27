@@ -3,11 +3,22 @@
 #include <android/log.h>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
+#include <algorithm>
 
 #define LOG_TAG "PaperPagesVK"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace paperpages_vk {
+
+namespace {
+using SteadyClock = std::chrono::steady_clock;
+uint64_t elapsedNs(SteadyClock::time_point start) {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now() - start).count()
+    );
+}
+}
 
 bool VulkanEngine::isSrgbSwapchain() const {
     return swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB ||
@@ -280,6 +291,7 @@ void VulkanEngine::transitionImageLayout(
 }
 
 int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint32_t height) {
+    const auto uploadStartedAt = SteadyClock::now();
     if (device == VK_NULL_HANDLE || pixels == nullptr || width == 0 || height == 0) return 0;
     const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4;
     if (!ensureStagingBuffer(byteSize)) return 0;
@@ -385,7 +397,22 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
     tex.width = width;
     tex.height = height;
     textures.emplace(tex.id, tex);
+    recordTimingSample("upload", elapsedNs(uploadStartedAt));
     return tex.id;
+}
+
+void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
+    uint64_t* target = nullptr;
+    if (std::strcmp(label, "fence_wait") == 0) target = timingFenceWaitNs;
+    else if (std::strcmp(label, "acquire") == 0) target = timingAcquireNs;
+    else if (std::strcmp(label, "submit") == 0) target = timingSubmitNs;
+    else if (std::strcmp(label, "present") == 0) target = timingPresentNs;
+    else if (std::strcmp(label, "upload") == 0) target = timingUploadNs;
+    if (target == nullptr) return;
+    target[timingSampleCount] = elapsed;
+    if (std::strcmp(label, "upload") != 0) return;
+    // Uploads are sporadic; report each one so cold-path stalls are visible.
+    LOGI("vk_timing upload_ms=%.3f", elapsed / 1e6);
 }
 
 void VulkanEngine::destroyTextureResources(const GpuTexture& texture) {
@@ -491,11 +518,15 @@ int32_t VulkanEngine::beginFrame(
     if (swapchainOutOfDate) return 1;
 
     FrameSync& frame = frames[currentFrame];
+    const auto fenceWaitStartedAt = SteadyClock::now();
     vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    recordTimingSample("fence_wait", elapsedNs(fenceWaitStartedAt));
 
+    const auto acquireStartedAt = SteadyClock::now();
     VkResult acq = vkAcquireNextImageKHR(
         device, swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &activeImageIndex
     );
+    recordTimingSample("acquire", elapsedNs(acquireStartedAt));
     if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainOutOfDate = true;
         return 1;
@@ -742,6 +773,7 @@ int32_t VulkanEngine::endFrame() {
     // Keep the fence signaled while recording so early returns cannot strand
     // this frame slot in an unsignaled state.
     if (vkResetFences(device, 1, &frame.inFlight) != VK_SUCCESS) return -1;
+    const auto submitStartedAt = SteadyClock::now();
     if (vkQueueSubmit(graphicsQueue, 1, &submit, frame.inFlight) != VK_SUCCESS) {
         VkFenceCreateInfo signaledFence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
         vkDestroyFence(device, frame.inFlight, nullptr);
@@ -750,6 +782,7 @@ int32_t VulkanEngine::endFrame() {
         return -1;
     }
     frame.submissionSerial = ++submittedFrameSerial;
+    recordTimingSample("submit", elapsedNs(submitStartedAt));
 
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -758,7 +791,9 @@ int32_t VulkanEngine::endFrame() {
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain;
     present.pImageIndices = &activeImageIndex;
+    const auto presentStartedAt = SteadyClock::now();
     VkResult res = vkQueuePresentKHR(graphicsQueue, &present);
+    recordTimingSample("present", elapsedNs(presentStartedAt));
     currentFrame = (currentFrame + 1) % kMaxFramesInFlight;
 
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
