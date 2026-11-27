@@ -498,6 +498,12 @@ void VulkanEngine::destroyDevice() {
             if (kv.second.memory) vkFreeMemory(device, kv.second.memory, nullptr);
         }
         textures.clear();
+        for (const auto& deferred : deferredTextures) {
+            if (deferred.texture.view) vkDestroyImageView(device, deferred.texture.view, nullptr);
+            if (deferred.texture.image) vkDestroyImage(device, deferred.texture.image, nullptr);
+            if (deferred.texture.memory) vkFreeMemory(device, deferred.texture.memory, nullptr);
+        }
+        deferredTextures.clear();
         whiteTextureId = 0;
         destroyOffscreenTarget();
         if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
