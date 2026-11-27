@@ -38,11 +38,32 @@ struct GpuTexture {
     uint32_t height = 0;
 };
 
+struct TextureUploadRegion {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceSize stagingOffset = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+struct PendingCpuTextureUpload {
+    int32_t textureId = 0;
+    VkImage image = VK_NULL_HANDLE;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    std::vector<uint8_t> pixels;
+};
+
 struct FrameSync {
     uint64_t submissionSerial = 0;
     std::unordered_map<uint64_t, VkDescriptorSet> compositeDescriptors;
     VkDescriptorSet blurDescriptor = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+    VkCommandBuffer uploadCommandBuffer = VK_NULL_HANDLE;
+    VkBuffer uploadStagingBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory uploadStagingMemory = VK_NULL_HANDLE;
+    VkDeviceSize uploadStagingCapacity = 0;
+    VkDeviceSize uploadStagingUsed = 0;
+    std::vector<TextureUploadRegion> pendingUploads;
     VkSemaphore imageAvailable = VK_NULL_HANDLE;
     VkSemaphore renderFinished = VK_NULL_HANDLE;
     VkFence inFlight = VK_NULL_HANDLE;
@@ -87,15 +108,12 @@ struct VulkanEngine {
     VkBuffer quadBuffer = VK_NULL_HANDLE;
     VkDeviceMemory quadMemory = VK_NULL_HANDLE;
 
-    VkBuffer stagingBuffer = VK_NULL_HANDLE;
-    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
-    VkDeviceSize stagingCapacity = 0;
-
     FrameSync frames[kMaxFramesInFlight]{};
     uint32_t currentFrame = 0;
     uint64_t submittedFrameSerial = 0;
     uint64_t completedFrameSerial = 0;
     std::vector<DeferredTexture> deferredTextures;
+    std::vector<PendingCpuTextureUpload> pendingCpuTextureUploads;
     uint32_t timingFenceWaitCount = 0;
     uint32_t timingAcquireCount = 0;
     uint32_t timingSubmitCount = 0;
@@ -177,7 +195,9 @@ struct VulkanEngine {
     void destroySwapchainResources();
     void destroyOffscreenTarget();
     bool ensureOffscreenTarget(uint32_t width, uint32_t height);
-    bool ensureStagingBuffer(VkDeviceSize size);
+    bool ensureFrameStagingBuffer(FrameSync& frame, VkDeviceSize size);
+    bool stagePendingCpuUploads(FrameSync& frame);
+    bool recordPendingTextureUploads(FrameSync& frame);
     void collectDeferredTextures();
     void recordTimingSample(const char* label, uint64_t elapsedNs);
     void collectGpuTimestamps(FrameSync& frame);

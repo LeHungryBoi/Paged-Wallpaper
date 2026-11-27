@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <utility>
 
 #define LOG_TAG "PaperPagesVK"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -232,41 +233,145 @@ bool VulkanEngine::bindSurface(ANativeWindow* newWindow, uint32_t width, uint32_
     return true;
 }
 
-bool VulkanEngine::ensureStagingBuffer(VkDeviceSize size) {
-    if (stagingBuffer != VK_NULL_HANDLE && stagingCapacity >= size) return true;
-    // uploadRgbaTexture waits for its transfer fence before returning, so the
-    // shared staging allocation is never referenced by an in-flight transfer
-    // when this function grows it. Rendering submissions do not use it.
-    if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
-    if (stagingMemory) vkFreeMemory(device, stagingMemory, nullptr);
-    stagingBuffer = VK_NULL_HANDLE;
-    stagingMemory = VK_NULL_HANDLE;
-    stagingCapacity = 0;
+bool VulkanEngine::ensureFrameStagingBuffer(FrameSync& frame, VkDeviceSize size) {
+    if (size == 0) return true;
+    if (frame.uploadStagingBuffer != VK_NULL_HANDLE && frame.uploadStagingCapacity >= size) return true;
 
-    VkBufferCreateInfo bufInfo{};
-    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufInfo.size = size;
-    bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &bufInfo, nullptr, &stagingBuffer) != VK_SUCCESS) return false;
+    const VkDeviceSize growthTarget = frame.uploadStagingCapacity == 0
+        ? static_cast<VkDeviceSize>(256 * 1024)
+        : (frame.uploadStagingCapacity > UINT64_MAX / 2 ? size : frame.uploadStagingCapacity * 2);
+    const VkDeviceSize newCapacity = std::max(size, growthTarget);
 
-    VkMemoryRequirements req{};
-    vkGetBufferMemoryRequirements(device, stagingBuffer, &req);
-    uint32_t memIdx = findMemoryType(
-        req.memoryTypeBits,
+    VkBuffer newBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory newMemory = VK_NULL_HANDLE;
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = newCapacity;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &newBuffer) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, newBuffer, &requirements);
+    const uint32_t memoryType = findMemoryType(
+        requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     );
-    if (memIdx == UINT32_MAX) return false;
-    VkMemoryAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc.allocationSize = req.size;
-    alloc.memoryTypeIndex = memIdx;
-    if (vkAllocateMemory(device, &alloc, nullptr, &stagingMemory) != VK_SUCCESS ||
-        vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0) != VK_SUCCESS) {
+    if (memoryType == UINT32_MAX) {
+        vkDestroyBuffer(device, newBuffer, nullptr);
         return false;
     }
-    stagingCapacity = size;
+
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(device, &allocation, nullptr, &newMemory) != VK_SUCCESS ||
+        vkBindBufferMemory(device, newBuffer, newMemory, 0) != VK_SUCCESS) {
+        if (newMemory != VK_NULL_HANDLE) vkFreeMemory(device, newMemory, nullptr);
+        vkDestroyBuffer(device, newBuffer, nullptr);
+        return false;
+    }
+
+    // Preserve already-staged texture bytes if another upload grows this buffer.
+    if (frame.uploadStagingUsed > 0) {
+        void* oldMapped = nullptr;
+        void* newMapped = nullptr;
+        if (frame.uploadStagingMemory == VK_NULL_HANDLE ||
+            vkMapMemory(device, frame.uploadStagingMemory, 0, frame.uploadStagingUsed, 0, &oldMapped) != VK_SUCCESS) {
+            vkFreeMemory(device, newMemory, nullptr);
+            vkDestroyBuffer(device, newBuffer, nullptr);
+            return false;
+        }
+        if (vkMapMemory(device, newMemory, 0, frame.uploadStagingUsed, 0, &newMapped) != VK_SUCCESS) {
+            vkUnmapMemory(device, frame.uploadStagingMemory);
+            vkFreeMemory(device, newMemory, nullptr);
+            vkDestroyBuffer(device, newBuffer, nullptr);
+            return false;
+        }
+        std::memcpy(newMapped, oldMapped, static_cast<size_t>(frame.uploadStagingUsed));
+        vkUnmapMemory(device, newMemory);
+        vkUnmapMemory(device, frame.uploadStagingMemory);
+    }
+
+    if (frame.uploadStagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, frame.uploadStagingBuffer, nullptr);
+    if (frame.uploadStagingMemory != VK_NULL_HANDLE) vkFreeMemory(device, frame.uploadStagingMemory, nullptr);
+    frame.uploadStagingBuffer = newBuffer;
+    frame.uploadStagingMemory = newMemory;
+    frame.uploadStagingCapacity = requirements.size;
+    return frame.uploadStagingCapacity >= size;
+}
+
+bool VulkanEngine::stagePendingCpuUploads(FrameSync& frame) {
+    if (pendingCpuTextureUploads.empty()) return true;
+
+    VkDeviceSize totalBytes = 0;
+    for (const auto& upload : pendingCpuTextureUploads) {
+        const VkDeviceSize size = static_cast<VkDeviceSize>(upload.pixels.size());
+        if (size == 0 || size > UINT64_MAX - totalBytes) return false;
+        totalBytes += size;
+    }
+    if (!ensureFrameStagingBuffer(frame, totalBytes)) return false;
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device, frame.uploadStagingMemory, 0, totalBytes, 0, &mapped) != VK_SUCCESS) return false;
+
+    VkDeviceSize offset = 0;
+    frame.pendingUploads.reserve(frame.pendingUploads.size() + pendingCpuTextureUploads.size());
+    for (const auto& upload : pendingCpuTextureUploads) {
+        const VkDeviceSize size = static_cast<VkDeviceSize>(upload.pixels.size());
+        std::memcpy(
+            static_cast<uint8_t*>(mapped) + static_cast<size_t>(offset),
+            upload.pixels.data(),
+            upload.pixels.size()
+        );
+        frame.pendingUploads.push_back({upload.image, offset, upload.width, upload.height});
+        offset += size;
+    }
+    vkUnmapMemory(device, frame.uploadStagingMemory);
+    frame.uploadStagingUsed = offset;
+    pendingCpuTextureUploads.clear();
     return true;
+}
+
+bool VulkanEngine::recordPendingTextureUploads(FrameSync& frame) {
+    if (frame.pendingUploads.empty()) return true;
+    if (frame.uploadCommandBuffer == VK_NULL_HANDLE ||
+        frame.uploadStagingBuffer == VK_NULL_HANDLE ||
+        frame.uploadStagingUsed == 0) return false;
+
+    if (vkResetCommandBuffer(frame.uploadCommandBuffer, 0) != VK_SUCCESS) return false;
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(frame.uploadCommandBuffer, &beginInfo) != VK_SUCCESS) return false;
+
+    for (const auto& upload : frame.pendingUploads) {
+        transitionImageLayout(
+            frame.uploadCommandBuffer, upload.image,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, VK_ACCESS_TRANSFER_WRITE_BIT
+        );
+
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = upload.stagingOffset;
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {upload.width, upload.height, 1};
+        vkCmdCopyBufferToImage(
+            frame.uploadCommandBuffer, frame.uploadStagingBuffer, upload.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy
+        );
+
+        transitionImageLayout(
+            frame.uploadCommandBuffer, upload.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
+        );
+    }
+
+    return vkEndCommandBuffer(frame.uploadCommandBuffer) == VK_SUCCESS;
 }
 
 void VulkanEngine::transitionImageLayout(
@@ -296,12 +401,6 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
     const auto uploadStartedAt = SteadyClock::now();
     if (device == VK_NULL_HANDLE || pixels == nullptr || width == 0 || height == 0) return 0;
     const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4;
-    if (!ensureStagingBuffer(byteSize)) return 0;
-
-    void* mapped = nullptr;
-    if (vkMapMemory(device, stagingMemory, 0, byteSize, 0, &mapped) != VK_SUCCESS) return 0;
-    std::memcpy(mapped, pixels, byteSize);
-    vkUnmapMemory(device, stagingMemory);
 
     VkFormat fmt = preferredTextureFormat();
     VkImageCreateInfo imgInfo{};
@@ -319,69 +418,24 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
 
     GpuTexture tex{};
     if (vkCreateImage(device, &imgInfo, nullptr, &tex.image) != VK_SUCCESS) return 0;
-
     VkMemoryRequirements memReq{};
     vkGetImageMemoryRequirements(device, tex.image, &memReq);
-    uint32_t memIdx = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const uint32_t memIdx = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (memIdx == UINT32_MAX) {
         vkDestroyImage(device, tex.image, nullptr);
         return 0;
     }
+
     VkMemoryAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.allocationSize = memReq.size;
     alloc.memoryTypeIndex = memIdx;
     if (vkAllocateMemory(device, &alloc, nullptr, &tex.memory) != VK_SUCCESS ||
         vkBindImageMemory(device, tex.image, tex.memory, 0) != VK_SUCCESS) {
-        if (tex.memory) vkFreeMemory(device, tex.memory, nullptr);
+        if (tex.memory != VK_NULL_HANDLE) vkFreeMemory(device, tex.memory, nullptr);
         vkDestroyImage(device, tex.image, nullptr);
         return 0;
     }
-
-    VkCommandBufferAllocateInfo cmdAlloc{};
-    cmdAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdAlloc.commandPool = commandPool;
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-
-    transitionImageLayout(
-        cmd, tex.image,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, VK_ACCESS_TRANSFER_WRITE_BIT
-    );
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    transitionImageLayout(
-        cmd, tex.image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
-    );
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    VkFence fence = VK_NULL_HANDLE;
-    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
-    vkCreateFence(device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-    vkDestroyFence(device, fence, nullptr);
-    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -398,7 +452,43 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
     tex.id = nextTextureId++;
     tex.width = width;
     tex.height = height;
+    if (recordingFrame) {
+        FrameSync& frame = frames[currentFrame];
+        if (byteSize > UINT64_MAX - frame.uploadStagingUsed ||
+            !ensureFrameStagingBuffer(frame, frame.uploadStagingUsed + byteSize)) {
+            destroyTextureResources(tex);
+            return 0;
+        }
+
+        void* mapped = nullptr;
+        const VkDeviceSize endOffset = frame.uploadStagingUsed + byteSize;
+        if (vkMapMemory(device, frame.uploadStagingMemory, 0, endOffset, 0, &mapped) != VK_SUCCESS) {
+            destroyTextureResources(tex);
+            return 0;
+        }
+        const VkDeviceSize offset = frame.uploadStagingUsed;
+        std::memcpy(
+            static_cast<uint8_t*>(mapped) + static_cast<size_t>(offset),
+            pixels,
+            static_cast<size_t>(byteSize)
+        );
+        vkUnmapMemory(device, frame.uploadStagingMemory);
+        frame.pendingUploads.push_back({tex.image, offset, width, height});
+        frame.uploadStagingUsed = endOffset;
+    } else {
+        PendingCpuTextureUpload pending{};
+        pending.textureId = tex.id;
+        pending.image = tex.image;
+        pending.width = width;
+        pending.height = height;
+        pending.pixels.resize(static_cast<size_t>(byteSize));
+        std::memcpy(pending.pixels.data(), pixels, static_cast<size_t>(byteSize));
+        pendingCpuTextureUploads.push_back(std::move(pending));
+    }
+
     textures.emplace(tex.id, tex);
+    // CPU time covers image creation and staging/enqueue. GPU copy work is
+    // batched into rendering and protected by that frame's existing fence.
     recordTimingSample("upload", elapsedNs(uploadStartedAt));
     return tex.id;
 }
@@ -498,6 +588,16 @@ void VulkanEngine::deleteTexture(int32_t textureId) {
     if (textureId == 0 || textureId == whiteTextureId || device == VK_NULL_HANDLE) return;
     auto it = textures.find(textureId);
     if (it == textures.end()) return;
+    if (!recordingFrame) {
+        pendingCpuTextureUploads.erase(
+            std::remove_if(
+                pendingCpuTextureUploads.begin(),
+                pendingCpuTextureUploads.end(),
+                [textureId](const PendingCpuTextureUpload& upload) { return upload.textureId == textureId; }
+            ),
+            pendingCpuTextureUploads.end()
+        );
+    }
     const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
     deferredTextures.push_back({it->second, retireAfter});
     textures.erase(it);
@@ -505,6 +605,16 @@ void VulkanEngine::deleteTexture(int32_t textureId) {
 
 void VulkanEngine::clearUserTextures() {
     if (device == VK_NULL_HANDLE) return;
+    if (!recordingFrame) {
+        pendingCpuTextureUploads.erase(
+            std::remove_if(
+                pendingCpuTextureUploads.begin(),
+                pendingCpuTextureUploads.end(),
+                [this](const PendingCpuTextureUpload& upload) { return upload.textureId != whiteTextureId; }
+            ),
+            pendingCpuTextureUploads.end()
+        );
+    }
     const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
     for (auto it = textures.begin(); it != textures.end();) {
         if (it->first == whiteTextureId) {
@@ -601,6 +711,16 @@ int32_t VulkanEngine::beginFrame(
 
     completedFrameSerial = std::max(completedFrameSerial, frame.submissionSerial);
     collectDeferredTextures();
+
+    // This slot's previous submission is finished, so its staging data is safe
+    // to recycle. CPU uploads created outside a frame are staged here.
+    frame.uploadStagingUsed = 0;
+    frame.pendingUploads.clear();
+    if (!stagePendingCpuUploads(frame)) {
+        LOGE("Failed to stage pending texture uploads");
+        return -1;
+    }
+
     vkResetDescriptorPool(device, frame.descriptorPool, 0);
     frame.compositeDescriptors.clear();
     frame.blurDescriptor = VK_NULL_HANDLE;
@@ -858,14 +978,27 @@ int32_t VulkanEngine::endFrame() {
     }
     if (vkEndCommandBuffer(frame.commandBuffer) != VK_SUCCESS) return -1;
 
+    const bool hasPendingUploads = !frame.pendingUploads.empty();
+    if (hasPendingUploads && !recordPendingTextureUploads(frame)) {
+        LOGE("Failed to record batched texture uploads");
+        return -1;
+    }
+
+    // Submit transfers before rendering on the same queue. The image barriers
+    // above make transfer writes visible to fragment sampling in the draw pass.
+    VkCommandBuffer submitCommandBuffers[2]{};
+    uint32_t submitCommandBufferCount = 0;
+    if (hasPendingUploads) submitCommandBuffers[submitCommandBufferCount++] = frame.uploadCommandBuffer;
+    submitCommandBuffers[submitCommandBufferCount++] = frame.commandBuffer;
+
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.waitSemaphoreCount = 1;
     submit.pWaitSemaphores = &frame.imageAvailable;
     submit.pWaitDstStageMask = &waitStage;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &frame.commandBuffer;
+    submit.commandBufferCount = submitCommandBufferCount;
+    submit.pCommandBuffers = submitCommandBuffers;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &frame.renderFinished;
     // Keep the fence signaled while recording so early returns cannot strand
@@ -881,6 +1014,7 @@ int32_t VulkanEngine::endFrame() {
     }
     frame.submissionSerial = ++submittedFrameSerial;
     frame.timestampPending = gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE;
+    if (hasPendingUploads) frame.pendingUploads.clear();
     recordTimingSample("submit", elapsedNs(submitStartedAt));
 
     VkPresentInfoKHR present{};

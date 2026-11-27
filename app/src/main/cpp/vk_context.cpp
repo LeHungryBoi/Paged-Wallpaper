@@ -289,7 +289,8 @@ bool VulkanEngine::initDevice() {
         cmdAlloc.commandPool = commandPool;
         cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cmdAlloc.commandBufferCount = 1;
-        if (vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].commandBuffer) != VK_SUCCESS) {
+        if (vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].commandBuffer) != VK_SUCCESS ||
+            vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].uploadCommandBuffer) != VK_SUCCESS) {
             destroyDevice();
             return false;
         }
@@ -548,11 +549,6 @@ void VulkanEngine::destroyDevice() {
         deferredTextures.clear();
         whiteTextureId = 0;
         destroyOffscreenTarget();
-        if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
-        if (stagingMemory) vkFreeMemory(device, stagingMemory, nullptr);
-        stagingBuffer = VK_NULL_HANDLE;
-        stagingMemory = VK_NULL_HANDLE;
-        stagingCapacity = 0;
         if (quadBuffer) vkDestroyBuffer(device, quadBuffer, nullptr);
         if (quadMemory) vkFreeMemory(device, quadMemory, nullptr);
         quadBuffer = VK_NULL_HANDLE;
@@ -569,7 +565,10 @@ void VulkanEngine::destroyDevice() {
         if (compositeSetLayout) vkDestroyDescriptorSetLayout(device, compositeSetLayout, nullptr);
         if (blurSetLayout) vkDestroyDescriptorSetLayout(device, blurSetLayout, nullptr);
         if (pipelineCache) vkDestroyPipelineCache(device, pipelineCache, nullptr);
+        pendingCpuTextureUploads.clear();
         for (auto& f : frames) {
+            if (f.uploadStagingBuffer) vkDestroyBuffer(device, f.uploadStagingBuffer, nullptr);
+            if (f.uploadStagingMemory) vkFreeMemory(device, f.uploadStagingMemory, nullptr);
             if (f.descriptorPool) vkDestroyDescriptorPool(device, f.descriptorPool, nullptr);
             if (f.inFlight) vkDestroyFence(device, f.inFlight, nullptr);
             if (f.imageAvailable) vkDestroySemaphore(device, f.imageAvailable, nullptr);
