@@ -2,9 +2,8 @@
 
 #include <android/log.h>
 #include <algorithm>
-#include <cstring>
 #include <chrono>
-#include <algorithm>
+#include <cstring>
 
 #define LOG_TAG "PaperPagesVK"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -235,7 +234,9 @@ bool VulkanEngine::bindSurface(ANativeWindow* newWindow, uint32_t width, uint32_
 
 bool VulkanEngine::ensureStagingBuffer(VkDeviceSize size) {
     if (stagingBuffer != VK_NULL_HANDLE && stagingCapacity >= size) return true;
-    vkDeviceWaitIdle(device);
+    // uploadRgbaTexture waits for its transfer fence before returning, so the
+    // shared staging allocation is never referenced by an in-flight transfer
+    // when this function grows it. Rendering submissions do not use it.
     if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
     if (stagingMemory) vkFreeMemory(device, stagingMemory, nullptr);
     stagingBuffer = VK_NULL_HANDLE;
