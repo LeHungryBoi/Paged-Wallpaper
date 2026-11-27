@@ -43,6 +43,8 @@ import com.example.render.EdgeOverScrollScaling
 import com.example.render.EntryLifecycleGuard
 import com.example.render.EntryTransitionController
 import com.example.render.EntryTriggerDecision
+import com.example.render.FrameSmoothing
+import com.example.render.RenderFrameGate
 import com.example.render.GpuFrameRequest
 import com.example.render.HorizontalMotionBlur
 import com.example.render.OffsetEasing
@@ -53,7 +55,6 @@ import com.example.transition.TransitionRegistry
 import java.util.concurrent.CopyOnWriteArraySet
 import kotlin.math.abs
 import kotlin.math.ceil
-import kotlin.math.exp
 
 private const val OFFSET_EPSILON = 0.00005f
 private const val STATIC_OFFSET_TOLERANCE = 0.002f
@@ -149,6 +150,8 @@ class MultiPageWallpaperService : WallpaperService() {
         }
         private val choreographer by lazy { Choreographer.getInstance() }
         private var animationFramePosted = false
+        private val renderFrameGate = RenderFrameGate()
+        private var animationWaitingForRender = false
         private var lastAnimationFrameTimeNanos = 0L
         private var nextAnimationFrameDeadlineNanos = 0L
         private var preferredSurfaceFrameRate: Int? = null
@@ -286,6 +289,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             engineDestroyed = true
+            renderFrameGate.cancel()
+            animationWaitingForRender = false
             activeEngines.remove(this)
             gpuRenderer?.release()
             gpuRenderer = null
@@ -516,6 +521,8 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             stopOffsetAnimation()
+            renderFrameGate.cancel()
+            animationWaitingForRender = false
             releaseMotionBlurBuffer()
             gpuRenderer?.onSurfaceDestroyed()
             super.onSurfaceDestroyed(holder)
@@ -1020,6 +1027,10 @@ class MultiPageWallpaperService : WallpaperService() {
                 stopOffsetAnimation()
                 return
             }
+            if (renderFrameGate.isInFlight) {
+                animationWaitingForRender = true
+                return
+            }
 
             val frameIntervalNanos =
                 NANOS_PER_SECOND / getEffectiveAnimationFrameRate()
@@ -1036,10 +1047,7 @@ class MultiPageWallpaperService : WallpaperService() {
             } else {
                 (frameTimeNanos - lastAnimationFrameTimeNanos).coerceAtLeast(1L)
             }
-            val smoothingTimeNanos = maxOf(frameIntervalNanos, elapsedNanos) * 1.5
-            val smoothingFraction = (
-                1.0 - exp(-elapsedNanos.toDouble() / smoothingTimeNanos)
-            ).toFloat()
+            val smoothingFraction = FrameSmoothing.fraction(elapsedNanos)
             val wasResolvingEdgeOverScroll = !edgeOverScrollController.isTouchActive &&
                 edgeOverScrollController.hasActiveFraction()
             if (wasResolvingEdgeOverScroll) {
@@ -1129,6 +1137,8 @@ class MultiPageWallpaperService : WallpaperService() {
                 return
             }
             val holder = surfaceHolder ?: return
+            if (!holder.surface.isValid) return
+            val frameId = renderFrameGate.beginFrame(fromOffsetUpdate) ?: return
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
             val continuousPagePosition = getPagePosition(renderedXOffset, state)
@@ -1218,25 +1228,27 @@ class MultiPageWallpaperService : WallpaperService() {
                 frameDebugColor = frameDebugColors[frameDebugSequenceIndex],
                 edgeOverScrollFraction = edgeOverScrollController.overScrollFraction
             )
-            if (!holder.surface.isValid) return
             val renderer = getGpuRenderer()
             if (renderer != null) {
-                renderer.render(
-                    request = request,
-                    onSubmitted = ::onGpuFrameSubmitted,
-                    onFailure = ::onGpuRenderingFailed,
-                    onRetryNeeded = {
-                        if (!engineDestroyed && isVisible) {
-                            drawFrame(fromOffsetUpdate = fromOffsetUpdate)
-                        }
-                    }
-                )
+                try {
+                    renderer.render(
+                        request = request,
+                        onSubmitted = { submittedRequest ->
+                            onGpuFrameSubmitted(submittedRequest, frameId)
+                        },
+                        onFailure = { onGpuRenderingFailed(frameId) },
+                        onRetryNeeded = { retryRenderFrame(frameId, fromOffsetUpdate) }
+                    )
+                } catch (error: Throwable) {
+                    Log.e("MultiPageWallpaper", "Unable to enqueue GPU frame", error)
+                    onGpuRenderingFailed(frameId)
+                }
                 return
             }
-            drawSoftwareFrame(holder, request)
+            drawSoftwareFrame(holder, request, frameId)
         }
 
-        private fun drawSoftwareFrame(holder: SurfaceHolder, request: GpuFrameRequest) {
+        private fun drawSoftwareFrame(holder: SurfaceHolder, request: GpuFrameRequest, frameId: Long) {
             val state = request.state
             var canvas: Canvas? = null
             var framePosted = false
@@ -1266,19 +1278,28 @@ class MultiPageWallpaperService : WallpaperService() {
                         Log.e("MultiPageWallpaper", "Error unlocking canvas", e)
                     }
                 }
-                if (framePosted) onFrameSubmitted(request, frameDebugIndicatorDrawnForFrame)
+                if (framePosted) {
+                    onFrameSubmitted(request, frameDebugIndicatorDrawnForFrame, frameId)
+                } else {
+                    finishRenderFrame(frameId)
+                }
             }
         }
 
-        private fun onGpuFrameSubmitted(request: GpuFrameRequest) {
+        private fun onGpuFrameSubmitted(request: GpuFrameRequest, frameId: Long) {
             onFrameSubmitted(
                 request,
-                request.state.showFrameDebugIndicator && request.isVisible
+                request.state.showFrameDebugIndicator && request.isVisible,
+                frameId
             )
         }
 
-        private fun onFrameSubmitted(request: GpuFrameRequest, debugIndicatorDrawn: Boolean) {
-            if (engineDestroyed) return
+        private fun onFrameSubmitted(
+            request: GpuFrameRequest,
+            debugIndicatorDrawn: Boolean,
+            frameId: Long
+        ) {
+            if (engineDestroyed || !renderFrameGate.isCurrent(frameId)) return
             if (debugIndicatorDrawn) {
                 frameDebugSequenceIndex = (frameDebugSequenceIndex + 1) % frameDebugColors.size
             }
@@ -1292,14 +1313,48 @@ class MultiPageWallpaperService : WallpaperService() {
                 offsetDirection = swipeDirectionLock.onFrameSettled()
                 maybeNotifyWallpaperColorsChanged()
             }
+            finishRenderFrame(frameId)
         }
 
-        private fun onGpuRenderingFailed() {
-            if (engineDestroyed || gpuRenderingFailed) return
+        private fun finishRenderFrame(frameId: Long) {
+            if (engineDestroyed) return
+            val completion = renderFrameGate.completeFrame(frameId) ?: return
+            val deferred = completion.deferredRedraw
+            if (deferred != null) {
+                drawFrame(fromOffsetUpdate = deferred.fromOffsetUpdate)
+            } else if (animationWaitingForRender) {
+                animationWaitingForRender = false
+                if (isVisible && isOffsetAnimationNeeded()) {
+                    scheduleOffsetAnimationFrame()
+                }
+            }
+        }
+
+        private fun retryRenderFrame(frameId: Long, fromOffsetUpdate: Boolean) {
+            if (engineDestroyed) return
+            val completion = renderFrameGate.completeFrame(frameId)
+            val deferredOffsetUpdate = completion?.deferredRedraw?.fromOffsetUpdate == true
+            if (completion != null) {
+                if (completion.deferredRedraw != null || isVisible) {
+                    drawFrame(fromOffsetUpdate || deferredOffsetUpdate)
+                } else if (animationWaitingForRender) {
+                    animationWaitingForRender = false
+                    if (isVisible && isOffsetAnimationNeeded()) scheduleOffsetAnimationFrame()
+                }
+            } else if (isVisible) {
+                // This can be a delayed asset retry from an already-submitted frame. If another
+                // frame is active, drawFrame coalesces this into its deferred redraw instead.
+                drawFrame(fromOffsetUpdate)
+            }
+        }
+
+        private fun onGpuRenderingFailed(frameId: Long) {
+            if (engineDestroyed || gpuRenderingFailed || !renderFrameGate.isCurrent(frameId)) return
             gpuRenderingFailed = true
             gpuRenderer?.release()
             gpuRenderer = null
-            drawFrame()
+            val completion = renderFrameGate.completeFrame(frameId) ?: return
+            drawFrame(completion.deferredRedraw?.fromOffsetUpdate ?: false)
         }
 
         private fun renderMotionBlurredWallpaper(
