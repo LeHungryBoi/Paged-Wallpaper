@@ -402,17 +402,28 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
 }
 
 void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
-    uint64_t* target = nullptr;
-    if (std::strcmp(label, "fence_wait") == 0) target = timingFenceWaitNs;
-    else if (std::strcmp(label, "acquire") == 0) target = timingAcquireNs;
-    else if (std::strcmp(label, "submit") == 0) target = timingSubmitNs;
-    else if (std::strcmp(label, "present") == 0) target = timingPresentNs;
-    else if (std::strcmp(label, "upload") == 0) target = timingUploadNs;
-    if (target == nullptr) return;
-    target[timingSampleCount] = elapsed;
-    if (std::strcmp(label, "upload") != 0) return;
-    // Uploads are sporadic; report each one so cold-path stalls are visible.
-    LOGI("vk_timing upload_ms=%.3f", elapsed / 1e6);
+    uint64_t* samples = nullptr;
+    uint32_t* count = nullptr;
+    if (std::strcmp(label, "fence_wait") == 0) { samples = timingFenceWaitNs; count = &timingFenceWaitCount; }
+    else if (std::strcmp(label, "acquire") == 0) { samples = timingAcquireNs; count = &timingAcquireCount; }
+    else if (std::strcmp(label, "submit") == 0) { samples = timingSubmitNs; count = &timingSubmitCount; }
+    else if (std::strcmp(label, "present") == 0) { samples = timingPresentNs; count = &timingPresentCount; }
+    else if (std::strcmp(label, "upload") == 0) { samples = timingUploadNs; count = &timingUploadCount; }
+    if (samples == nullptr || count == nullptr) return;
+
+    samples[*count] = elapsed;
+    ++(*count);
+    if (*count < 120) return;
+
+    uint64_t sorted[120];
+    std::copy(samples, samples + 120, sorted);
+    std::sort(sorted, sorted + 120);
+    LOGI("vk_timing %s_ms p50=%.3f p95=%.3f p99=%.3f",
+         label,
+         sorted[59] / 1e6,
+         sorted[113] / 1e6,
+         sorted[118] / 1e6);
+    *count = 0;
 }
 
 void VulkanEngine::destroyTextureResources(const GpuTexture& texture) {
