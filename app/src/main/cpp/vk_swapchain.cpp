@@ -688,7 +688,22 @@ void VulkanEngine::clearUserTextures() {
 
 bool VulkanEngine::ensureOffscreenTarget(uint32_t width, uint32_t height) {
     if (blurImage != VK_NULL_HANDLE && blurWidth == width && blurHeight == height) return true;
-    vkDeviceWaitIdle(device);
+
+    const auto setupStartedAt = SteadyClock::now();
+    const bool replacingTarget =
+        blurFramebuffer != VK_NULL_HANDLE ||
+        blurView != VK_NULL_HANDLE ||
+        blurImage != VK_NULL_HANDLE ||
+        blurMemory != VK_NULL_HANDLE;
+    if (replacingTarget) {
+        const auto idleWaitStartedAt = SteadyClock::now();
+        vkDeviceWaitIdle(device);
+        LOGI("vk_timing offscreen_target_wait_idle_ms value=%.3f",
+             elapsedNs(idleWaitStartedAt) / 1e6);
+    }
+    // The first target has no previous GPU users, so a device-wide idle wait
+    // is unnecessary. Only replacement needs to retire references to the old
+    // image, view, and framebuffer before destroying them.
     destroyOffscreenTarget();
 
     VkImageCreateInfo imgInfo{};
@@ -734,6 +749,8 @@ bool VulkanEngine::ensureOffscreenTarget(uint32_t width, uint32_t height) {
 
     blurWidth = width;
     blurHeight = height;
+    LOGI("vk_timing offscreen_target_setup_ms total=%.3f replacing=%d",
+         elapsedNs(setupStartedAt) / 1e6, replacingTarget ? 1 : 0);
     return true;
 }
 
