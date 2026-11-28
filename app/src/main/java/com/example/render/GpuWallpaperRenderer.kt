@@ -483,11 +483,11 @@ class GpuWallpaperRenderer(
                         pageAEdgeResidualPx,
                         pageBEdgeResidualPx
                     )
-                    "swipe_reveal", "swipe_reveal_stacked" -> drawSwipeReveal(
+                    "swipe_reveal", "swipe_reveal_slow", "swipe_reveal_stacked" -> drawSwipeReveal(
                         frame,
                         pageATex,
                         pageBTex,
-                        transition.id == "swipe_reveal",
+                        transition.id != "swipe_reveal_stacked",
                         revealOutgoingRate,
                         revealIncomingRate,
                         pageAEdgeResidualPx,
