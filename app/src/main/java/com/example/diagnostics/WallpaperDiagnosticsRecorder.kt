@@ -172,7 +172,10 @@ private class TraceEventBuffer(private val capacity: Int) {
     var size: Int = 0
         private set
 
-    fun clear() { size = 0 }
+    fun clear() {
+        for (index in 0 until size) strings[index] = null
+        size = 0
+    }
 
     fun append(
         type: Byte, timeNs: Long, l1: Long = 0L, l2: Long = 0L, l3: Long = 0L, l4: Long = 0L,
