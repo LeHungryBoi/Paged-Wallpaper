@@ -51,7 +51,7 @@ jobs:
           fi
 
       - name: Run transition and migration unit tests
-        run: gradle testDebugUnitTest --tests com.example.ExampleUnitTest
+        run: gradle --no-configuration-cache testDebugUnitTest --tests com.example.ExampleUnitTest
 
       - name: Build debug APK
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
