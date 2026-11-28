@@ -331,7 +331,15 @@ class ExampleUnitTest {
     fun testSwipeDirectionUnlocksImmediatelyAtStaticPageForFastReveal() {
         val directionLock = SwipeDirectionLock()
 
-        assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.6f, false))
+        assertEquals(
+            1,
+            directionLock.onOffsetChanged(
+                previousOffset = 0.5f,
+                nextOffset = 0.6f,
+                isAtStaticPage = false,
+                newTransitionUnlockImmediately = true
+            )
+        )
         assertEquals(
             0,
             directionLock.onOffsetChanged(
@@ -348,7 +356,15 @@ class ExampleUnitTest {
     fun testFastRevealDirectionCanRestartWhenAFrameCrossesPageBoundary() {
         val directionLock = SwipeDirectionLock()
 
-        assertEquals(1, directionLock.onOffsetChanged(0.4f, 0.45f, false))
+        assertEquals(
+            1,
+            directionLock.onOffsetChanged(
+                previousOffset = 0.4f,
+                nextOffset = 0.45f,
+                isAtStaticPage = false,
+                newTransitionUnlockImmediately = true
+            )
+        )
         assertEquals(
             -1,
             directionLock.onOffsetChanged(
