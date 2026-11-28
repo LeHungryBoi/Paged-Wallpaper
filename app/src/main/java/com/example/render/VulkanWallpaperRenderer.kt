@@ -214,11 +214,15 @@ internal class VulkanWallpaperRenderer(
         if (frame == null || released) return
         val req = frame.request
         WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "render_thread_start")
-        val surface = windowSurface ?: return
-        if (!surface.isValid) return
+        val surface = windowSurface
+        if (surface == null || !surface.isValid) {
+            WallpaperDiagnosticsRecorder.recordFrameFailure(req.frameId, "renderer_surface_unavailable")
+            return
+        }
 
         try {
             if (!ensureVulkanReady(surface, req.width, req.height)) {
+                WallpaperDiagnosticsRecorder.recordFrameFailure(req.frameId, "vulkan_unavailable")
                 Log.w(TAG, "Vulkan unavailable on this device/surface; falling back to OpenGL ES")
                 destroyVulkan()
                 mainHandler.post {
