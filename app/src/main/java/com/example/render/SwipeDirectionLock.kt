@@ -7,17 +7,42 @@ class SwipeDirectionLock {
     private var locked = false
     private var unlockAfterSettledFrame = false
 
+    fun previewDirection(previousOffset: Float, nextOffset: Float): Int {
+        if (locked) return direction
+        val delta = nextOffset - previousOffset
+        return when {
+            delta > OFFSET_EPSILON -> 1
+            delta < -OFFSET_EPSILON -> -1
+            else -> direction
+        }
+    }
+
     fun onOffsetChanged(
         previousOffset: Float,
         nextOffset: Float,
-        isAtStaticPage: Boolean
+        isAtStaticPage: Boolean,
+        crossedStaticPage: Boolean = false,
+        unlockImmediatelyAtStaticPage: Boolean = false
     ): Int {
         val delta = nextOffset - previousOffset
-        if (!locked && abs(delta) > OFFSET_EPSILON) {
+        val reachedPageBoundary = isAtStaticPage || crossedStaticPage
+
+        if (locked && reachedPageBoundary) {
+            if (unlockImmediatelyAtStaticPage) {
+                direction = 0
+                locked = false
+                unlockAfterSettledFrame = false
+            } else {
+                // Keep the legacy slow-switching behavior until a submitted frame settles.
+                // Once the page boundary has been reached, later offsets must not cancel it.
+                unlockAfterSettledFrame = true
+            }
+        }
+
+        if (!locked && !isAtStaticPage && abs(delta) > OFFSET_EPSILON) {
             direction = if (delta > 0f) 1 else -1
             locked = true
         }
-        unlockAfterSettledFrame = locked && isAtStaticPage
         return direction
     }
 
