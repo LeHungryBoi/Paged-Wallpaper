@@ -247,17 +247,23 @@ class ExampleUnitTest {
         )
         val sharpMask = render(maskBlur = 0f)
         val softMask = render(maskBlur = 1f)
-        val blurredStripe = Color.red(plain.getPixel(4, 4))
-        val sharpStripe = Color.red(sharpMask.getPixel(4, 4))
-        val softStripe = Color.red(softMask.getPixel(4, 4))
+        val blurredContrast = kotlin.math.abs(
+            Color.red(plain.getPixel(4, 4)) - Color.red(plain.getPixel(12, 4))
+        )
+        val sharpContrast = kotlin.math.abs(
+            Color.red(sharpMask.getPixel(4, 4)) - Color.red(sharpMask.getPixel(12, 4))
+        )
+        val softContrast = kotlin.math.abs(
+            Color.red(softMask.getPixel(4, 4)) - Color.red(softMask.getPixel(12, 4))
+        )
 
         assertTrue(
-            "A 0% pattern-area blur must restore detail from the original source",
-            sharpStripe > blurredStripe + 40
+            "A 0% pattern-area blur must restore original black/white detail inside the mask",
+            sharpContrast > blurredContrast + 20
         )
         assertTrue(
-            "Increasing pattern-area blur must blur that independent layer",
-            softStripe < sharpStripe - 10
+            "Increasing pattern-area blur must reduce detail in that independent layer",
+            softContrast < sharpContrast - 10
         )
 
         plain.recycle()
