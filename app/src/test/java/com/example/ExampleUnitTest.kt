@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTexturePattern
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
@@ -123,6 +124,196 @@ class ExampleUnitTest {
         val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
         assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
         assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
+
+        val legacyTexturePage = PageItem.fromJson(
+            org.json.JSONObject()
+                .put("pageIndex", 0)
+                .put("blurTexturePattern", "DOT_MATRIX")
+                .put("blurTextureIntensity", 0.32)
+        )
+        assertEquals(
+            PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+            legacyTexturePage.blurTextureIntensity,
+            0.001f
+        )
+        assertEquals(
+            PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+            legacyTexturePage.blurTextureScale,
+            0.001f
+        )
+    }
+
+    @Test
+    fun testGlassMaterialSettingsRoundTripAndTextureChangesRenderedPixels() {
+        val page = PageItem(
+            pageIndex = 1,
+            blurStyle = BlurStyle.SMOKED_GLASS,
+            blurTexturePattern = BlurTexturePattern.DIAMOND,
+            blurTextureIntensity = 0.86f,
+            blurTextureScale = 1.9f,
+            blurTextureMaskBlurAmount = 0.42f,
+            blurTextureMaskTintColor = 0xFF596B78.toInt(),
+            blurTextureMaskTintIntensity = 0.31f
+        )
+        val restored = PageItem.fromJson(page.toJson())
+        assertEquals(BlurStyle.SMOKED_GLASS, restored.blurStyle)
+        assertEquals(BlurTexturePattern.DIAMOND, restored.blurTexturePattern)
+        assertEquals(0.86f, restored.blurTextureIntensity, 0.001f)
+        assertEquals(1.9f, restored.blurTextureScale, 0.001f)
+        assertEquals(0.42f, restored.blurTextureMaskBlurAmount, 0.001f)
+        assertEquals(0xFF596B78.toInt(), restored.blurTextureMaskTintColor)
+        assertEquals(0.31f, restored.blurTextureMaskTintIntensity, 0.001f)
+
+        val source = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        val sourceCanvas = Canvas(source)
+        sourceCanvas.drawColor(Color.rgb(80, 96, 112))
+        val stripe = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(220, 230, 240) }
+        for (x in 0 until 128 step 16) sourceCanvas.drawRect(x.toFloat(), 0f, x + 7f, 256f, stripe)
+        fun render(pattern: BlurTexturePattern): Bitmap {
+            val output = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+            ImageProcessingUtils.drawStyledBlurredBackdrop(
+                canvas = Canvas(output), srcBmp = source, srcRect = null, targetWidth = 128, targetHeight = 256,
+                blurAmount = 0.55f, blurStyle = BlurStyle.SMOKED_GLASS, blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR, blurTintIntensity = 0.4f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = pattern,
+                blurTextureIntensity = 0.86f,
+                blurTextureScale = 1.9f,
+                blurTextureMaskBlurAmount = 0.42f,
+                blurTextureMaskTintColor = 0xFF596B78.toInt(),
+                blurTextureMaskTintIntensity = 0.31f
+            )
+            return output
+        }
+        val plain = render(BlurTexturePattern.NONE)
+        val textured = render(BlurTexturePattern.DIAMOND)
+        var changedPixels = 0
+        for (y in 0 until 256 step 2) for (x in 0 until 128 step 2) {
+            if (plain.getPixel(x, y) != textured.getPixel(x, y)) changedPixels++
+        }
+        assertTrue("A selected glass texture must affect the rendered backdrop", changedPixels > 0)
+        assertTrue("The default pattern must have a stronger visible intensity", PageItem(pageIndex = 0).blurTextureIntensity >= 0.8f)
+        assertTrue("The default pattern must be larger than the previous small tile", PageItem(pageIndex = 0).blurTextureScale > 1f)
+        plain.recycle(); textured.recycle(); source.recycle()
+    }
+
+    @Test
+    fun testPatternMaskZeroBlurRevealsOriginalSourceIndependentlyOfBackdropBlur() {
+        val source = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        val sourceCanvas = Canvas(source)
+        val stripePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        for (x in 0 until source.width step 8) {
+            stripePaint.color = if ((x / 8) % 2 == 0) Color.WHITE else Color.BLACK
+            sourceCanvas.drawRect(x.toFloat(), 0f, (x + 8).toFloat(), source.height.toFloat(), stripePaint)
+        }
+
+        fun render(maskBlur: Float): Bitmap {
+            val output = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+            ImageProcessingUtils.drawStyledBlurredBackdrop(
+                canvas = Canvas(output),
+                srcBmp = source,
+                srcRect = null,
+                targetWidth = 128,
+                targetHeight = 256,
+                blurAmount = 0.85f,
+                blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+                blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+                blurTintIntensity = 0f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = BlurTexturePattern.DOT_MATRIX,
+                blurTextureIntensity = 1f,
+                blurTextureScale = 1f,
+                blurTextureMaskBlurAmount = maskBlur,
+                blurTextureMaskTintColor = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+                blurTextureMaskTintIntensity = 0f
+            )
+            return output
+        }
+
+        val plain = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        ImageProcessingUtils.drawStyledBlurredBackdrop(
+            canvas = Canvas(plain),
+            srcBmp = source,
+            srcRect = null,
+            targetWidth = 128,
+            targetHeight = 256,
+            blurAmount = 0.85f,
+            blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+            blurTintMode = BlurTintMode.NONE,
+            blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+            blurTintIntensity = 0f,
+            blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM
+        )
+        val sharpMask = render(maskBlur = 0f)
+        val softMask = render(maskBlur = 1f)
+        val blurredContrast = kotlin.math.abs(
+            Color.red(plain.getPixel(4, 4)) - Color.red(plain.getPixel(12, 4))
+        )
+        val sharpContrast = kotlin.math.abs(
+            Color.red(sharpMask.getPixel(4, 4)) - Color.red(sharpMask.getPixel(12, 4))
+        )
+        val softContrast = kotlin.math.abs(
+            Color.red(softMask.getPixel(4, 4)) - Color.red(softMask.getPixel(12, 4))
+        )
+
+        assertTrue(
+            "A 0% pattern-area blur must restore original black/white detail inside the mask",
+            sharpContrast > blurredContrast + 20
+        )
+        assertTrue(
+            "Increasing pattern-area blur must reduce detail in that independent layer",
+            softContrast < sharpContrast - 10
+        )
+
+        plain.recycle()
+        sharpMask.recycle()
+        softMask.recycle()
+        source.recycle()
+    }
+
+    @Test
+    fun testBackdropPreviewUsesSelectedPatternSize() {
+        val source = Bitmap.createBitmap(96, 192, Bitmap.Config.ARGB_8888)
+        Canvas(source).drawColor(Color.rgb(100, 120, 140))
+
+        fun render(scale: Float): Bitmap =
+            ImageProcessingUtils.renderBackdropPreviewBitmap(
+                srcBmp = source,
+                targetWidth = 128,
+                targetHeight = 256,
+                blurAmount = 0.25f,
+                blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+                blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+                blurTintIntensity = 0f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = BlurTexturePattern.DOT_MATRIX,
+                blurTextureIntensity = 1f,
+                blurTextureScale = scale,
+                blurTextureMaskBlurAmount = 0f,
+                blurTextureMaskTintColor = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+                blurTextureMaskTintIntensity = 0f
+            )
+
+        val smallPattern = render(0.5f)
+        val largePattern = render(3f)
+        var changedPixels = 0
+        for (y in 0 until 256 step 2) {
+            for (x in 0 until 128 step 2) {
+                if (smallPattern.getPixel(x, y) != largePattern.getPixel(x, y)) {
+                    changedPixels++
+                }
+            }
+        }
+
+        assertTrue(
+            "Changing pattern size must change the editor backdrop preview",
+            changedPixels > 0
+        )
+        smallPattern.recycle()
+        largePattern.recycle()
+        source.recycle()
     }
 
     @Test

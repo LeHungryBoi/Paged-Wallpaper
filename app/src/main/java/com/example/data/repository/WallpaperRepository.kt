@@ -695,6 +695,12 @@ class WallpaperRepository private constructor(private val context: Context) {
             append(page.blurTintColor).append('|')
             append(page.blurTintIntensity).append('|')
             append(page.blurRainbowStyle.name).append('|')
+            append(page.blurTexturePattern.name).append('|')
+            append(page.blurTextureIntensity).append('|')
+            append(page.blurTextureScale).append('|')
+            append(page.blurTextureMaskBlurAmount).append('|')
+            append(page.blurTextureMaskTintColor).append('|')
+            append(page.blurTextureMaskTintIntensity).append('|')
             append(page.cropPanX).append('|')
             append(page.cropPanY).append('|')
             append(page.cropScale).append('|')
@@ -1097,6 +1103,10 @@ class WallpaperRepository private constructor(private val context: Context) {
             cropScale = updatedPage.cropScale.coerceIn(1f, 3f),
             blurAmount = updatedPage.blurAmount.coerceIn(0f, 1f),
             blurTintIntensity = updatedPage.blurTintIntensity.coerceIn(0f, 1f),
+            blurTextureIntensity = updatedPage.blurTextureIntensity.coerceIn(0f, 1f),
+            blurTextureScale = updatedPage.blurTextureScale.coerceIn(0.5f, 3f),
+            blurTextureMaskBlurAmount = updatedPage.blurTextureMaskBlurAmount.coerceIn(0f, 1f),
+            blurTextureMaskTintIntensity = updatedPage.blurTextureMaskTintIntensity.coerceIn(0f, 1f),
             parallaxAmount = updatedPage.parallaxAmount.coerceIn(0f, 1f),
             dimFactor = updatedPage.dimFactor.coerceIn(PageItem.MIN_DIM_FACTOR, PageItem.MAX_DIM_FACTOR)
         )
@@ -1280,7 +1290,13 @@ class WallpaperRepository private constructor(private val context: Context) {
                     blurTintMode = page.blurTintMode,
                     blurTintColor = page.blurTintColor,
                     blurTintIntensity = page.blurTintIntensity,
-                    blurRainbowStyle = page.blurRainbowStyle
+                    blurRainbowStyle = page.blurRainbowStyle,
+                    blurTexturePattern = page.blurTexturePattern,
+                    blurTextureIntensity = page.blurTextureIntensity,
+                    blurTextureScale = page.blurTextureScale,
+                    blurTextureMaskBlurAmount = page.blurTextureMaskBlurAmount,
+                    blurTextureMaskTintColor = page.blurTextureMaskTintColor,
+                    blurTextureMaskTintIntensity = page.blurTextureMaskTintIntensity
                 )
 
                 val fitScale = minOf(

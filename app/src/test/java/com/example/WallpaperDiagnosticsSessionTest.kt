@@ -28,8 +28,8 @@ class WallpaperDiagnosticsSessionTest {
 
         assertEquals(3, result.visibleOffsetCallbacks)
         assertEquals(2, result.changedOffsetCallbacks)
-        assertEquals(2, result.movingOffsetIntervalCount)
-        assertEquals(32_000_000L, result.movingOffsetDurationNanos)
+        assertEquals(1, result.movingOffsetIntervalCount)
+        assertEquals(16_000_000L, result.movingOffsetDurationNanos)
         assertEquals(4, result.visibleFramesSubmitted)
         assertEquals(3, result.offsetDrivenFramesSubmitted)
         assertEquals(2, result.movingFrameIntervalCount)

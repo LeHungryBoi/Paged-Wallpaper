@@ -9,6 +9,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RadialGradient
@@ -17,6 +18,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTexturePattern
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.PageItem
@@ -63,7 +65,13 @@ object ImageProcessingUtils {
         blurTintMode: BlurTintMode = BlurTintMode.NONE,
         blurTintColor: Int = PageItem.DEFAULT_BLUR_TINT_COLOR,
         blurTintIntensity: Float = 0.42f,
-        blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM
+        blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+        blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ): Bitmap {
         val outBmp = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(outBmp)
@@ -122,7 +130,13 @@ object ImageProcessingUtils {
                     blurTintMode = blurTintMode,
                     blurTintColor = blurTintColor,
                     blurTintIntensity = blurTintIntensity,
-                    blurRainbowStyle = blurRainbowStyle
+                    blurRainbowStyle = blurRainbowStyle,
+                    blurTexturePattern = blurTexturePattern,
+                    blurTextureIntensity = blurTextureIntensity,
+                    blurTextureScale = blurTextureScale,
+                    blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+                    blurTextureMaskTintColor = blurTextureMaskTintColor,
+                    blurTextureMaskTintIntensity = blurTextureMaskTintIntensity
                 )
 
                 val fitScale = minOf(targetW / srcW, targetH / srcH) * scale
@@ -163,7 +177,13 @@ object ImageProcessingUtils {
         blurTintMode: BlurTintMode,
         blurTintColor: Int,
         blurTintIntensity: Float,
-        blurRainbowStyle: BlurRainbowStyle
+        blurRainbowStyle: BlurRainbowStyle,
+        blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ): Bitmap {
         val safeW = targetWidth.coerceAtLeast(16)
         val safeH = targetHeight.coerceAtLeast(16)
@@ -181,7 +201,13 @@ object ImageProcessingUtils {
             blurTintMode = blurTintMode,
             blurTintColor = blurTintColor,
             blurTintIntensity = blurTintIntensity,
-            blurRainbowStyle = blurRainbowStyle
+            blurRainbowStyle = blurRainbowStyle,
+            blurTexturePattern = blurTexturePattern,
+            blurTextureIntensity = blurTextureIntensity,
+            blurTextureScale = blurTextureScale,
+            blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+            blurTextureMaskTintColor = blurTextureMaskTintColor,
+            blurTextureMaskTintIntensity = blurTextureMaskTintIntensity
         )
         return outBmp
     }
@@ -405,34 +431,42 @@ object ImageProcessingUtils {
         blurTintMode: BlurTintMode,
         blurTintColor: Int,
         blurTintIntensity: Float,
-        blurRainbowStyle: BlurRainbowStyle
+        blurRainbowStyle: BlurRainbowStyle,
+        blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ) {
         val safeW = targetWidth.coerceAtLeast(2)
         val safeH = targetHeight.coerceAtLeast(2)
         val clampedBlur = blurAmount.coerceIn(0f, 1f)
 
-        // Use a high-detail working buffer (360px-512px long edge) instead of 6% mosaic downscaling.
+        // Keep enough detail for glass highlights and fine repeating textures.
+        // The backdrop is still pre-rendered, but no longer collapses to a tiny working image.
         val targetLongEdge = max(safeW, safeH).coerceAtLeast(1)
-        val desiredMaxWorkEdge = if (clampedBlur <= 0.01f) {
-            min(targetLongEdge.toFloat(), 1080f)
-        } else {
-            min(targetLongEdge.toFloat(), 512f - clampedBlur * 152f)
-        }
+        val desiredMaxWorkEdge = min(targetLongEdge.toFloat(), 960f - clampedBlur * 240f)
         val workScale = (desiredMaxWorkEdge / targetLongEdge.toFloat()).coerceIn(0.15f, 1f)
         val workW = (safeW * workScale).roundToInt().coerceAtLeast(8)
         val workH = (safeH * workScale).roundToInt().coerceAtLeast(8)
 
         val workBmp = Bitmap.createBitmap(workW, workH, Bitmap.Config.ARGB_8888)
+        var patternSourceBitmap: Bitmap? = null
         var bloomBmp: Bitmap? = null
         try {
             val workCanvas = Canvas(workBmp)
             val samplePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             workCanvas.drawBitmap(srcBmp, srcRect, Rect(0, 0, workW, workH), samplePaint)
+            if (blurTexturePattern != BlurTexturePattern.NONE) {
+                patternSourceBitmap = workBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    ?: throw IllegalStateException("Could not preserve the sharp pattern source")
+            }
 
             // Apply genuine multi-pass Stack Blur (2 passes approximate a smooth Gaussian curve).
             if (clampedBlur > 0.01f) {
                 val maxSafeRadius = (min(workW, workH) / 2 - 1).coerceAtLeast(1)
-                val primaryRadius = (2f + clampedBlur * 26f).roundToInt().coerceIn(1, maxSafeRadius)
+                val primaryRadius = (2f + clampedBlur * 50f).roundToInt().coerceIn(1, maxSafeRadius)
                 fastBlur(workBmp, primaryRadius)
                 if (clampedBlur > 0.12f) {
                     val secondaryRadius = (primaryRadius * 0.65f).roundToInt().coerceIn(1, maxSafeRadius)
@@ -450,54 +484,59 @@ object ImageProcessingUtils {
                 }
 
                 BlurStyle.WIN7_AERO -> {
-                    // 1. Vibrant glass color boost
+                    // Cold blue body, broad diagonal reflection, narrow specular streak and bevel.
                     val aeroPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                        colorFilter = ColorMatrixColorFilter(
-                            ColorMatrix().apply { setSaturation(1.24f) }
-                        )
+                        colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(1.16f) })
                     }
                     canvas.drawBitmap(workBmp, null, fullDst, aeroPaint)
-
-                    // 2. Subtle dark contrast + cool translucent Aero glass base wash
-                    canvas.drawColor(Color.argb(24, 8, 18, 34))
-                    canvas.drawColor(Color.argb(34, 198, 228, 255))
-
-                    // 3. Classic Win7 diagonal glossy specular light streaks
-                    val primaryStreak = LinearGradient(
-                        0f, 0f, wF * 0.88f, hF * 0.72f,
-                        intArrayOf(
-                            Color.TRANSPARENT,
-                            Color.argb(18, 255, 255, 255),
-                            Color.argb(58, 255, 255, 255),
-                            Color.argb(20, 225, 244, 255),
-                            Color.TRANSPARENT,
-                            Color.TRANSPARENT
-                        ),
-                        floatArrayOf(0f, 0.22f, 0.34f, 0.44f, 0.56f, 1f),
-                        Shader.TileMode.CLAMP
+                    canvas.drawColor(Color.argb(26, 7, 20, 39))
+                    canvas.drawColor(Color.argb(48, 190, 222, 249))
+                    val broadReflection = LinearGradient(
+                        -wF * 0.18f, 0f, wF * 0.88f, hF * 0.72f,
+                        intArrayOf(Color.TRANSPARENT, Color.argb(26, 235, 248, 255), Color.argb(72, 245, 252, 255), Color.argb(28, 220, 241, 255), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.28f, 0.39f, 0.49f, 0.68f), Shader.TileMode.CLAMP
                     )
-                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = primaryStreak })
-
-                    val secondaryStreak = LinearGradient(
-                        wF * 0.25f, hF * 0.12f, wF, hF * 0.95f,
-                        intArrayOf(
-                            Color.TRANSPARENT,
-                            Color.argb(30, 255, 255, 255),
-                            Color.TRANSPARENT
-                        ),
-                        floatArrayOf(0.45f, 0.56f, 0.72f),
-                        Shader.TileMode.CLAMP
+                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = broadReflection })
+                    val specularStreak = LinearGradient(
+                        wF * 0.08f, 0f, wF * 0.96f, hF * 0.82f,
+                        intArrayOf(Color.TRANSPARENT, Color.argb(18, 255, 255, 255), Color.argb(92, 255, 255, 255), Color.argb(24, 225, 244, 255), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.40f, 0.47f, 0.52f, 0.64f), Shader.TileMode.CLAMP
                     )
-                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = secondaryStreak })
-
-                    // 4. Soft top-edge glass bevel sheen
-                    val topSheen = LinearGradient(
-                        0f, 0f, 0f, hF * 0.18f,
-                        Color.argb(54, 255, 255, 255),
-                        Color.TRANSPARENT,
-                        Shader.TileMode.CLAMP
+                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = specularStreak })
+                    val topBevel = LinearGradient(
+                        0f, 0f, 0f, hF * 0.22f,
+                        intArrayOf(Color.argb(92, 255, 255, 255), Color.argb(18, 235, 247, 255), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.28f, 1f), Shader.TileMode.CLAMP
                     )
-                    canvas.drawRect(0f, 0f, wF, hF * 0.18f, Paint().apply { shader = topSheen })
+                    canvas.drawRect(0f, 0f, wF, hF * 0.22f, Paint().apply { shader = topBevel })
+                    val lowerShade = LinearGradient(0f, hF * 0.60f, 0f, hF, Color.TRANSPARENT, Color.argb(42, 8, 18, 34), Shader.TileMode.CLAMP)
+                    canvas.drawRect(0f, hF * 0.60f, wF, hF, Paint().apply { shader = lowerShade })
+                }
+
+                BlurStyle.SMOKED_GLASS -> {
+                    val smokedPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                        colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0.58f) })
+                    }
+                    canvas.drawBitmap(workBmp, null, fullDst, smokedPaint)
+                    canvas.drawColor(Color.argb(68, 19, 25, 32))
+                    val smokedBody = LinearGradient(
+                        0f, 0f, wF * 0.72f, hF,
+                        intArrayOf(Color.argb(30, 207, 219, 229), Color.argb(16, 115, 129, 142), Color.argb(88, 5, 9, 14)),
+                        floatArrayOf(0f, 0.46f, 1f), Shader.TileMode.CLAMP
+                    )
+                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = smokedBody })
+                    val smokedReflection = LinearGradient(
+                        -wF * 0.12f, 0f, wF * 0.86f, hF * 0.42f,
+                        intArrayOf(Color.TRANSPARENT, Color.argb(42, 242, 247, 251), Color.argb(12, 235, 244, 250), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.34f, 0.43f, 0.63f), Shader.TileMode.CLAMP
+                    )
+                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = smokedReflection })
+                    val edgeShade = LinearGradient(
+                        0f, 0f, wF, 0f,
+                        intArrayOf(Color.argb(42, 2, 6, 10), Color.TRANSPARENT, Color.TRANSPARENT, Color.argb(30, 2, 6, 10)),
+                        floatArrayOf(0f, 0.18f, 0.82f, 1f), Shader.TileMode.CLAMP
+                    )
+                    canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = edgeShade })
                 }
 
                 BlurStyle.MODERN_ACRYLIC -> {
@@ -619,20 +658,249 @@ object ImageProcessingUtils {
                 }
             }
 
-            // Apply single-color or rainbow tinting layer cleanly over the stylized blur
+            // Tint and repeating texture are independent material layers.
             applyTintLayer(
+                canvas = canvas, width = safeW, height = safeH,
+                tintMode = blurTintMode, tintColor = blurTintColor,
+                tintIntensity = blurTintIntensity, rainbowStyle = blurRainbowStyle
+            )
+            drawBlurTexturePattern(
                 canvas = canvas,
                 width = safeW,
                 height = safeH,
-                tintMode = blurTintMode,
-                tintColor = blurTintColor,
-                tintIntensity = blurTintIntensity,
-                rainbowStyle = blurRainbowStyle
+                sourceUnblurredBitmap = patternSourceBitmap ?: workBmp,
+                pattern = blurTexturePattern,
+                strength = blurTextureIntensity,
+                scale = blurTextureScale,
+                maskBlurAmount = blurTextureMaskBlurAmount,
+                maskTintColor = blurTextureMaskTintColor,
+                maskTintIntensity = blurTextureMaskTintIntensity
             )
         } finally {
+            patternSourceBitmap?.recycle()
             bloomBmp?.recycle()
             workBmp.recycle()
         }
+    }
+
+    /**
+     * Draws a sharp etched pattern after the normal blur/tint pipeline.
+     * Its filled geometry also acts as an alpha mask for a separately blurred/tinted
+     * region underneath it. The visible pattern is never passed through a blur operation.
+     */
+    private fun drawBlurTexturePattern(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        sourceUnblurredBitmap: Bitmap,
+        pattern: BlurTexturePattern,
+        strength: Float,
+        scale: Float,
+        maskBlurAmount: Float,
+        maskTintColor: Int,
+        maskTintIntensity: Float
+    ) {
+        val clampedStrength = strength.coerceIn(0f, 1f)
+        if (pattern == BlurTexturePattern.NONE || clampedStrength <= 0.005f) return
+
+        val workTileSize = textureTileSize(sourceUnblurredBitmap.width, sourceUnblurredBitmap.height, scale)
+        val displayTileSize = textureTileSize(width, height, scale)
+
+        // Build the pattern region from the original, unblurred source. A value of 0%
+        // therefore really is sharp; higher values apply blur independently of the backdrop.
+        run {
+            val effectBitmap = sourceUnblurredBitmap.copy(Bitmap.Config.ARGB_8888, true)
+            try {
+                val maxRadius = (min(effectBitmap.width, effectBitmap.height) / 2 - 1).coerceAtLeast(1)
+                val radius = (maskBlurAmount.coerceIn(0f, 1f) * 32f).roundToInt().coerceIn(0, maxRadius)
+                if (radius > 0) fastBlur(effectBitmap, radius)
+
+                val effectCanvas = Canvas(effectBitmap)
+                val tintStrength = maskTintIntensity.coerceIn(0f, 1f)
+                if (tintStrength > 0.005f) {
+                    val alpha = (tintStrength * 150f).roundToInt().coerceIn(0, 150)
+                    effectCanvas.drawColor(
+                        Color.argb(
+                            alpha,
+                            Color.red(maskTintColor),
+                            Color.green(maskTintColor),
+                            Color.blue(maskTintColor)
+                        )
+                    )
+                }
+
+                val maskShader = createTexturePatternShader(pattern, workTileSize, maskOnly = true)
+                val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                    shader = maskShader
+                    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                }
+                effectCanvas.drawRect(
+                    0f, 0f,
+                    effectBitmap.width.toFloat(),
+                    effectBitmap.height.toFloat(),
+                    maskPaint
+                )
+
+                // The masked source is an actual independent layer, not a translucent
+                // overlay of the already-blurred backdrop. Strength controls the etched finish.
+                val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                canvas.drawBitmap(effectBitmap, null, Rect(0, 0, width, height), effectPaint)
+            } finally {
+                effectBitmap.recycle()
+            }
+        }
+
+        // The etching/highlight layer is drawn last at output resolution, so it stays crisp.
+        val overlayShader = createTexturePatternShader(pattern, displayTileSize, maskOnly = false)
+        val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            shader = overlayShader
+            alpha = (clampedStrength * 255f).roundToInt().coerceIn(0, 255)
+        }
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
+    }
+
+    private fun textureTileSize(width: Int, height: Int, scale: Float): Int =
+        (min(width, height) / 4f * scale.coerceIn(0.5f, 3f))
+            .roundToInt()
+            .coerceIn(24, 512)
+
+    private fun createTexturePatternShader(
+        pattern: BlurTexturePattern,
+        tileSize: Int,
+        maskOnly: Boolean
+    ): BitmapShader {
+        val tile = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
+        val c = Canvas(tile)
+        val cell = tileSize / 4f
+        val maskFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(112, 5, 12, 20)
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = cell * 0.10f
+        }
+        val highlight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(150, 244, 249, 253)
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = cell * 0.07f
+        }
+        val bodyFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(62, 225, 236, 245) }
+        val dotRadius = cell * 0.29f
+        val diamondRadius = cell * 0.43f
+
+        fun drawGridOrRibLines(diagonal: Boolean, paint: Paint) {
+            val count = if (diagonal) -4..8 else 0..4
+            for (index in count) {
+                if (diagonal) {
+                    val x = index * cell
+                    c.drawLine(x, 0f, x - tileSize, tileSize.toFloat(), paint)
+                } else {
+                    val position = index * cell
+                    c.drawLine(position, 0f, position, tileSize.toFloat(), paint)
+                    c.drawLine(0f, position, tileSize.toFloat(), position, paint)
+                }
+            }
+        }
+
+        fun diamondPath(cx: Float, cy: Float): Path = Path().apply {
+            moveTo(cx, cy - diamondRadius)
+            lineTo(cx + diamondRadius, cy)
+            lineTo(cx, cy + diamondRadius)
+            lineTo(cx - diamondRadius, cy)
+            close()
+        }
+
+        when (pattern) {
+            BlurTexturePattern.NONE -> Unit
+
+            BlurTexturePattern.FINE_GRID -> {
+                val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.STROKE
+                    strokeWidth = if (maskOnly) cell * 0.12f else cell * 0.085f
+                    strokeCap = Paint.Cap.SQUARE
+                }
+                if (maskOnly) {
+                    drawGridOrRibLines(diagonal = false, paint = linePaint)
+                } else {
+                    drawGridOrRibLines(diagonal = false, paint = shadow)
+                    c.save()
+                    c.translate(-cell * 0.035f, -cell * 0.035f)
+                    drawGridOrRibLines(diagonal = false, paint = highlight)
+                    c.restore()
+                }
+            }
+
+            BlurTexturePattern.DIAGONAL_RIBS -> {
+                if (maskOnly) {
+                    val ribMask = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.WHITE
+                        style = Paint.Style.STROKE
+                        strokeWidth = cell * 0.22f
+                        strokeCap = Paint.Cap.SQUARE
+                    }
+                    drawGridOrRibLines(diagonal = true, paint = ribMask)
+                } else {
+                    val ribs = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(78, 235, 243, 250)
+                        style = Paint.Style.STROKE
+                        strokeWidth = cell * 0.22f
+                        strokeCap = Paint.Cap.SQUARE
+                    }
+                    drawGridOrRibLines(diagonal = true, paint = shadow)
+                    drawGridOrRibLines(diagonal = true, paint = ribs)
+                    c.save()
+                    c.translate(-cell * 0.035f, -cell * 0.035f)
+                    drawGridOrRibLines(diagonal = true, paint = highlight)
+                    c.restore()
+                }
+            }
+
+            BlurTexturePattern.DOT_MATRIX -> {
+                val dotShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(112, 5, 12, 20) }
+                val dotRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(178, 246, 250, 253)
+                    style = Paint.Style.STROKE
+                    strokeWidth = (cell * 0.045f).coerceAtLeast(1f)
+                }
+                for (row in 0..3) for (column in 0..3) {
+                    val x = (column + 0.5f) * cell
+                    val y = (row + 0.5f) * cell
+                    if (maskOnly) {
+                        c.drawCircle(x, y, dotRadius, maskFill)
+                    } else {
+                        c.drawCircle(x + cell * 0.035f, y + cell * 0.035f, dotRadius, dotShadow)
+                        c.drawCircle(x, y, dotRadius * 0.93f, bodyFill)
+                        c.drawCircle(x - cell * 0.015f, y - cell * 0.015f, dotRadius * 0.93f, dotRing)
+                    }
+                }
+            }
+
+            BlurTexturePattern.DIAMOND -> {
+                for (row in 0..3) for (column in 0..3) {
+                    val x = (column + 0.5f) * cell
+                    val y = (row + 0.5f) * cell
+                    val path = diamondPath(x, y)
+                    if (maskOnly) {
+                        c.drawPath(path, maskFill)
+                    } else {
+                        c.save()
+                        c.translate(cell * 0.035f, cell * 0.035f)
+                        c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(112, 5, 12, 20) })
+                        c.restore()
+                        c.drawPath(path, bodyFill)
+                        val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.argb(184, 246, 250, 253)
+                            style = Paint.Style.STROKE
+                            strokeWidth = (cell * 0.045f).coerceAtLeast(1f)
+                        }
+                        c.drawPath(path, edge)
+                    }
+                }
+            }
+        }
+        return BitmapShader(tile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     }
 
     private fun applyTintLayer(
@@ -654,25 +922,23 @@ object ImageProcessingUtils {
             BlurTintMode.NONE -> Unit
 
             BlurTintMode.SOLID -> {
-                val r = Color.red(tintColor)
-                val g = Color.green(tintColor)
-                val b = Color.blue(tintColor)
-                val washAlpha = (intensity * 175f).roundToInt().coerceIn(0, 220)
-                canvas.drawColor(Color.argb(washAlpha, r, g, b))
-
-                // Soft luminous center glow so tinted glass stays rich rather than flat
-                val glowAlpha = (intensity * 70f).roundToInt().coerceIn(0, 95)
-                val glowGradient = RadialGradient(
-                    wF * 0.5f, hF * 0.45f, max(wF, hF) * 0.65f,
-                    Color.argb(glowAlpha, r, g, b),
-                    Color.TRANSPARENT,
-                    Shader.TileMode.CLAMP
+                // Older pages may still have a highly saturated saved tint. Desaturate at the
+                // renderer boundary so every saved preset gets the same smoked-glass treatment.
+                val hsv = FloatArray(3)
+                Color.colorToHSV(tintColor, hsv)
+                hsv[1] = hsv[1].coerceAtMost(0.46f)
+                hsv[2] = hsv[2].coerceAtMost(0.85f)
+                val mutedTint = Color.HSVToColor(hsv)
+                val r = Color.red(mutedTint); val g = Color.green(mutedTint); val b = Color.blue(mutedTint)
+                // A translucent tinted pane, not a high-saturation color wash.
+                val alpha = (intensity * 104f).roundToInt().coerceIn(0, 112)
+                canvas.drawColor(Color.argb(alpha, r, g, b))
+                val reflection = LinearGradient(
+                    0f, 0f, wF * 0.82f, hF * 0.48f,
+                    intArrayOf(Color.TRANSPARENT, Color.argb((intensity * 34f).roundToInt(), 250, 253, 255), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.42f, 0.72f), Shader.TileMode.CLAMP
                 )
-                val glowPaint = Paint().apply {
-                    shader = glowGradient
-                    xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-                }
-                canvas.drawRect(0f, 0f, wF, hF, glowPaint)
+                canvas.drawRect(0f, 0f, wF, hF, Paint().apply { shader = reflection })
             }
 
             BlurTintMode.RAINBOW -> {
