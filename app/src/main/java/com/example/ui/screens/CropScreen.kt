@@ -280,6 +280,10 @@ fun MediaEditorScreen(
     var blurRainbowStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurRainbowStyle) }
     var blurTexturePattern by remember(media.id, page.pageIndex) { mutableStateOf(page.blurTexturePattern) }
     var blurTextureIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureIntensity) }
+    var blurTextureScale by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureScale) }
+    var blurTextureMaskBlurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureMaskBlurAmount) }
+    var blurTextureMaskTintColor by remember(media.id, page.pageIndex) { mutableIntStateOf(page.blurTextureMaskTintColor) }
+    var blurTextureMaskTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureMaskTintIntensity) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
     var symmetricParallax by remember(media.id, page.pageIndex) { mutableStateOf(page.symmetricParallax) }
     var previewMode by remember(media.id, page.pageIndex, repository) {
@@ -329,7 +333,11 @@ fun MediaEditorScreen(
         blurTintIntensity,
         blurRainbowStyle,
         blurTexturePattern,
-        blurTextureIntensity
+        blurTextureIntensity,
+        blurTextureScale,
+        blurTextureMaskBlurAmount,
+        blurTextureMaskTintColor,
+        blurTextureMaskTintIntensity
     ) {
         val source = bitmap ?: return@LaunchedEffect
         if (cropFillMode == CropFillMode.CROP) {
@@ -351,7 +359,11 @@ fun MediaEditorScreen(
                 blurTintIntensity = blurTintIntensity,
                 blurRainbowStyle = blurRainbowStyle,
                 blurTexturePattern = blurTexturePattern,
-                blurTextureIntensity = blurTextureIntensity
+                blurTextureIntensity = blurTextureIntensity,
+                blurTextureScale = blurTextureScale,
+                blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+                blurTextureMaskTintColor = blurTextureMaskTintColor,
+                blurTextureMaskTintIntensity = blurTextureMaskTintIntensity
             )
         }
         blurredBitmap = preview
@@ -441,6 +453,10 @@ fun MediaEditorScreen(
                                     blurRainbowStyle = blurRainbowStyle,
                                     blurTexturePattern = blurTexturePattern,
                                     blurTextureIntensity = blurTextureIntensity,
+                                    blurTextureScale = blurTextureScale,
+                                    blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+                                    blurTextureMaskTintColor = blurTextureMaskTintColor,
+                                    blurTextureMaskTintIntensity = blurTextureMaskTintIntensity,
                                     cropPanX = panX,
                                     cropPanY = panY,
                                     cropScale = zoom,
@@ -1098,6 +1114,69 @@ fun MediaEditorScreen(
                                         valueRange = 0f..1f,
                                         modifier = Modifier.testTag("blur_texture_strength_slider")
                                     )
+                                    Text(stringResource(R.string.crop_texture_scale, (blurTextureScale * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureScale,
+                                        onValueChange = { blurTextureScale = it },
+                                        valueRange = 0.5f..3f,
+                                        modifier = Modifier.testTag("blur_texture_scale_slider")
+                                    )
+                                    Text(stringResource(R.string.crop_texture_blur, (blurTextureMaskBlurAmount * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureMaskBlurAmount,
+                                        onValueChange = { blurTextureMaskBlurAmount = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_mask_blur_slider")
+                                    )
+                                    Text(stringResource(R.string.crop_texture_tint), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TEXTURE_TINT_SWATCH_COLORS.forEachIndexed { index, swatchColor ->
+                                            val selected = blurTextureMaskTintColor == swatchColor
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable(role = Role.RadioButton) {
+                                                        blurTextureMaskTintColor = swatchColor
+                                                    }
+                                                    .testTag("texture_tint_swatch_$index"),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(swatchColor))
+                                                        .border(
+                                                            width = if (selected) 2.5.dp else 1.dp,
+                                                            color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.55f),
+                                                            shape = CircleShape
+                                                        ),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    if (selected) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = stringResource(R.string.crop_tint_selected_cd),
+                                                            tint = if (Color(swatchColor).luminanceCompat() > 0.6f) Color.Black else Color.White,
+                                                            modifier = Modifier.size(15.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Text(stringResource(R.string.crop_texture_tint_strength, (blurTextureMaskTintIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureMaskTintIntensity,
+                                        onValueChange = { blurTextureMaskTintIntensity = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_mask_tint_slider")
+                                    )
                                 }
                             }
 
@@ -1591,6 +1670,15 @@ private val TINT_SWATCH_COLORS = listOf(
     0xFF776D78.toInt(), // Plum smoke
     0xFF3B444D.toInt(), // Deep charcoal
     0xFFB6C0C7.toInt()  // Frosted pearl
+)
+
+private val TEXTURE_TINT_SWATCH_COLORS = listOf(
+    0xFF41505D.toInt(),
+    0xFF596B78.toInt(),
+    0xFF777F84.toInt(),
+    0xFF655C53.toInt(),
+    0xFF56665B.toInt(),
+    0xFF4C4650.toInt()
 )
 
 private fun blurStyleIcon(style: BlurStyle): ImageVector = when (style) {

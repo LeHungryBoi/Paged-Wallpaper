@@ -128,12 +128,24 @@ class ExampleUnitTest {
 
     @Test
     fun testGlassMaterialSettingsRoundTripAndTextureChangesRenderedPixels() {
-        val page = PageItem(pageIndex = 1, blurStyle = BlurStyle.SMOKED_GLASS,
-            blurTexturePattern = BlurTexturePattern.DIAMOND, blurTextureIntensity = 0.74f)
+        val page = PageItem(
+            pageIndex = 1,
+            blurStyle = BlurStyle.SMOKED_GLASS,
+            blurTexturePattern = BlurTexturePattern.DIAMOND,
+            blurTextureIntensity = 0.86f,
+            blurTextureScale = 1.9f,
+            blurTextureMaskBlurAmount = 0.42f,
+            blurTextureMaskTintColor = 0xFF596B78.toInt(),
+            blurTextureMaskTintIntensity = 0.31f
+        )
         val restored = PageItem.fromJson(page.toJson())
         assertEquals(BlurStyle.SMOKED_GLASS, restored.blurStyle)
         assertEquals(BlurTexturePattern.DIAMOND, restored.blurTexturePattern)
-        assertEquals(0.74f, restored.blurTextureIntensity, 0.001f)
+        assertEquals(0.86f, restored.blurTextureIntensity, 0.001f)
+        assertEquals(1.9f, restored.blurTextureScale, 0.001f)
+        assertEquals(0.42f, restored.blurTextureMaskBlurAmount, 0.001f)
+        assertEquals(0xFF596B78.toInt(), restored.blurTextureMaskTintColor)
+        assertEquals(0.31f, restored.blurTextureMaskTintIntensity, 0.001f)
 
         val source = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
         val sourceCanvas = Canvas(source)
@@ -146,7 +158,13 @@ class ExampleUnitTest {
                 canvas = Canvas(output), srcBmp = source, srcRect = null, targetWidth = 128, targetHeight = 256,
                 blurAmount = 0.55f, blurStyle = BlurStyle.SMOKED_GLASS, blurTintMode = BlurTintMode.NONE,
                 blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR, blurTintIntensity = 0.4f,
-                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM, blurTexturePattern = pattern, blurTextureIntensity = 0.7f
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = pattern,
+                blurTextureIntensity = 0.86f,
+                blurTextureScale = 1.9f,
+                blurTextureMaskBlurAmount = 0.42f,
+                blurTextureMaskTintColor = 0xFF596B78.toInt(),
+                blurTextureMaskTintIntensity = 0.31f
             )
             return output
         }
@@ -157,6 +175,8 @@ class ExampleUnitTest {
             if (plain.getPixel(x, y) != textured.getPixel(x, y)) changedPixels++
         }
         assertTrue("A selected glass texture must affect the rendered backdrop", changedPixels > 0)
+        assertTrue("The default pattern must have a stronger visible intensity", PageItem(pageIndex = 0).blurTextureIntensity >= 0.8f)
+        assertTrue("The default pattern must be larger than the previous small tile", PageItem(pageIndex = 0).blurTextureScale > 1f)
         plain.recycle(); textured.recycle(); source.recycle()
     }
 

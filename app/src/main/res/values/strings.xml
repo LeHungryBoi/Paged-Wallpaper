@@ -340,7 +340,11 @@
     <string name="crop_texture_diagonal">Diagonal ribs</string>
     <string name="crop_texture_dots">Dot matrix</string>
     <string name="crop_texture_diamond">Diamond etch</string>
-    <string name="crop_texture_strength">Texture strength: %1$d%%</string>
+    <string name="crop_texture_strength">Pattern strength: %1$d%%</string>
+    <string name="crop_texture_scale">Pattern size: %1$d%%</string>
+    <string name="crop_texture_blur">Pattern-area blur: %1$d%%</string>
+    <string name="crop_texture_tint">Pattern-area tint</string>
+    <string name="crop_texture_tint_strength">Pattern tint: %1$d%%</string>
     <string name="crop_blur_vignette">Vignette</string>
     <string name="crop_blur_vignette_desc">Luminous soft-blur center with velvety darkened edge falloff</string>
     <string name="crop_blur_bokeh">Bokeh</string>

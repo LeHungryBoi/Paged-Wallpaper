@@ -182,7 +182,11 @@ data class PageItem(
     val blurTintIntensity: Float = 0.42f,
     val blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
     val blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
-    val blurTextureIntensity: Float = 0.32f,
+    val blurTextureIntensity: Float = DEFAULT_BLUR_TEXTURE_INTENSITY,
+    val blurTextureScale: Float = DEFAULT_BLUR_TEXTURE_SCALE,
+    val blurTextureMaskBlurAmount: Float = DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+    val blurTextureMaskTintColor: Int = DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+    val blurTextureMaskTintIntensity: Float = DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY,
     val cropPanX: Float = 0f,
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
@@ -206,6 +210,10 @@ data class PageItem(
         put("blurRainbowStyle", blurRainbowStyle.name)
         put("blurTexturePattern", blurTexturePattern.name)
         put("blurTextureIntensity", blurTextureIntensity.coerceIn(0f, 1f).toDouble())
+        put("blurTextureScale", blurTextureScale.coerceIn(0.5f, 3f).toDouble())
+        put("blurTextureMaskBlurAmount", blurTextureMaskBlurAmount.coerceIn(0f, 1f).toDouble())
+        put("blurTextureMaskTintColor", blurTextureMaskTintColor)
+        put("blurTextureMaskTintIntensity", blurTextureMaskTintIntensity.coerceIn(0f, 1f).toDouble())
         put("cropPanX", cropPanX.toDouble())
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
@@ -217,6 +225,11 @@ data class PageItem(
 
     companion object {
         const val DEFAULT_BLUR_TINT_COLOR = 0xFF64717B.toInt()
+        const val DEFAULT_BLUR_TEXTURE_INTENSITY = 0.82f
+        const val DEFAULT_BLUR_TEXTURE_SCALE = 1.55f
+        const val DEFAULT_BLUR_TEXTURE_MASK_BLUR = 0.28f
+        const val DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR = 0xFF53616D.toInt()
+        const val DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY = 0.22f
         const val DEFAULT_DIM_FACTOR = 0.40f
         const val MIN_DIM_FACTOR = 0.10f
         const val MAX_DIM_FACTOR = 0.90f
@@ -256,7 +269,11 @@ data class PageItem(
                 blurTexturePattern = BlurTexturePattern.fromName(
                     json.optString("blurTexturePattern", BlurTexturePattern.NONE.name)
                 ),
-                blurTextureIntensity = json.optDouble("blurTextureIntensity", 0.32).toFloat().coerceIn(0f, 1f),
+                blurTextureIntensity = json.optDouble("blurTextureIntensity", DEFAULT_BLUR_TEXTURE_INTENSITY.toDouble()).toFloat().coerceIn(0f, 1f),
+                blurTextureScale = json.optDouble("blurTextureScale", DEFAULT_BLUR_TEXTURE_SCALE.toDouble()).toFloat().coerceIn(0.5f, 3f),
+                blurTextureMaskBlurAmount = json.optDouble("blurTextureMaskBlurAmount", DEFAULT_BLUR_TEXTURE_MASK_BLUR.toDouble()).toFloat().coerceIn(0f, 1f),
+                blurTextureMaskTintColor = json.optInt("blurTextureMaskTintColor", DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR),
+                blurTextureMaskTintIntensity = json.optDouble("blurTextureMaskTintIntensity", DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY.toDouble()).toFloat().coerceIn(0f, 1f),
                 cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),

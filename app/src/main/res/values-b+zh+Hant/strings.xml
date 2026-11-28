@@ -340,7 +340,11 @@
     <string name="crop_texture_diagonal">斜向刻紋</string>
     <string name="crop_texture_dots">點陣</string>
     <string name="crop_texture_diamond">菱格蝕刻</string>
-    <string name="crop_texture_strength">紋理強度：%1$d%%</string>
+    <string name="crop_texture_strength">圖樣強度：%1$d%%</string>
+    <string name="crop_texture_scale">圖樣尺寸：%1$d%%</string>
+    <string name="crop_texture_blur">圖樣區域模糊：%1$d%%</string>
+    <string name="crop_texture_tint">圖樣區域著色</string>
+    <string name="crop_texture_tint_strength">圖樣著色強度：%1$d%%</string>
     <string name="crop_blur_vignette">絲滑暗角</string>
     <string name="crop_blur_vignette_desc">中心柔和通透，邊緣呈現絲絨般的暗角過渡</string>
     <string name="crop_blur_bokeh">散景光斑</string>

@@ -67,7 +67,11 @@ object ImageProcessingUtils {
         blurTintIntensity: Float = 0.42f,
         blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
         blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
-        blurTextureIntensity: Float = 0.32f
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ): Bitmap {
         val outBmp = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(outBmp)
@@ -128,7 +132,11 @@ object ImageProcessingUtils {
                     blurTintIntensity = blurTintIntensity,
                     blurRainbowStyle = blurRainbowStyle,
                     blurTexturePattern = blurTexturePattern,
-                    blurTextureIntensity = blurTextureIntensity
+                    blurTextureIntensity = blurTextureIntensity,
+                    blurTextureScale = blurTextureScale,
+                    blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+                    blurTextureMaskTintColor = blurTextureMaskTintColor,
+                    blurTextureMaskTintIntensity = blurTextureMaskTintIntensity
                 )
 
                 val fitScale = minOf(targetW / srcW, targetH / srcH) * scale
@@ -171,7 +179,11 @@ object ImageProcessingUtils {
         blurTintIntensity: Float,
         blurRainbowStyle: BlurRainbowStyle,
         blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
-        blurTextureIntensity: Float = 0.32f
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ): Bitmap {
         val safeW = targetWidth.coerceAtLeast(16)
         val safeH = targetHeight.coerceAtLeast(16)
@@ -417,7 +429,11 @@ object ImageProcessingUtils {
         blurTintIntensity: Float,
         blurRainbowStyle: BlurRainbowStyle,
         blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
-        blurTextureIntensity: Float = 0.32f
+        blurTextureIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+        blurTextureScale: Float = PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+        blurTextureMaskBlurAmount: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_BLUR,
+        blurTextureMaskTintColor: Int = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+        blurTextureMaskTintIntensity: Float = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_INTENSITY
     ) {
         val safeW = targetWidth.coerceAtLeast(2)
         val safeH = targetHeight.coerceAtLeast(2)
@@ -639,73 +655,239 @@ object ImageProcessingUtils {
                 tintMode = blurTintMode, tintColor = blurTintColor,
                 tintIntensity = blurTintIntensity, rainbowStyle = blurRainbowStyle
             )
-            drawBlurTexturePattern(canvas, safeW, safeH, blurTexturePattern, blurTextureIntensity)
+            drawBlurTexturePattern(
+                canvas = canvas,
+                width = safeW,
+                height = safeH,
+                sourceBlurredBitmap = workBmp,
+                pattern = blurTexturePattern,
+                strength = blurTextureIntensity,
+                scale = blurTextureScale,
+                maskBlurAmount = blurTextureMaskBlurAmount,
+                maskTintColor = blurTextureMaskTintColor,
+                maskTintIntensity = blurTextureMaskTintIntensity
+            )
         } finally {
             bloomBmp?.recycle()
             workBmp.recycle()
         }
     }
 
-    private val textureShaderCache = mutableMapOf<String, BitmapShader>()
+    /**
+     * Draws a sharp etched pattern after the normal blur/tint pipeline.
+     * Its filled geometry also acts as an alpha mask for a separately blurred/tinted
+     * region underneath it. The visible pattern is never passed through a blur operation.
+     */
+    private fun drawBlurTexturePattern(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        sourceBlurredBitmap: Bitmap,
+        pattern: BlurTexturePattern,
+        strength: Float,
+        scale: Float,
+        maskBlurAmount: Float,
+        maskTintColor: Int,
+        maskTintIntensity: Float
+    ) {
+        val clampedStrength = strength.coerceIn(0f, 1f)
+        if (pattern == BlurTexturePattern.NONE || clampedStrength <= 0.005f) return
 
-    private fun drawBlurTexturePattern(canvas: Canvas, width: Int, height: Int, pattern: BlurTexturePattern, intensity: Float) {
-        val strength = intensity.coerceIn(0f, 1f)
-        if (pattern == BlurTexturePattern.NONE || strength <= 0.005f) return
-        val tileSize = (min(width, height) / 7).coerceIn(32, 128)
-        val key = "${pattern.name}_$tileSize"
-        val shader = synchronized(textureShaderCache) {
-            textureShaderCache.getOrPut(key) { createBlurTextureShader(pattern, tileSize) }
+        val workTileSize = textureTileSize(sourceBlurredBitmap.width, sourceBlurredBitmap.height, scale)
+        val displayTileSize = textureTileSize(width, height, scale)
+
+        // Masked material treatment: duplicate the already-blurred source, optionally blur it
+        // further, tint it, then keep only pixels covered by the repeating pattern geometry.
+        if (maskBlurAmount > 0.005f || maskTintIntensity > 0.005f) {
+            val effectBitmap = sourceBlurredBitmap.copy(Bitmap.Config.ARGB_8888, true)
+            try {
+                val maxRadius = (min(effectBitmap.width, effectBitmap.height) / 2 - 1).coerceAtLeast(1)
+                val radius = (maskBlurAmount.coerceIn(0f, 1f) * 20f).roundToInt().coerceIn(0, maxRadius)
+                if (radius > 0) fastBlur(effectBitmap, radius)
+
+                val effectCanvas = Canvas(effectBitmap)
+                val tintStrength = maskTintIntensity.coerceIn(0f, 1f)
+                if (tintStrength > 0.005f) {
+                    val alpha = (tintStrength * 150f).roundToInt().coerceIn(0, 150)
+                    effectCanvas.drawColor(
+                        Color.argb(
+                            alpha,
+                            Color.red(maskTintColor),
+                            Color.green(maskTintColor),
+                            Color.blue(maskTintColor)
+                        )
+                    )
+                }
+
+                val maskShader = createTexturePatternShader(pattern, workTileSize, maskOnly = true)
+                val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                    shader = maskShader
+                    xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                }
+                effectCanvas.drawRect(
+                    0f, 0f,
+                    effectBitmap.width.toFloat(),
+                    effectBitmap.height.toFloat(),
+                    maskPaint
+                )
+
+                val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+                    alpha = (clampedStrength * 255f).roundToInt().coerceIn(0, 255)
+                }
+                canvas.drawBitmap(effectBitmap, null, Rect(0, 0, width, height), effectPaint)
+            } finally {
+                effectBitmap.recycle()
+            }
         }
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            this.shader = shader
-            alpha = (strength * 220f).roundToInt().coerceIn(0, 220)
+
+        // The etching/highlight layer is drawn last at output resolution, so it stays crisp.
+        val overlayShader = createTexturePatternShader(pattern, displayTileSize, maskOnly = false)
+        val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            shader = overlayShader
+            alpha = (clampedStrength * 255f).roundToInt().coerceIn(0, 255)
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), overlayPaint)
     }
 
-    private fun createBlurTextureShader(pattern: BlurTexturePattern, tileSize: Int): BitmapShader {
+    private fun textureTileSize(width: Int, height: Int, scale: Float): Int =
+        (min(width, height) / 4f * scale.coerceIn(0.5f, 3f))
+            .roundToInt()
+            .coerceIn(24, 512)
+
+    private fun createTexturePatternShader(
+        pattern: BlurTexturePattern,
+        tileSize: Int,
+        maskOnly: Boolean
+    ): BitmapShader {
         val tile = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
         val c = Canvas(tile)
         val cell = tileSize / 4f
-        val lineWidth = (tileSize * 0.012f).coerceAtLeast(1f)
+        val maskFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
         val shadow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(30, 3, 8, 14); style = Paint.Style.STROKE
-            strokeWidth = lineWidth; strokeCap = Paint.Cap.ROUND
+            color = Color.argb(112, 5, 12, 20)
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = cell * 0.10f
         }
-        val light = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.argb(48, 238, 246, 252); style = Paint.Style.STROKE
-            strokeWidth = lineWidth; strokeCap = Paint.Cap.ROUND
+        val highlight = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(150, 244, 249, 253)
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = cell * 0.07f
         }
-        when (pattern) {
-            BlurTexturePattern.NONE -> Unit
-            BlurTexturePattern.FINE_GRID -> for (i in 0..4) {
-                val pos = i * cell
-                c.drawLine(pos + 0.8f, 0f, pos + 0.8f, tileSize.toFloat(), shadow)
-                c.drawLine(pos, 0f, pos, tileSize.toFloat(), light)
-                c.drawLine(0f, pos + 0.8f, tileSize.toFloat(), pos + 0.8f, shadow)
-                c.drawLine(0f, pos, tileSize.toFloat(), pos, light)
-            }
-            BlurTexturePattern.DIAGONAL_RIBS -> for (i in -4..8) {
-                val x = i * cell
-                c.drawLine(x + 1f, 0f, x - tileSize + 1f, tileSize.toFloat(), shadow)
-                c.drawLine(x, 0f, x - tileSize, tileSize.toFloat(), light)
-            }
-            BlurTexturePattern.DOT_MATRIX -> {
-                val radius = (tileSize * 0.018f).coerceAtLeast(0.8f)
-                val darkDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(34, 2, 7, 12) }
-                val lightDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(54, 238, 246, 252) }
-                for (row in 0..3) for (col in 0..3) {
-                    val x = (col + 0.5f) * cell; val y = (row + 0.5f) * cell
-                    c.drawCircle(x + 0.8f, y + 1f, radius, darkDot)
-                    c.drawCircle(x, y, radius, lightDot)
+        val bodyFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(62, 225, 236, 245) }
+        val dotRadius = cell * 0.29f
+        val diamondRadius = cell * 0.43f
+
+        fun drawGridOrRibLines(diagonal: Boolean, paint: Paint) {
+            val count = if (diagonal) -4..8 else 0..4
+            for (index in count) {
+                if (diagonal) {
+                    val x = index * cell
+                    c.drawLine(x, 0f, x - tileSize, tileSize.toFloat(), paint)
+                } else {
+                    val position = index * cell
+                    c.drawLine(position, 0f, position, tileSize.toFloat(), paint)
+                    c.drawLine(0f, position, tileSize.toFloat(), position, paint)
                 }
             }
-            BlurTexturePattern.DIAMOND -> for (row in 0..3) for (col in 0..3) {
-                val x = (col + 0.5f) * cell; val y = (row + 0.5f) * cell
-                val r = cell * 0.38f
-                val path = Path().apply { moveTo(x, y-r); lineTo(x+r, y); lineTo(x, y+r); lineTo(x-r, y); close() }
-                c.save(); c.translate(0f, 0.8f); c.drawPath(path, shadow); c.restore()
-                c.drawPath(path, light)
+        }
+
+        fun diamondPath(cx: Float, cy: Float): Path = Path().apply {
+            moveTo(cx, cy - diamondRadius)
+            lineTo(cx + diamondRadius, cy)
+            lineTo(cx, cy + diamondRadius)
+            lineTo(cx - diamondRadius, cy)
+            close()
+        }
+
+        when (pattern) {
+            BlurTexturePattern.NONE -> Unit
+
+            BlurTexturePattern.FINE_GRID -> {
+                val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    style = Paint.Style.STROKE
+                    strokeWidth = if (maskOnly) cell * 0.12f else cell * 0.085f
+                    strokeCap = Paint.Cap.SQUARE
+                }
+                if (maskOnly) {
+                    drawGridOrRibLines(diagonal = false, paint = linePaint)
+                } else {
+                    drawGridOrRibLines(diagonal = false, paint = shadow)
+                    c.save()
+                    c.translate(-cell * 0.035f, -cell * 0.035f)
+                    drawGridOrRibLines(diagonal = false, paint = highlight)
+                    c.restore()
+                }
+            }
+
+            BlurTexturePattern.DIAGONAL_RIBS -> {
+                if (maskOnly) {
+                    val ribMask = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.WHITE
+                        style = Paint.Style.STROKE
+                        strokeWidth = cell * 0.22f
+                        strokeCap = Paint.Cap.SQUARE
+                    }
+                    drawGridOrRibLines(diagonal = true, paint = ribMask)
+                } else {
+                    val ribs = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.argb(78, 235, 243, 250)
+                        style = Paint.Style.STROKE
+                        strokeWidth = cell * 0.22f
+                        strokeCap = Paint.Cap.SQUARE
+                    }
+                    drawGridOrRibLines(diagonal = true, paint = shadow)
+                    drawGridOrRibLines(diagonal = true, paint = ribs)
+                    c.save()
+                    c.translate(-cell * 0.035f, -cell * 0.035f)
+                    drawGridOrRibLines(diagonal = true, paint = highlight)
+                    c.restore()
+                }
+            }
+
+            BlurTexturePattern.DOT_MATRIX -> {
+                val dotShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(112, 5, 12, 20) }
+                val dotRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.argb(178, 246, 250, 253)
+                    style = Paint.Style.STROKE
+                    strokeWidth = (cell * 0.045f).coerceAtLeast(1f)
+                }
+                for (row in 0..3) for (column in 0..3) {
+                    val x = (column + 0.5f) * cell
+                    val y = (row + 0.5f) * cell
+                    if (maskOnly) {
+                        c.drawCircle(x, y, dotRadius, maskFill)
+                    } else {
+                        c.drawCircle(x + cell * 0.035f, y + cell * 0.035f, dotRadius, dotShadow)
+                        c.drawCircle(x, y, dotRadius * 0.93f, bodyFill)
+                        c.drawCircle(x - cell * 0.015f, y - cell * 0.015f, dotRadius * 0.93f, dotRing)
+                    }
+                }
+            }
+
+            BlurTexturePattern.DIAMOND -> {
+                for (row in 0..3) for (column in 0..3) {
+                    val x = (column + 0.5f) * cell
+                    val y = (row + 0.5f) * cell
+                    val path = diamondPath(x, y)
+                    if (maskOnly) {
+                        c.drawPath(path, maskFill)
+                    } else {
+                        c.save()
+                        c.translate(cell * 0.035f, cell * 0.035f)
+                        c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(112, 5, 12, 20) })
+                        c.restore()
+                        c.drawPath(path, bodyFill)
+                        val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.argb(184, 246, 250, 253)
+                            style = Paint.Style.STROKE
+                            strokeWidth = (cell * 0.045f).coerceAtLeast(1f)
+                        }
+                        c.drawPath(path, edge)
+                    }
+                }
             }
         }
         return BitmapShader(tile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
