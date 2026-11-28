@@ -26,7 +26,20 @@ void VulkanEngine::publishFrameTrace(FrameTraceSample& sample) {
     if (nextFrameTraceRevision == 0) nextFrameTraceRevision = 1;
 }
 
-std::vector<FrameTraceSample> VulkanEngine::getFrameTraceUpdates(uint64_t afterRevision) const {
+std::vector<FrameTraceSample> VulkanEngine::getFrameTraceUpdates(uint64_t afterRevision) {
+    // This getter is also a non-blocking final drain: collect query results only
+    // for frame slots whose submission fences have already signaled.
+    if (device != VK_NULL_HANDLE) {
+        for (auto& frame : frames) {
+            if (frame.timestampPending &&
+                frame.inFlight != VK_NULL_HANDLE &&
+                vkGetFenceStatus(device, frame.inFlight) == VK_SUCCESS) {
+                collectGpuTimestamps(frame);
+            }
+        }
+        collectDisplayTimingSamples();
+    }
+
     std::vector<FrameTraceSample> updates;
     updates.reserve(kFrameTraceCapacity);
     for (const auto& sample : frameTraceSamples) {
@@ -880,6 +893,7 @@ int32_t VulkanEngine::beginFrame(
     trace.acquireNs = acquireNs;
     trace.beginCpuNs = elapsedNs(beginStartedAt);
     trace.offscreenTargetSetupNs = offscreenTargetSetupNs;
+    trace.refreshCycleDurationNs = displayRefreshDurationNs;
     if (usingOffscreenPass) trace.flags |= (1ull << 1);
     frame.traceSlotIndex = traceSlot;
     publishFrameTrace(trace);
