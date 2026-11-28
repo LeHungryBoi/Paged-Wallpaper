@@ -12,6 +12,7 @@ data class GpuFrameRequest(
     val progress: Float,
     val pagePosition: Float,
     val continuousPagePosition: Float,
+    val frameId: Long,
     val frameTimeNanos: Long,
     val fromOffsetUpdate: Boolean,
     val isVisible: Boolean,
