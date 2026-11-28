@@ -21,6 +21,29 @@ uint64_t elapsedNs(SteadyClock::time_point start) {
 }
 }
 
+void VulkanEngine::publishFrameTrace(FrameTraceSample& sample) {
+    sample.revision = nextFrameTraceRevision++;
+    if (nextFrameTraceRevision == 0) nextFrameTraceRevision = 1;
+}
+
+std::vector<FrameTraceSample> VulkanEngine::getFrameTraceUpdates(uint64_t afterRevision) const {
+    std::vector<FrameTraceSample> updates;
+    updates.reserve(kFrameTraceCapacity);
+    for (const auto& sample : frameTraceSamples) {
+        if (sample.revision > afterRevision && sample.frameId != 0) {
+            updates.push_back(sample);
+        }
+    }
+    std::sort(
+        updates.begin(),
+        updates.end(),
+        [](const FrameTraceSample& left, const FrameTraceSample& right) {
+            return left.revision < right.revision;
+        }
+    );
+    return updates;
+}
+
 bool VulkanEngine::isSrgbSwapchain() const {
     return swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB ||
            swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB;
@@ -577,6 +600,14 @@ void VulkanEngine::collectDisplayTimingSamples() {
             );
         }
         recordTimingSample("present_margin", timing.presentMargin);
+        for (auto& sample : frameTraceSamples) {
+            if (sample.frameId != 0 && sample.presentId == timing.presentID) {
+                sample.actualPresentTimeNs = timing.actualPresentTime;
+                sample.presentMarginNs = timing.presentMargin;
+                publishFrameTrace(sample);
+                break;
+            }
+        }
         lastActualPresentTimeNs = timing.actualPresentTime;
     }
 }
@@ -617,12 +648,28 @@ void VulkanEngine::collectGpuTimestamps(FrameSync& frame) {
         return static_cast<uint64_t>(static_cast<double>(ticks) * timestampPeriodNs);
     };
 
-    recordTimingSample("gpu_frame", ticksToNs(elapsedTicks(timestamps[0], timestamps[2])));
+    const uint64_t gpuFrameNs = ticksToNs(elapsedTicks(timestamps[0], timestamps[2]));
+    recordTimingSample("gpu_frame", gpuFrameNs);
+    uint64_t gpuOffscreenNs = kTraceValueUnavailable;
+    uint64_t gpuMainNs = 0;
     if (frame.timestampHasOffscreenPass) {
-        recordTimingSample("gpu_offscreen", ticksToNs(elapsedTicks(timestamps[0], timestamps[1])));
-        recordTimingSample("gpu_main", ticksToNs(elapsedTicks(timestamps[1], timestamps[2])));
+        gpuOffscreenNs = ticksToNs(elapsedTicks(timestamps[0], timestamps[1]));
+        gpuMainNs = ticksToNs(elapsedTicks(timestamps[1], timestamps[2]));
+        recordTimingSample("gpu_offscreen", gpuOffscreenNs);
+        recordTimingSample("gpu_main", gpuMainNs);
     } else {
-        recordTimingSample("gpu_main", ticksToNs(elapsedTicks(timestamps[0], timestamps[2])));
+        gpuMainNs = gpuFrameNs;
+        recordTimingSample("gpu_main", gpuMainNs);
+    }
+
+    if (frame.traceSlotIndex < kFrameTraceCapacity) {
+        FrameTraceSample& trace = frameTraceSamples[frame.traceSlotIndex];
+        trace.gpuFrameNs = gpuFrameNs;
+        trace.gpuOffscreenNs = gpuOffscreenNs;
+        trace.gpuMainNs = gpuMainNs;
+        trace.flags |= 1ull;
+        if (frame.timestampHasOffscreenPass) trace.flags |= (1ull << 1);
+        publishFrameTrace(trace);
     }
 }
 
@@ -755,6 +802,8 @@ bool VulkanEngine::ensureOffscreenTarget(uint32_t width, uint32_t height) {
 }
 
 int32_t VulkanEngine::beginFrame(
+    uint64_t traceFrameId,
+    uint64_t requestTimeNs,
     bool useMotionBlur,
     uint32_t mbWidth,
     uint32_t mbHeight,
@@ -762,13 +811,15 @@ int32_t VulkanEngine::beginFrame(
     float clearG,
     float clearB
 ) {
+    const auto beginStartedAt = SteadyClock::now();
     if (device == VK_NULL_HANDLE || swapchain == VK_NULL_HANDLE) return -1;
     if (swapchainOutOfDate) return 1;
 
     FrameSync& frame = frames[currentFrame];
     const auto fenceWaitStartedAt = SteadyClock::now();
     vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
-    recordTimingSample("fence_wait", elapsedNs(fenceWaitStartedAt));
+    const uint64_t fenceWaitNs = elapsedNs(fenceWaitStartedAt);
+    recordTimingSample("fence_wait", fenceWaitNs);
     // The frame fence guarantees these timestamp results are ready. Never wait
     // on query availability separately; a missing result is simply skipped.
     collectGpuTimestamps(frame);
@@ -777,7 +828,8 @@ int32_t VulkanEngine::beginFrame(
     VkResult acq = vkAcquireNextImageKHR(
         device, swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &activeImageIndex
     );
-    recordTimingSample("acquire", elapsedNs(acquireStartedAt));
+    const uint64_t acquireNs = elapsedNs(acquireStartedAt);
+    recordTimingSample("acquire", acquireNs);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainOutOfDate = true;
         return 1;
@@ -804,8 +856,11 @@ int32_t VulkanEngine::beginFrame(
     frame.blurDescriptor = VK_NULL_HANDLE;
     vkResetCommandBuffer(frame.commandBuffer, 0);
 
+    uint64_t offscreenTargetSetupNs = 0;
     if (useMotionBlur && mbWidth > 0 && mbHeight > 0) {
+        const auto offscreenSetupStartedAt = SteadyClock::now();
         if (!ensureOffscreenTarget(mbWidth, mbHeight)) return -1;
+        offscreenTargetSetupNs = elapsedNs(offscreenSetupStartedAt);
     }
 
     VkCommandBufferBeginInfo beginInfo{};
@@ -815,6 +870,19 @@ int32_t VulkanEngine::beginFrame(
 
     recordingFrame = true;
     usingOffscreenPass = useMotionBlur && blurFramebuffer != VK_NULL_HANDLE;
+
+    const uint32_t traceSlot = nextFrameTraceSlot++ % kFrameTraceCapacity;
+    FrameTraceSample& trace = frameTraceSamples[traceSlot];
+    trace = FrameTraceSample{};
+    trace.frameId = traceFrameId;
+    trace.requestTimeNs = requestTimeNs;
+    trace.fenceWaitNs = fenceWaitNs;
+    trace.acquireNs = acquireNs;
+    trace.beginCpuNs = elapsedNs(beginStartedAt);
+    trace.offscreenTargetSetupNs = offscreenTargetSetupNs;
+    if (usingOffscreenPass) trace.flags |= (1ull << 1);
+    frame.traceSlotIndex = traceSlot;
+    publishFrameTrace(trace);
 
     if (gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE) {
         vkCmdResetQueryPool(frame.commandBuffer, frame.timestampQueryPool, 0, 3);
@@ -1037,6 +1105,7 @@ void VulkanEngine::drawMotionBlurPass(const float* mvp, int32_t radius, float sa
 }
 
 int32_t VulkanEngine::endFrame() {
+    const auto endStartedAt = SteadyClock::now();
     if (!recordingFrame) return -1;
     recordingFrame = false;
     FrameSync& frame = frames[currentFrame];
@@ -1093,7 +1162,8 @@ int32_t VulkanEngine::endFrame() {
     frame.submissionSerial = ++submittedFrameSerial;
     frame.timestampPending = gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE;
     if (hasPendingUploads) frame.pendingUploads.clear();
-    recordTimingSample("submit", elapsedNs(submitStartedAt));
+    const uint64_t submitNs = elapsedNs(submitStartedAt);
+    recordTimingSample("submit", submitNs);
 
     VkPresentTimeGOOGLE presentTime{};
     VkPresentTimesInfoGOOGLE presentTimesInfo{};
@@ -1117,7 +1187,19 @@ int32_t VulkanEngine::endFrame() {
     present.pImageIndices = &activeImageIndex;
     const auto presentStartedAt = SteadyClock::now();
     VkResult res = vkQueuePresentKHR(graphicsQueue, &present);
-    recordTimingSample("present", elapsedNs(presentStartedAt));
+    const uint64_t presentNs = elapsedNs(presentStartedAt);
+    recordTimingSample("present", presentNs);
+
+    if (frame.traceSlotIndex < kFrameTraceCapacity) {
+        FrameTraceSample& trace = frameTraceSamples[frame.traceSlotIndex];
+        trace.submitNs = submitNs;
+        trace.presentNs = presentNs;
+        trace.endCpuNs = elapsedNs(endStartedAt);
+        trace.presentId = displayTimingExtensionEnabled ? presentTime.presentID : 0;
+        if (res == VK_SUCCESS) trace.flags |= (1ull << 2);
+        if (displayTimingExtensionEnabled) trace.flags |= (1ull << 3);
+        publishFrameTrace(trace);
+    }
     currentFrame = (currentFrame + 1) % kMaxFramesInFlight;
 
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
