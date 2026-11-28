@@ -11,7 +11,7 @@ import java.util.UUID
 
 object PresetDataMigration {
     const val LEGACY_PRESET_SCHEMA_VERSION = 2
-    const val CURRENT_SCHEMA_VERSION = 6
+    const val CURRENT_SCHEMA_VERSION = 7
 
     fun migrateLegacy(
         state: WallpaperAppState,
@@ -78,9 +78,10 @@ object PresetDataMigration {
 
     private fun migrateTransitionId(id: String, sourceSchemaVersion: Int): String =
         when {
-            id != "swipe_reveal" -> id
-            sourceSchemaVersion < 5 -> "swipe_reveal_stacked"
-            sourceSchemaVersion < 6 -> "swipe_reveal_slow"
+            id == "swipe_reveal" && sourceSchemaVersion < 5 -> "swipe_reveal_stacked"
+            // PR #3 briefly migrated every existing Swipe to Reveal selection to Slow Switching.
+            // Undo that automatic conversion while preserving every unrelated page/calibration setting.
+            id == "swipe_reveal_slow" && sourceSchemaVersion < 7 -> "swipe_reveal"
             else -> id
         }
 }
