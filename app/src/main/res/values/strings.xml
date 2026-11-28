@@ -78,6 +78,7 @@
     <string name="transition_parallax_name">Parallax Scroll</string>
     <string name="transition_parallax_classic_name">Classic Parallax</string>
     <string name="transition_swipe_reveal_name">Swipe to Reveal</string>
+    <string name="transition_swipe_reveal_slow_name">Swipe to Reveal Slow Switching</string>
     <string name="transition_swipe_reveal_stacked_name">Swipe to Reveal Stacked</string>
     <string name="transition_fade_name">Cross Fade</string>
     <string name="transition_soft_blur_name">Soft Blur Fade</string>
