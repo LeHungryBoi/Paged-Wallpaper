@@ -11,7 +11,7 @@ import java.util.UUID
 
 object PresetDataMigration {
     const val LEGACY_PRESET_SCHEMA_VERSION = 2
-    const val CURRENT_SCHEMA_VERSION = 5
+    const val CURRENT_SCHEMA_VERSION = 6
 
     fun migrateLegacy(
         state: WallpaperAppState,
@@ -61,13 +61,13 @@ object PresetDataMigration {
         if (state.schemaVersion >= CURRENT_SCHEMA_VERSION) return state
         fun migrateSetting(setting: PageTransitionSetting): PageTransitionSetting =
             setting.copy(
-                universalTransitionId = migrateTransitionId(setting.universalTransitionId),
-                leftTransitionId = migrateTransitionId(setting.leftTransitionId),
-                rightTransitionId = migrateTransitionId(setting.rightTransitionId)
+                universalTransitionId = migrateTransitionId(setting.universalTransitionId, state.schemaVersion),
+                leftTransitionId = migrateTransitionId(setting.leftTransitionId, state.schemaVersion),
+                rightTransitionId = migrateTransitionId(setting.rightTransitionId, state.schemaVersion)
             )
 
         return state.copy(
-            transitionType = migrateTransitionId(state.transitionType),
+            transitionType = migrateTransitionId(state.transitionType, state.schemaVersion),
             transitions = state.transitions.map(::migrateSetting),
             presets = state.presets.map { preset ->
                 preset.copy(transitions = preset.transitions.map(::migrateSetting))
@@ -76,6 +76,11 @@ object PresetDataMigration {
         )
     }
 
-    private fun migrateTransitionId(id: String): String =
-        if (id == "swipe_reveal") "swipe_reveal_stacked" else id
+    private fun migrateTransitionId(id: String, sourceSchemaVersion: Int): String =
+        when {
+            id != "swipe_reveal" -> id
+            sourceSchemaVersion < 5 -> "swipe_reveal_stacked"
+            sourceSchemaVersion < 6 -> "swipe_reveal_slow"
+            else -> id
+        }
 }
