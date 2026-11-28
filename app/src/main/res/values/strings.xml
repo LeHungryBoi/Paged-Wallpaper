@@ -334,6 +334,13 @@
     <string name="crop_blur_acrylic_desc">Vibrant frosted material with subtle micro-grain noise and soft veil</string>
     <string name="crop_blur_smoked">Smoked glass</string>
     <string name="crop_blur_smoked_desc">Neutral charcoal glass with muted color, soft reflections and dark edge falloff</string>
+    <string name="crop_backdrop_tab_background">Background</string>
+    <string name="crop_backdrop_tab_pattern">Pattern</string>
+    <string name="crop_texture_tint_desc">Tint applied only inside the pattern shapes.</string>
+    <string name="crop_texture_tint_custom_color">Custom color</string>
+    <string name="crop_texture_tint_hue">Hue: %1$d°</string>
+    <string name="crop_texture_tint_saturation">Saturation: %1$d%%</string>
+    <string name="crop_texture_tint_brightness">Brightness: %1$d%%</string>
     <string name="crop_glass_texture">Glass texture</string>
     <string name="crop_texture_none">None</string>
     <string name="crop_texture_grid">Fine grid</string>
@@ -343,8 +350,8 @@
     <string name="crop_texture_strength">Pattern strength: %1$d%%</string>
     <string name="crop_texture_scale">Pattern size: %1$d%%</string>
     <string name="crop_texture_blur">Pattern-area blur: %1$d%%</string>
-    <string name="crop_texture_tint">Pattern-area tint</string>
-    <string name="crop_texture_tint_strength">Pattern tint: %1$d%%</string>
+    <string name="crop_texture_tint">Pattern-area color</string>
+    <string name="crop_texture_tint_strength">Color amount: %1$d%%</string>
     <string name="crop_blur_vignette">Vignette</string>
     <string name="crop_blur_vignette_desc">Luminous soft-blur center with velvety darkened edge falloff</string>
     <string name="crop_blur_bokeh">Bokeh</string>
