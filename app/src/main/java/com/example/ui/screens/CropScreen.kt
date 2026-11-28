@@ -132,7 +132,6 @@ import com.example.ui.cropFillModeLabelRes
 import com.example.util.ImageProcessingUtils
 import com.example.util.ParallaxBounds
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
@@ -141,6 +140,11 @@ import kotlin.math.roundToInt
 private enum class EditorPreviewMode {
     SINGLE_PAGE,
     FULL_IMAGE
+}
+
+private enum class BackdropSettingsTab {
+    BACKGROUND,
+    PATTERN
 }
 
 private fun calculatePreviewTravel(
@@ -284,6 +288,9 @@ fun MediaEditorScreen(
     var blurTextureMaskBlurAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureMaskBlurAmount) }
     var blurTextureMaskTintColor by remember(media.id, page.pageIndex) { mutableIntStateOf(page.blurTextureMaskTintColor) }
     var blurTextureMaskTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureMaskTintIntensity) }
+    var backdropSettingsTab by remember(media.id, page.pageIndex) {
+        mutableStateOf(BackdropSettingsTab.BACKGROUND)
+    }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
     var symmetricParallax by remember(media.id, page.pageIndex) { mutableStateOf(page.symmetricParallax) }
     var previewMode by remember(media.id, page.pageIndex, repository) {
@@ -343,9 +350,6 @@ fun MediaEditorScreen(
         if (cropFillMode == CropFillMode.CROP) {
             blurredBitmap = null
             return@LaunchedEffect
-        }
-        if (blurredBitmap != null) {
-            delay(40)
         }
         val preview = withContext(Dispatchers.Default) {
             ImageProcessingUtils.renderBackdropPreviewBitmap(
@@ -596,458 +600,24 @@ fun MediaEditorScreen(
                             val source = displayBitmap
                             if (source != null) {
                                 if (cropFillMode != CropFillMode.CROP) {
-                                    Image(
-                                        bitmap = (displayBackdrop ?: source).asImageBitmap(),
-                                        contentDescription = stringResource(R.string.crop_preview_single_label),
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .blur(if (displayBackdrop == null) (blurAmount * 20f).dp else 0.dp)
-                                    )
-                                }
-                                Canvas(Modifier.fillMaxSize().clipToBounds()) {
-                                    val targetWidth = size.width
-                                    val targetHeight = size.height
-                                    val sourceRatio = source.width.toFloat() / source.height
-                                    val targetRatio = targetWidth / targetHeight
-                                    val baseCropWidth = if (sourceRatio > targetRatio) {
-                                        source.height * targetRatio
-                                    } else {
-                                        source.width.toFloat()
-                                    }
-                                    val baseCropHeight = if (sourceRatio > targetRatio) {
-                                        source.height.toFloat()
-                                    } else {
-                                        source.width / targetRatio
-                                    }
-                                    val drawPaint = Paint(
-                                        Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG
-                                    )
-                                    drawIntoCanvas { composeCanvas ->
-                                        val nativeCanvas = composeCanvas.nativeCanvas
-                                        if (cropFillMode == CropFillMode.CROP) {
-                                            val cropWidth = baseCropWidth / zoom
-                                            val cropHeight = baseCropHeight / zoom
-                                            val centerX = source.width / 2f -
-                                                panX * ((source.width - cropWidth) / 2f).coerceAtLeast(0f)
-                                            val centerY = source.height / 2f -
-                                                panY * ((source.height - cropHeight) / 2f).coerceAtLeast(0f)
-                                            val left = (centerX - cropWidth / 2f)
-                                                .coerceIn(0f, source.width - cropWidth)
-                                            val top = (centerY - cropHeight / 2f)
-                                                .coerceIn(0f, source.height - cropHeight)
-                                            val sourceLeft = left.toInt().coerceIn(0, source.width - 1)
-                                            val sourceTop = top.toInt().coerceIn(0, source.height - 1)
-                                            nativeCanvas.drawBitmap(
-                                                source,
-                                                Rect(
-                                                    sourceLeft,
-                                                    sourceTop,
-                                                    (left + cropWidth).toInt()
-                                                        .coerceIn(sourceLeft + 1, source.width),
-                                                    (top + cropHeight).toInt()
-                                                        .coerceIn(sourceTop + 1, source.height)
-                                                ),
-                                                Rect(0, 0, targetWidth.toInt(), targetHeight.toInt()),
-                                                drawPaint
-                                            )
-                                        } else {
-                                            val fitScale = minOf(
-                                                targetWidth / source.width,
-                                                targetHeight / source.height
-                                            ) * zoom
-                                            val imageWidth = source.width * fitScale
-                                            val imageHeight = source.height * fitScale
-                                            val centerX = targetWidth / 2f +
-                                                panX * ((imageWidth - targetWidth) / 2f).coerceAtLeast(0f)
-                                            val centerY = targetHeight / 2f +
-                                                panY * ((imageHeight - targetHeight) / 2f).coerceAtLeast(0f)
-                                            val fgDstRect = RectF(
-                                                centerX - imageWidth / 2f,
-                                                centerY - imageHeight / 2f,
-                                                centerX + imageWidth / 2f,
-                                                centerY + imageHeight / 2f
-                                            )
-                                            ImageProcessingUtils.drawForegroundShadow(nativeCanvas, fgDstRect)
-                                            nativeCanvas.drawBitmap(
-                                                source,
-                                                null,
-                                                fgDstRect,
-                                                drawPaint
-                                            )
-                                        }
-                                    }
-                                }
-                            } else {
-                                Text(stringResource(R.string.crop_unable_to_load), color = Color.White)
-                            }
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(18.dp))
-                            )
-                        }
-                        }
-                    } else {
-                        // Full image preview keeps sharp corners, unclipped 2dp reach/static strokes, and 1:1 frame drag & pinch zoom
-                        val previewOutlineColor = MaterialTheme.colorScheme.outlineVariant
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(
-                                    start = 16.dp,
-                                    end = 16.dp,
-                                    top = previewTopPadding,
-                                    bottom = previewBottomPadding
-                                )
-                                .background(Color.Black)
-                                .pointerInput(media.id, page.pageIndex) {
-                                    detectTransformGestures { _, pan, zoomChange, _ ->
-                                        val source = currentDisplayBitmap ?: return@detectTransformGestures
-                                        val nextZoom = if (zoomChange != 1f) {
-                                            (zoom * zoomChange).coerceIn(1f, 3f).also { zoom = it }
-                                        } else {
-                                            zoom
-                                        }
-                                        if (pan != Offset.Zero) {
-                                            val (nextPanX, nextPanY) = calculateFullImagePreviewPan(
-                                                currentPanX = panX,
-                                                currentPanY = panY,
-                                                panDelta = pan,
-                                                canvasWidth = size.width.toFloat(),
-                                                canvasHeight = size.height.toFloat(),
-                                                sourceWidth = source.width,
-                                                sourceHeight = source.height,
-                                                viewportWidthPx = currentViewportWidthPx,
-                                                viewportHeightPx = currentViewportHeightPx,
-                                                zoom = nextZoom,
-                                                cropFillMode = currentCropFillMode
-                                            )
-                                            panX = nextPanX
-                                            panY = nextPanY
-                                        }
-                                    }
-                                }
-                                .testTag("crop_parallax_bounds_preview")
-                        ) {
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val nativeCanvas = drawContext.canvas.nativeCanvas
-                                val borderWidthPx = 1.dp.toPx()
-                                val halfBorderPx = borderWidthPx / 2f
-                                val borderPaint = Paint().apply {
-                                    color = previewOutlineColor.toArgb()
-                                    style = Paint.Style.STROKE
-                                    strokeWidth = borderWidthPx
-                                }
-                                val source = displayBitmap
-                                if (source == null) {
-                                    nativeCanvas.drawRect(
-                                        halfBorderPx,
-                                        halfBorderPx,
-                                        size.width - halfBorderPx,
-                                        size.height - halfBorderPx,
-                                        borderPaint
-                                    )
-                                    return@Canvas
-                                }
-                                val imageScale = minOf(size.width / source.width, size.height / source.height)
-                                val imageWidth = source.width * imageScale
-                                val imageHeight = source.height * imageScale
-                                val imageLeft = (size.width - imageWidth) / 2f
-                                val imageTop = (size.height - imageHeight) / 2f
-                                val targetRatio = viewportWidthPx / viewportHeightPx
-                                val sourceRatio = source.width.toFloat() / source.height
-                                val baseCropWidth = if (sourceRatio > targetRatio) {
-                                    source.height * targetRatio
-                                } else {
-                                    source.width.toFloat()
-                                }
-                                val baseCropHeight = if (sourceRatio > targetRatio) {
-                                    source.height.toFloat()
-                                } else {
-                                    source.width / targetRatio
-                                }
-                                val frameLeft: Float
-                                val frameRight: Float
-                                val frameTop: Float
-                                val frameBottom: Float
-                                val sourcePerViewportPixel: Float
-                                if (cropFillMode == CropFillMode.CROP) {
-                                    val cropWidth = baseCropWidth / zoom
-                                    val cropHeight = baseCropHeight / zoom
-                                    val cropCenterX = source.width / 2f -
-                                        panX * ((source.width - cropWidth) / 2f).coerceAtLeast(0f)
-                                    val cropCenterY = source.height / 2f -
-                                        panY * ((source.height - cropHeight) / 2f).coerceAtLeast(0f)
-                                    frameLeft = (cropCenterX - cropWidth / 2f)
-                                        .coerceIn(0f, source.width - cropWidth)
-                                    frameRight = frameLeft + cropWidth
-                                    frameTop = (cropCenterY - cropHeight / 2f)
-                                        .coerceIn(0f, source.height - cropHeight)
-                                    frameBottom = frameTop + cropHeight
-                                    sourcePerViewportPixel = cropWidth / viewportWidthPx
-                                } else {
-                                    val imageFitScale = minOf(
-                                        viewportWidthPx / source.width,
-                                        viewportHeightPx / source.height
-                                    ) * zoom
-                                    val drawWidth = source.width * imageFitScale
-                                    val drawHeight = source.height * imageFitScale
-                                    val imageLeftInViewport = viewportWidthPx / 2f +
-                                        panX * ((drawWidth - viewportWidthPx) / 2f).coerceAtLeast(0f) -
-                                        drawWidth / 2f
-                                    val imageTopInViewport = viewportHeightPx / 2f +
-                                        panY * ((drawHeight - viewportHeightPx) / 2f).coerceAtLeast(0f) -
-                                        drawHeight / 2f
-                                    frameLeft = ((-imageLeftInViewport) / imageFitScale)
-                                        .coerceIn(0f, source.width.toFloat())
-                                    frameRight = ((viewportWidthPx - imageLeftInViewport) / imageFitScale)
-                                        .coerceIn(frameLeft, source.width.toFloat())
-                                    frameTop = ((-imageTopInViewport) / imageFitScale)
-                                        .coerceIn(0f, source.height.toFloat())
-                                    frameBottom = ((viewportHeightPx - imageTopInViewport) / imageFitScale)
-                                        .coerceIn(frameTop, source.height.toFloat())
-                                    sourcePerViewportPixel = 1f / imageFitScale
-                                }
-                                val leftSourceTravel = leftPreviewTravelPx * sourcePerViewportPixel
-                                val rightSourceTravel = rightPreviewTravelPx * sourcePerViewportPixel
-                                val reachLeft = (frameLeft - leftSourceTravel).coerceAtLeast(0f)
-                                val reachRight = (frameRight + rightSourceTravel)
-                                    .coerceAtMost(source.width.toFloat())
-                                val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-                                nativeCanvas.drawBitmap(
-                                    source,
-                                    null,
-                                    RectF(imageLeft, imageTop, imageLeft + imageWidth, imageTop + imageHeight),
-                                    imagePaint
-                                )
-                                nativeCanvas.drawRect(
-                                    halfBorderPx,
-                                    halfBorderPx,
-                                    size.width - halfBorderPx,
-                                    size.height - halfBorderPx,
-                                    borderPaint
-                                )
-
-                                val mapX = { x: Float -> imageLeft + x * imageScale }
-                                val mapY = { y: Float -> imageTop + y * imageScale }
-                                val reachBounds = RectF(
-                                    mapX(reachLeft),
-                                    mapY(frameTop),
-                                    mapX(reachRight),
-                                    mapY(frameBottom)
-                                )
-                                val staticBounds = RectF(
-                                    mapX(frameLeft),
-                                    mapY(frameTop),
-                                    mapX(frameRight),
-                                    mapY(frameBottom)
-                                )
-                                val reachStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                    color = android.graphics.Color.rgb(255, 180, 0)
-                                    style = Paint.Style.STROKE
-                                    strokeWidth = 2.dp.toPx()
-                                }
-                                val staticStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                    color = android.graphics.Color.rgb(80, 220, 255)
-                                    style = Paint.Style.STROKE
-                                    strokeWidth = 2.dp.toPx()
-                                }
-                                nativeCanvas.drawRect(reachBounds, reachStroke)
-                                nativeCanvas.drawRect(staticBounds, staticStroke)
-                            }
-                        }
-                    }
-
-                    if (showDarkenedPreview) {
-                        Surface(
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .padding(top = 8.dp)
-                                .testTag("crop_darken_preview_badge"),
-                            shape = CircleShape,
-                            color = Color.Black.copy(alpha = 0.72f)
-                        ) {
-                            Text(
-                                text = stringResource(
-                                    R.string.crop_darkened_preview_badge,
-                                    (effectiveUnifiedDimFactor * 100f).roundToInt()
-                                ),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Compact edge-to-edge split divider bar hosting bounds legend (left, Full Image only), shortened divider + drag pill (center), and mode pill (right)
-                val dividerBarBorderColor = MaterialTheme.colorScheme.outlineVariant
-                SplitDividerRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(dividerHeight)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                        .drawBehind {
-                            val strokePx = 1.dp.toPx()
-                            drawLine(
-                                color = dividerBarBorderColor,
-                                start = Offset(0f, strokePx / 2f),
-                                end = Offset(size.width, strokePx / 2f),
-                                strokeWidth = strokePx
-                            )
-                            drawLine(
-                                color = dividerBarBorderColor,
-                                start = Offset(0f, size.height - strokePx / 2f),
-                                end = Offset(size.width, size.height - strokePx / 2f),
-                                strokeWidth = strokePx
-                            )
-                        }
-                        .testTag("crop_split_separator"),
-                    showLegend = previewMode == EditorPreviewMode.FULL_IMAGE,
-                    legendContent = {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.Black.copy(alpha = 0.68f),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)),
-                            modifier = Modifier.testTag("crop_parallax_legend_pill")
-                        ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(
-                                    text = stringResource(R.string.crop_legend_static),
-                                    color = Color(0xFF50DCFF),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        letterSpacing = 0.2.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = stringResource(R.string.crop_legend_reach),
-                                    color = Color(0xFFFFB400),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        letterSpacing = 0.2.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f, fill = false)
-                                )
-                            }
-                        }
-                    },
-                    dividerLineContent = {
-                        Box(
-                            modifier = Modifier
-                                .height(1.dp)
-                                .background(MaterialTheme.colorScheme.outlineVariant)
-                        )
-                    },
-                    centerHandleContent = {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            tonalElevation = 2.dp
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                                    .size(width = 36.dp, height = 4.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                            )
-                        }
-                    },
-                    modeBadgeContent = {
-                        Box(
-                            modifier = Modifier
-                                .defaultMinSize(minWidth = 48.dp, minHeight = 36.dp)
-                                .clip(CircleShape)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClick = togglePreviewMode
-                                )
-                                .testTag("crop_preview_mode_badge"),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.68f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.24f))
-                            ) {
-                                Text(
-                                    text = stringResource(
-                                        if (previewMode == EditorPreviewMode.SINGLE_PAGE) {
-                                            R.string.crop_preview_single_label
-                                        } else {
-                                            R.string.crop_preview_full_label
-                                        }
-                                    ),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        letterSpacing = 0.2.sp
-                                    ),
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                )
-                            }
-                        }
-                    }
-                )
-
-                // Independently scrollable settings area
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
-                        .testTag("crop_settings_scroll_area"),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(stringResource(R.string.crop_image_fit), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            CropFillMode.values().forEach { mode ->
                                 FilterChip(
-                                    selected = cropFillMode == mode,
-                                    onClick = {
-                                        cropFillMode = mode
-                                        if (mode == CropFillMode.BLUR &&
-                                            (blurStyle == BlurStyle.WIN7_AERO ||
-                                                blurStyle == BlurStyle.MODERN_ACRYLIC ||
-                                                blurStyle == BlurStyle.SMOKED_GLASS)
-                                        ) {
-                                            blurStyle = BlurStyle.SMOOTH_GAUSSIAN
-                                        } else if (mode == CropFillMode.GLASS &&
-                                            blurStyle == BlurStyle.SMOOTH_GAUSSIAN
-                                        ) {
-                                            blurStyle = BlurStyle.WIN7_AERO
-                                        }
-                                    },
-                                    label = { Text(stringResource(cropFillModeLabelRes(mode)), style = MaterialTheme.typography.labelSmall) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("crop_fill_${mode.name.lowercase()}")
+                                    selected = backdropSettingsTab == BackdropSettingsTab.BACKGROUND,
+                                    onClick = { backdropSettingsTab = BackdropSettingsTab.BACKGROUND },
+                                    label = { Text(stringResource(R.string.crop_backdrop_tab_background)) },
+                                    modifier = Modifier.weight(1f).testTag("backdrop_tab_background")
+                                )
+                                FilterChip(
+                                    selected = backdropSettingsTab == BackdropSettingsTab.PATTERN,
+                                    onClick = { backdropSettingsTab = BackdropSettingsTab.PATTERN },
+                                    label = { Text(stringResource(R.string.crop_backdrop_tab_pattern)) },
+                                    modifier = Modifier.weight(1f).testTag("backdrop_tab_pattern")
                                 )
                             }
-                        }
-                        if (cropFillMode != CropFillMode.CROP) {
+                            if (backdropSettingsTab == BackdropSettingsTab.BACKGROUND) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(stringResource(R.string.crop_blur_style), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                                 Row(
@@ -1089,95 +659,6 @@ fun MediaEditorScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                            }
-
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(stringResource(R.string.crop_glass_texture), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    BlurTexturePattern.values().forEach { pattern ->
-                                        FilterChip(
-                                            selected = blurTexturePattern == pattern,
-                                            onClick = { blurTexturePattern = pattern },
-                                            label = { Text(stringResource(blurTexturePatternLabelRes(pattern)), style = MaterialTheme.typography.labelSmall) },
-                                            modifier = Modifier.testTag("blur_texture_${pattern.name.lowercase()}")
-                                        )
-                                    }
-                                }
-                                if (blurTexturePattern != BlurTexturePattern.NONE) {
-                                    Text(stringResource(R.string.crop_texture_strength, (blurTextureIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
-                                    Slider(
-                                        value = blurTextureIntensity,
-                                        onValueChange = { blurTextureIntensity = it },
-                                        valueRange = 0f..1f,
-                                        modifier = Modifier.testTag("blur_texture_strength_slider")
-                                    )
-                                    Text(stringResource(R.string.crop_texture_scale, (blurTextureScale * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
-                                    Slider(
-                                        value = blurTextureScale,
-                                        onValueChange = { blurTextureScale = it },
-                                        valueRange = 0.5f..3f,
-                                        modifier = Modifier.testTag("blur_texture_scale_slider")
-                                    )
-                                    Text(stringResource(R.string.crop_texture_blur, (blurTextureMaskBlurAmount * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
-                                    Slider(
-                                        value = blurTextureMaskBlurAmount,
-                                        onValueChange = { blurTextureMaskBlurAmount = it },
-                                        valueRange = 0f..1f,
-                                        modifier = Modifier.testTag("blur_texture_mask_blur_slider")
-                                    )
-                                    Text(stringResource(R.string.crop_texture_tint), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TEXTURE_TINT_SWATCH_COLORS.forEachIndexed { index, swatchColor ->
-                                            val selected = blurTextureMaskTintColor == swatchColor
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(44.dp)
-                                                    .clip(CircleShape)
-                                                    .clickable(role = Role.RadioButton) {
-                                                        blurTextureMaskTintColor = swatchColor
-                                                    }
-                                                    .testTag("texture_tint_swatch_$index"),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(32.dp)
-                                                        .clip(CircleShape)
-                                                        .background(Color(swatchColor))
-                                                        .border(
-                                                            width = if (selected) 2.5.dp else 1.dp,
-                                                            color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.55f),
-                                                            shape = CircleShape
-                                                        ),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    if (selected) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = stringResource(R.string.crop_tint_selected_cd),
-                                                            tint = if (Color(swatchColor).luminanceCompat() > 0.6f) Color.Black else Color.White,
-                                                            modifier = Modifier.size(15.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Text(stringResource(R.string.crop_texture_tint_strength, (blurTextureMaskTintIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
-                                    Slider(
-                                        value = blurTextureMaskTintIntensity,
-                                        onValueChange = { blurTextureMaskTintIntensity = it },
-                                        valueRange = 0f..1f,
-                                        modifier = Modifier.testTag("blur_texture_mask_tint_slider")
-                                    )
-                                }
                             }
 
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1362,6 +843,110 @@ fun MediaEditorScreen(
                                         )
                                     }
                                 }
+                            }
+                            } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(stringResource(R.string.crop_glass_texture), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    BlurTexturePattern.values().forEach { pattern ->
+                                        FilterChip(
+                                            selected = blurTexturePattern == pattern,
+                                            onClick = { blurTexturePattern = pattern },
+                                            label = { Text(stringResource(blurTexturePatternLabelRes(pattern)), style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.testTag("blur_texture_${pattern.name.lowercase()}")
+                                        )
+                                    }
+                                }
+                                if (blurTexturePattern != BlurTexturePattern.NONE) {
+                                    Text(stringResource(R.string.crop_texture_strength, (blurTextureIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureIntensity,
+                                        onValueChange = { blurTextureIntensity = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_strength_slider")
+                                    )
+                                    Text(stringResource(R.string.crop_texture_scale, (blurTextureScale * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureScale,
+                                        onValueChange = { blurTextureScale = it },
+                                        valueRange = 0.5f..3f,
+                                        modifier = Modifier.testTag("blur_texture_scale_slider")
+                                    )
+                                    Text(stringResource(R.string.crop_texture_blur, (blurTextureMaskBlurAmount * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureMaskBlurAmount,
+                                        onValueChange = { blurTextureMaskBlurAmount = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_mask_blur_slider")
+                                    )
+                                    Text(
+                                        stringResource(R.string.crop_texture_tint),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        stringResource(R.string.crop_texture_tint_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        TEXTURE_TINT_SWATCH_COLORS.forEachIndexed { index, swatchColor ->
+                                            val selected = blurTextureMaskTintColor == swatchColor
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable(role = Role.RadioButton) {
+                                                        blurTextureMaskTintColor = swatchColor
+                                                    }
+                                                    .testTag("texture_tint_swatch_$index"),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(swatchColor))
+                                                        .border(
+                                                            width = if (selected) 2.5.dp else 1.dp,
+                                                            color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.55f),
+                                                            shape = CircleShape
+                                                        ),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    if (selected) {
+                                                        Icon(
+                                                            Icons.Default.Check,
+                                                            contentDescription = stringResource(R.string.crop_tint_selected_cd),
+                                                            tint = if (Color(swatchColor).luminanceCompat() > 0.6f) Color.Black else Color.White,
+                                                            modifier = Modifier.size(15.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    PatternTintColorPicker(
+                                        color = blurTextureMaskTintColor,
+                                        onColorChange = { blurTextureMaskTintColor = it }
+                                    )
+                                    Text(stringResource(R.string.crop_texture_tint_strength, (blurTextureMaskTintIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureMaskTintIntensity,
+                                        onValueChange = { blurTextureMaskTintIntensity = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_mask_tint_slider")
+                                    )
+                                }
+                            }
+
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1659,6 +1244,77 @@ private fun SplitDividerRow(
             )
         }
     }
+}
+
+@Composable
+private fun PatternTintColorPicker(
+    color: Int,
+    onColorChange: (Int) -> Unit
+) {
+    val hsv = remember(color) {
+        FloatArray(3).also { android.graphics.Color.colorToHSV(color, it) }
+    }
+
+    fun updateColor(hue: Float = hsv[0], saturation: Float = hsv[1], brightness: Float = hsv[2]) {
+        onColorChange(
+            android.graphics.Color.HSVToColor(
+                floatArrayOf(
+                    hue.coerceIn(0f, 360f),
+                    saturation.coerceIn(0f, 1f),
+                    brightness.coerceIn(0f, 1f)
+                )
+            )
+        )
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(Color(color))
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+        )
+        Text(
+            stringResource(R.string.crop_texture_tint_custom_color),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium
+        )
+    }
+    Text(
+        stringResource(R.string.crop_texture_tint_hue, hsv[0].roundToInt()),
+        style = MaterialTheme.typography.labelSmall
+    )
+    Slider(
+        value = hsv[0],
+        onValueChange = { updateColor(hue = it) },
+        valueRange = 0f..360f,
+        modifier = Modifier.testTag("texture_tint_hue_slider")
+    )
+    Text(
+        stringResource(R.string.crop_texture_tint_saturation, (hsv[1] * 100f).roundToInt()),
+        style = MaterialTheme.typography.labelSmall
+    )
+    Slider(
+        value = hsv[1],
+        onValueChange = { updateColor(saturation = it) },
+        valueRange = 0f..1f,
+        modifier = Modifier.testTag("texture_tint_saturation_slider")
+    )
+    Text(
+        stringResource(R.string.crop_texture_tint_brightness, (hsv[2] * 100f).roundToInt()),
+        style = MaterialTheme.typography.labelSmall
+    )
+    Slider(
+        value = hsv[2],
+        onValueChange = { updateColor(brightness = it) },
+        valueRange = 0f..1f,
+        modifier = Modifier.testTag("texture_tint_brightness_slider")
+    )
 }
 
 private val TINT_SWATCH_COLORS = listOf(
