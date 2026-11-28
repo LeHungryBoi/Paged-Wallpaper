@@ -310,7 +310,7 @@ internal class VulkanWallpaperRenderer(
             scheduleNativeTraceDrain()
 
             consecutiveFailures = 0
-            schedulePageTexturePrewarm(req)
+            schedulePageTexturePrewarm(frame)
             val needsAssetRetry = composer.missingConfiguredTextureInFrame
             mainHandler.post {
                 if (!released) frame.onSubmitted(req)
@@ -345,7 +345,8 @@ internal class VulkanWallpaperRenderer(
         }
     }
 
-    private fun schedulePageTexturePrewarm(frame: GpuFrameRequest) {
+    private fun schedulePageTexturePrewarm(pending: PendingFrame) {
+        val frame = pending.request
         val key = listOf(
             frame.width,
             frame.height,
@@ -358,17 +359,18 @@ internal class VulkanWallpaperRenderer(
         if (scheduledPrewarmKey == key) return
         scheduledPrewarmKey = key
         renderHandler.postDelayed(
-            { runPageTexturePrewarm(frame, key) },
+            { runPageTexturePrewarm(pending, key) },
             PAGE_TEXTURE_PREWARM_DELAY_MS
         )
     }
 
-    private fun runPageTexturePrewarm(frame: GpuFrameRequest, key: String) {
+    private fun runPageTexturePrewarm(pending: PendingFrame, key: String) {
         if (released || scheduledPrewarmKey != key || nativeHandle == 0L) return
+        val frame = pending.request
         val hasPendingFrame = synchronized(frameLock) { pendingFrame != null }
         if (hasPendingFrame) {
             renderHandler.postDelayed(
-                { runPageTexturePrewarm(frame, key) },
+                { runPageTexturePrewarm(pending, key) },
                 PAGE_TEXTURE_PREWARM_RETRY_MS
             )
             return
@@ -378,6 +380,11 @@ internal class VulkanWallpaperRenderer(
         composer.prewarmConfiguredPages(frame)
         val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000.0
         Log.i(TAG, "Page texture prewarm completed in %.2f ms".format(elapsedMs))
+        // Queue one inexpensive frame so nativeBeginFrame submits the staged
+        // texture uploads before the user reaches a page for the first time.
+        mainHandler.post {
+            if (!released && windowSurface?.isValid == true) pending.onRetryNeeded()
+        }
     }
 
     private fun publishNativeFrameTrace() {
