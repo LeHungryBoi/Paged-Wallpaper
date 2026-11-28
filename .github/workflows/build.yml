@@ -101,7 +101,7 @@ jobs:
             echo
             echo "[**Download debug APK**]($APK_ARTIFACT_URL)"
             echo
-            echo "Artifact: `paged-wallpaper-pr-debug-apk` (ID: `$APK_ARTIFACT_ID`)"
+            printf 'Artifact: `paged-wallpaper-pr-debug-apk` (ID: `%s`)\n' "$APK_ARTIFACT_ID"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish APK GitHub release
