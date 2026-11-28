@@ -1210,7 +1210,7 @@ int32_t VulkanEngine::endFrame() {
         trace.presentNs = presentNs;
         trace.endCpuNs = elapsedNs(endStartedAt);
         trace.presentId = displayTimingExtensionEnabled ? presentTime.presentID : 0;
-        if (res == VK_SUCCESS) trace.flags |= (1ull << 2);
+        if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) trace.flags |= (1ull << 2);
         if (displayTimingExtensionEnabled) trace.flags |= (1ull << 3);
         publishFrameTrace(trace);
     }
