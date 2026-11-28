@@ -198,6 +198,75 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun testPatternMaskZeroBlurRevealsOriginalSourceIndependentlyOfBackdropBlur() {
+        val source = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        val sourceCanvas = Canvas(source)
+        val stripePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        for (x in 0 until source.width step 8) {
+            stripePaint.color = if ((x / 8) % 2 == 0) Color.WHITE else Color.BLACK
+            sourceCanvas.drawRect(x.toFloat(), 0f, (x + 8).toFloat(), source.height.toFloat(), stripePaint)
+        }
+
+        fun render(maskBlur: Float): Bitmap {
+            val output = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+            ImageProcessingUtils.drawStyledBlurredBackdrop(
+                canvas = Canvas(output),
+                srcBmp = source,
+                srcRect = null,
+                targetWidth = 128,
+                targetHeight = 256,
+                blurAmount = 0.85f,
+                blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+                blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+                blurTintIntensity = 0f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = BlurTexturePattern.DOT_MATRIX,
+                blurTextureIntensity = 1f,
+                blurTextureScale = 1f,
+                blurTextureMaskBlurAmount = maskBlur,
+                blurTextureMaskTintColor = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+                blurTextureMaskTintIntensity = 0f
+            )
+            return output
+        }
+
+        val plain = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        ImageProcessingUtils.drawStyledBlurredBackdrop(
+            canvas = Canvas(plain),
+            srcBmp = source,
+            srcRect = null,
+            targetWidth = 128,
+            targetHeight = 256,
+            blurAmount = 0.85f,
+            blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+            blurTintMode = BlurTintMode.NONE,
+            blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+            blurTintIntensity = 0f,
+            blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM
+        )
+        val sharpMask = render(maskBlur = 0f)
+        val softMask = render(maskBlur = 1f)
+        val blurredStripe = Color.red(plain.getPixel(4, 4))
+        val sharpStripe = Color.red(sharpMask.getPixel(4, 4))
+        val softStripe = Color.red(softMask.getPixel(4, 4))
+
+        assertTrue(
+            "A 0% pattern-area blur must restore detail from the original source",
+            sharpStripe > blurredStripe + 40
+        )
+        assertTrue(
+            "Increasing pattern-area blur must blur that independent layer",
+            softStripe < sharpStripe - 10
+        )
+
+        plain.recycle()
+        sharpMask.recycle()
+        softMask.recycle()
+        source.recycle()
+    }
+
+    @Test
     fun testOriginalMediaSerializationKeepsOnlySourceMetadata() {
         val media = OriginalMedia(
             id = "media",
