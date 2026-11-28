@@ -51,20 +51,28 @@ jobs:
           fi
 
       - name: Run unit tests
-        continue-on-error: true
         run: |
           # The Robolectric classpath can hit transient Maven Central HTTP 429s.
-          # Retry without Gradle's configuration cache because the KSP test task
-          # currently cannot serialize its provider graph into that cache.
+          # Retry those network failures without Gradle's configuration cache
+          # (the KSP test task cannot currently serialize its provider graph there).
           for attempt in 1 2 3; do
-            if gradle testDebugUnitTest --no-configuration-cache; then
+            log_file="$(mktemp)"
+            gradle testDebugUnitTest --no-configuration-cache --console=plain 2>&1 | tee "$log_file"
+            test_status=${PIPESTATUS[0]}
+            if [ "$test_status" -eq 0 ]; then
+              rm -f "$log_file"
               exit 0
             fi
+            if ! grep -Eq 'HTTP 429|status code 429|Too Many Requests' "$log_file"; then
+              rm -f "$log_file"
+              exit "$test_status"
+            fi
+            rm -f "$log_file"
             if [ "$attempt" -lt 3 ]; then
               sleep $((attempt * 20))
             fi
           done
-          echo "::warning::Unit tests could not complete; continuing with the debug APK build."
+          echo "::warning::Unit tests could not resolve dependencies after repeated Maven Central HTTP 429 responses; proceeding with APK build."
 
       - name: Build debug APK
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
