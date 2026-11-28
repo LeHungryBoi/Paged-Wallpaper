@@ -606,7 +606,7 @@ object WallpaperDiagnosticsRecorder {
                 "versionCode",
                 packageInfo?.let {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode
-                    else @Suppress("DEPRECATION") it.versionCode.toLong()
+                    else it.versionCode.toLong()
                 } ?: JSONObject.NULL
             )
         val deviceMetadata = JSONObject()
