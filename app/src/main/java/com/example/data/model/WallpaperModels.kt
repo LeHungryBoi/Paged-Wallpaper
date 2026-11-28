@@ -277,10 +277,10 @@ data class PageItem(
                     json.optString("blurRainbowStyle", BlurRainbowStyle.DIAGONAL_PRISM.name)
                 ),
                 blurTexturePattern = parsedTexturePattern,
-                blurTextureIntensity = if (hasTextureSizing) {
-                    savedTextureIntensity
-                } else {
+                blurTextureIntensity = if (!hasTextureSizing && savedTextureIntensity == 0.32f) {
                     DEFAULT_BLUR_TEXTURE_INTENSITY
+                } else {
+                    savedTextureIntensity
                 },
                 blurTextureScale = json.optDouble("blurTextureScale", DEFAULT_BLUR_TEXTURE_SCALE.toDouble()).toFloat().coerceIn(0.5f, 3f),
                 blurTextureMaskBlurAmount = json.optDouble("blurTextureMaskBlurAmount", DEFAULT_BLUR_TEXTURE_MASK_BLUR.toDouble()).toFloat().coerceIn(0f, 1f),
