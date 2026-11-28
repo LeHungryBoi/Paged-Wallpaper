@@ -427,7 +427,12 @@ object WallpaperDiagnosticsRecorder {
                 putOptionalLong(frame, "presentMarginNs", values[index + 14])
                 frame.put("refreshCycleDurationNs", values[index + 15])
                 putOptionalLong(frame, "offscreenTargetSetupNs", values[index + 16])
-                frame.put("nativeFlags", values[index + 17])
+                val flags = values[index + 17]
+                frame.put("nativeFlags", flags)
+                frame.put("gpuTimestampsAvailable", flags and 1L != 0L)
+                frame.put("offscreenPassUsed", flags and (1L shl 1) != 0L)
+                frame.put("presentCallSucceeded", flags and (1L shl 2) != 0L)
+                frame.put("displayTimingEnabled", flags and (1L shl 3) != 0L)
                 trimTraceFramesLocked()
                 index += TRACE_FIELDS_PER_SAMPLE
             }
