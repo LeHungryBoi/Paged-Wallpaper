@@ -656,13 +656,15 @@ object WallpaperDiagnosticsRecorder {
     }
 
     private fun appendHotTraceEventLocked(
-        type: Int, timeNs: Long, l1: Long = 0L, i1: Int = 0,
+        type: Int, timeNs: Long, l1: Long = 0L, l2: Long = 0L,
+        l3: Long = 0L, l4: Long = 0L, i1: Int = 0, i2: Int = 0,
         eventFlags: Int = 0, f1: Float = 0f, f2: Float = 0f,
         f3: Float = 0f, f4: Float = 0f, text: String? = null
     ) {
         if (!traceEventBuffer.append(
-                type.toByte(), timeNs, l1 = l1, i1 = i1,
-                eventFlags = eventFlags, f1 = f1, f2 = f2, f3 = f3, f4 = f4, text = text
+                type.toByte(), timeNs, l1 = l1, l2 = l2, l3 = l3, l4 = l4,
+                i1 = i1, i2 = i2, eventFlags = eventFlags,
+                f1 = f1, f2 = f2, f3 = f3, f4 = f4, text = text
             )
         ) traceDroppedEvents++
     }
