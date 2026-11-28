@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.example.data.repository.WallpaperRepository
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import kotlin.math.ceil
 
 internal class VulkanWallpaperRenderer(
@@ -47,6 +48,7 @@ internal class VulkanWallpaperRenderer(
     private var boundWidth = 0
     private var boundHeight = 0
     private var consecutiveFailures = 0
+    private var lastNativeTraceRevision = 0L
 
     private val drawSink = object : VulkanDrawSink {
         override val maxTextureSize: Int
@@ -210,11 +212,13 @@ internal class VulkanWallpaperRenderer(
             next
         }
         if (frame == null || released) return
+        val req = frame.request
+        WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "render_thread_start")
         val surface = windowSurface ?: return
         if (!surface.isValid) return
 
         try {
-            if (!ensureVulkanReady(surface, frame.request.width, frame.request.height)) {
+            if (!ensureVulkanReady(surface, req.width, req.height)) {
                 Log.w(TAG, "Vulkan unavailable on this device/surface; falling back to OpenGL ES")
                 destroyVulkan()
                 mainHandler.post {
@@ -223,14 +227,21 @@ internal class VulkanWallpaperRenderer(
                 return
             }
 
-            val req = frame.request
             composer.setupOrtho(req.width, req.height)
             val useMotionBlur = req.motionBlurRadius > 0 && req.motionBlurDirection != 0
             val mbWidth = (req.width / 2).coerceAtLeast(1)
             val mbHeight = (req.height / 2).coerceAtLeast(1)
 
             var beginStatus = VulkanNativeBridge.nativeBeginFrame(
-                nativeHandle, useMotionBlur, mbWidth, mbHeight, CLEAR_R, CLEAR_G, CLEAR_B
+                nativeHandle,
+                req.frameId,
+                req.frameTimeNanos,
+                useMotionBlur,
+                mbWidth,
+                mbHeight,
+                CLEAR_R,
+                CLEAR_G,
+                CLEAR_B
             )
             if (beginStatus == 1) {
                 if (!VulkanNativeBridge.nativeOnSurfaceChanged(nativeHandle, surface, req.width, req.height)) {
@@ -240,14 +251,25 @@ internal class VulkanWallpaperRenderer(
                 boundWidth = req.width
                 boundHeight = req.height
                 beginStatus = VulkanNativeBridge.nativeBeginFrame(
-                    nativeHandle, useMotionBlur, mbWidth, mbHeight, CLEAR_R, CLEAR_G, CLEAR_B
+                    nativeHandle,
+                    req.frameId,
+                    req.frameTimeNanos,
+                    useMotionBlur,
+                    mbWidth,
+                    mbHeight,
+                    CLEAR_R,
+                    CLEAR_G,
+                    CLEAR_B
                 )
             }
             if (beginStatus != 0) {
                 throw IllegalStateException("Vulkan nativeBeginFrame failed with status=$beginStatus")
             }
+            publishNativeFrameTrace()
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_begin_complete")
 
             composer.renderWallpaper(req)
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "scene_recorded")
 
             if (useMotionBlur) {
                 VulkanNativeBridge.nativeBeginMainPass(nativeHandle, CLEAR_R, CLEAR_G, CLEAR_B)
@@ -275,6 +297,8 @@ internal class VulkanWallpaperRenderer(
             if (endStatus < 0) {
                 throw IllegalStateException("Vulkan nativeEndFrame failed with status=$endStatus")
             }
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_end_complete")
+            publishNativeFrameTrace()
 
             consecutiveFailures = 0
             val needsAssetRetry = composer.missingConfiguredTextureInFrame
@@ -304,6 +328,19 @@ internal class VulkanWallpaperRenderer(
                     }
                 }, TRANSIENT_RETRY_DELAY_MS)
             }
+        }
+    }
+
+    private fun publishNativeFrameTrace() {
+        val handle = nativeHandle
+        if (handle == 0L) return
+        val updates = VulkanNativeBridge.nativeGetFrameTrace(handle, lastNativeTraceRevision)
+        if (updates.isEmpty()) return
+        WallpaperDiagnosticsRecorder.recordNativeFrameTrace(updates)
+        var index = 0
+        while (index + TRACE_FIELDS_PER_SAMPLE <= updates.size) {
+            lastNativeTraceRevision = maxOf(lastNativeTraceRevision, updates[index])
+            index += TRACE_FIELDS_PER_SAMPLE
         }
     }
 
@@ -347,6 +384,7 @@ internal class VulkanWallpaperRenderer(
         private const val MAX_BLUR_RADIUS = 511
         private const val MAX_BLUR_TAPS = 32
         private const val MAX_CONSECUTIVE_FAILURES = 3
+        private const val TRACE_FIELDS_PER_SAMPLE = 17
         private const val ASSET_RETRY_DELAY_MS = 110L
         private const val TRANSIENT_RETRY_DELAY_MS = 16L
     }
