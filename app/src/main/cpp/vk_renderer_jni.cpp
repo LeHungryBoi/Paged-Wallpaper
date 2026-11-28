@@ -158,7 +158,16 @@ Java_com_example_render_VulkanNativeBridge_nativeBeginFrame(
     if (engine == nullptr) return -1;
     const uint32_t w = mbWidth > 0 ? static_cast<uint32_t>(mbWidth) : 0u;
     const uint32_t h = mbHeight > 0 ? static_cast<uint32_t>(mbHeight) : 0u;
-    return static_cast<jint>(engine->beginFrame(useMotionBlur == JNI_TRUE, w, h, clearR, clearG, clearB));
+    return static_cast<jint>(engine->beginFrame(
+        static_cast<uint64_t>(traceFrameId),
+        static_cast<uint64_t>(requestTimeNanos),
+        useMotionBlur == JNI_TRUE,
+        w,
+        h,
+        clearR,
+        clearG,
+        clearB
+    ));
 }
 
 JNIEXPORT void JNICALL
