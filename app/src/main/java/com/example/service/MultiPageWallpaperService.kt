@@ -1078,6 +1078,13 @@ class MultiPageWallpaperService : WallpaperService() {
                 offsetChangedInStep = abs(renderedXOffset - prevRendered) > 0f
             }
 
+            WallpaperDiagnosticsRecorder.recordSmoothingStep(
+                targetXOffset = currentXOffset,
+                renderedXOffset = renderedXOffset,
+                smoothingFraction = smoothingFraction,
+                elapsedNanos = elapsedNanos
+            )
+
             if (entryTransitionController.isActive) {
                 if (repository.appState.value.resumeFadeEnabled) {
                     val clampedStepNanos = elapsedNanos.coerceAtMost(MAX_ENTRY_STEP_NANOS)
