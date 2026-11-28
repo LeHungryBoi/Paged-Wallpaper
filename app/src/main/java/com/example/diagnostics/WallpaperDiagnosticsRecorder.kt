@@ -2,6 +2,9 @@ package com.example.diagnostics
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.hardware.display.DisplayManager
+import android.os.Build
+import android.view.Display
 import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -165,6 +168,7 @@ object WallpaperDiagnosticsRecorder {
         get() = activeSession != null
 
     private var preferences: SharedPreferences? = null
+    private var appContext: Context? = null
     @Volatile
     private var activeSession: WallpaperDiagnosticsSession? = null
     private var lastPublishedAtNanos = 0L
@@ -190,7 +194,9 @@ object WallpaperDiagnosticsRecorder {
     fun initialize(context: Context) {
         synchronized(lock) {
             if (preferences != null) return
-            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val applicationContext = context.applicationContext
+            appContext = applicationContext
+            val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             preferences = prefs
             mutableState.value = WallpaperDiagnosticsState(
                 history = loadHistory(prefs),
@@ -587,11 +593,40 @@ object WallpaperDiagnosticsRecorder {
             .put("offsetDrivenFramesSubmitted", result.offsetDrivenFramesSubmitted)
             .put("averageOffsetCallbackHz", result.averageOffsetCallbackHz.toDouble())
             .put("averageFrameSubmissionHz", result.averageFrameSubmissionHz.toDouble())
+        val context = appContext
+        val displayManager = context?.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+        val display = displayManager?.getDisplay(Display.DEFAULT_DISPLAY)
+        val packageInfo = runCatching {
+            context?.packageManager?.getPackageInfo(context.packageName, 0)
+        }.getOrNull()
+        val appMetadata = JSONObject()
+            .put("packageName", context?.packageName ?: JSONObject.NULL)
+            .put("versionName", packageInfo?.versionName ?: JSONObject.NULL)
+            .put(
+                "versionCode",
+                packageInfo?.let {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) it.longVersionCode
+                    else @Suppress("DEPRECATION") it.versionCode.toLong()
+                } ?: JSONObject.NULL
+            )
+        val deviceMetadata = JSONObject()
+            .put("manufacturer", Build.MANUFACTURER)
+            .put("model", Build.MODEL)
+            .put("device", Build.DEVICE)
+            .put("board", Build.BOARD)
+            .put("sdkInt", Build.VERSION.SDK_INT)
+            .put("release", Build.VERSION.RELEASE)
+            .put("buildId", Build.DISPLAY)
+            .put("displayRefreshRateHz", display?.refreshRate?.toDouble() ?: JSONObject.NULL)
+            .put("displayWidthPx", display?.mode?.physicalWidth ?: JSONObject.NULL)
+            .put("displayHeightPx", display?.mode?.physicalHeight ?: JSONObject.NULL)
         return JSONObject()
             .put("format", "paperpages-frame-trace")
             .put("schemaVersion", 1)
             .put("recordedAtMillis", traceRecordedAtMillis)
             .put("clockDomain", "System.nanoTime / CLOCK_MONOTONIC")
+            .put("app", appMetadata)
+            .put("device", deviceMetadata)
             .put("summary", summary)
             .put("frames", frames)
             .put("events", traceEvents)
