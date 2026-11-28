@@ -1986,22 +1986,29 @@ class MultiPageWallpaperService : WallpaperService() {
             )
         }
 
-        private fun pageOffsetAnchors(calibration: CalibrationConfig): List<Float> {
-            val count = calibration.pageCount.coerceAtLeast(1)
-            return if (calibration.customOffsets.size >= count) {
-                calibration.customOffsets.take(count)
-            } else {
-                List(count) { index ->
-                    if (count <= 1) 0f else index.toFloat() / (count - 1).toFloat()
-                }
-            }
+        private fun pageOffsetAnchor(
+            index: Int,
+            calibration: CalibrationConfig,
+            pageCount: Int
+        ): Float = if (calibration.customOffsets.size >= pageCount) {
+            calibration.customOffsets[index]
+        } else if (pageCount <= 1) {
+            0f
+        } else {
+            index.toFloat() / (pageCount - 1).toFloat()
         }
 
         private fun isAtDirectionBoundaryOffset(
             offset: Float,
             calibration: CalibrationConfig
-        ): Boolean = pageOffsetAnchors(calibration).any { anchor ->
-            abs(offset - anchor) <= STATIC_OFFSET_TOLERANCE
+        ): Boolean {
+            val count = calibration.pageCount.coerceAtLeast(1)
+            for (index in 0 until count) {
+                if (abs(offset - pageOffsetAnchor(index, calibration, count)) <= STATIC_OFFSET_TOLERANCE) {
+                    return true
+                }
+            }
+            return false
         }
 
         private fun hasCrossedDirectionBoundary(
@@ -2010,14 +2017,20 @@ class MultiPageWallpaperService : WallpaperService() {
             calibration: CalibrationConfig
         ): Boolean {
             if (abs(nextOffset - previousOffset) <= OFFSET_EPSILON) return false
-            return pageOffsetAnchors(calibration).any { anchor ->
+            val count = calibration.pageCount.coerceAtLeast(1)
+            for (index in 0 until count) {
+                val anchor = pageOffsetAnchor(index, calibration, count)
                 val before = previousOffset - anchor
                 val after = nextOffset - anchor
-                (before < -STATIC_OFFSET_TOLERANCE && after > STATIC_OFFSET_TOLERANCE) ||
+                if ((before < -STATIC_OFFSET_TOLERANCE && after > STATIC_OFFSET_TOLERANCE) ||
                     (before > STATIC_OFFSET_TOLERANCE && after < -STATIC_OFFSET_TOLERANCE) ||
                     (abs(before) <= STATIC_OFFSET_TOLERANCE &&
                         abs(after) > STATIC_OFFSET_TOLERANCE)
+                ) {
+                    return true
+                }
             }
+            return false
         }
 
         private fun transitionBoundaryIndex(
@@ -2025,16 +2038,19 @@ class MultiPageWallpaperService : WallpaperService() {
             direction: Int,
             calibration: CalibrationConfig
         ): Int {
-            val anchors = pageOffsetAnchors(calibration)
-            val count = anchors.size
+            val count = calibration.pageCount.coerceAtLeast(1)
             if (count <= 1) return 0
 
-            val nearestAnchorIndex = anchors.indices.minByOrNull { index ->
-                abs(offset - anchors[index])
+            var nearestAnchorIndex = 0
+            var nearestDistance = Float.MAX_VALUE
+            for (index in 0 until count) {
+                val distance = abs(offset - pageOffsetAnchor(index, calibration, count))
+                if (distance < nearestDistance) {
+                    nearestDistance = distance
+                    nearestAnchorIndex = index
+                }
             }
-            if (nearestAnchorIndex != null &&
-                abs(offset - anchors[nearestAnchorIndex]) <= STATIC_OFFSET_TOLERANCE
-            ) {
+            if (nearestDistance <= STATIC_OFFSET_TOLERANCE) {
                 return if (direction >= 0) {
                     nearestAnchorIndex.coerceAtMost(count - 2)
                 } else {
@@ -2043,7 +2059,7 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             for (index in 0 until count - 1) {
-                if (offset < anchors[index + 1]) return index
+                if (offset < pageOffsetAnchor(index + 1, calibration, count)) return index
             }
             return count - 2
         }
