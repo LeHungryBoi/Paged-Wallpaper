@@ -255,6 +255,9 @@
     <string name="recording_stop">Stop and save</string>
     <string name="recording_view_history">View history</string>
     <string name="recording_clear_history">Clear history</string>
+    <string name="recording_export_trace">Export frame trace (JSON)</string>
+    <string name="recording_export_success">Frame trace exported</string>
+    <string name="recording_export_failed">Could not export frame trace</string>
     <string name="recording_clear_title">Clear recording history?</string>
     <string name="recording_clear_message">Remove all %1$d saved recordings from this device? This cannot be undone.</string>
     <string name="recording_history_title">Recorded history</string>
