@@ -478,7 +478,7 @@ object WallpaperDiagnosticsRecorder {
             .put("droppedEvents", traceDroppedEvents)
             .put(
                 "notes",
-                "Durations are nanoseconds. actualPresentTimeDeviceNs and presentMarginNs use Vulkan display-timing clock semantics and must not be subtracted from System.nanoTime timestamps."
+                "All *Ns fields are nanoseconds. Fields ending in TimeNs or StageNs are monotonic timestamps; fields named as durations are elapsed times. actualPresentTimeDeviceNs is in the Vulkan display clock domain and must not be subtracted from System.nanoTime timestamps. nativeFlags bit 0=GPU timestamps available, bit 1=offscreen blur pass, bit 2=present call succeeded, bit 3=display-timing extension enabled."
             )
             .toString()
     }
