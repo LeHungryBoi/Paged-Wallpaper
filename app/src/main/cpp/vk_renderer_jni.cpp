@@ -145,6 +145,8 @@ Java_com_example_render_VulkanNativeBridge_nativeBeginFrame(
     JNIEnv* /*env*/,
     jclass /*clazz*/,
     jlong handle,
+    jlong traceFrameId,
+    jlong requestTimeNanos,
     jboolean useMotionBlur,
     jint mbWidth,
     jint mbHeight,
@@ -241,6 +243,47 @@ Java_com_example_render_VulkanNativeBridge_nativeEndFrame(JNIEnv* /*env*/, jclas
     auto* engine = fromHandle(handle);
     if (engine == nullptr) return -1;
     return static_cast<jint>(engine->endFrame());
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_com_example_render_VulkanNativeBridge_nativeGetFrameTrace(
+    JNIEnv* env,
+    jclass /*clazz*/,
+    jlong handle,
+    jlong afterRevision
+) {
+    auto* engine = fromHandle(handle);
+    if (engine == nullptr) return env->NewLongArray(0);
+
+    const auto samples = engine->getFrameTraceUpdates(static_cast<uint64_t>(afterRevision));
+    constexpr jsize kFieldsPerSample = 17;
+    const jsize length = static_cast<jsize>(samples.size() * kFieldsPerSample);
+    jlongArray result = env->NewLongArray(length);
+    if (result == nullptr || length == 0) return result;
+
+    std::vector<jlong> values;
+    values.reserve(static_cast<size_t>(length));
+    for (const auto& sample : samples) {
+        values.push_back(static_cast<jlong>(sample.revision));
+        values.push_back(static_cast<jlong>(sample.frameId));
+        values.push_back(static_cast<jlong>(sample.requestTimeNs));
+        values.push_back(static_cast<jlong>(sample.fenceWaitNs));
+        values.push_back(static_cast<jlong>(sample.acquireNs));
+        values.push_back(static_cast<jlong>(sample.beginCpuNs));
+        values.push_back(static_cast<jlong>(sample.submitNs));
+        values.push_back(static_cast<jlong>(sample.presentNs));
+        values.push_back(static_cast<jlong>(sample.endCpuNs));
+        values.push_back(static_cast<jlong>(sample.gpuFrameNs));
+        values.push_back(static_cast<jlong>(sample.gpuOffscreenNs));
+        values.push_back(static_cast<jlong>(sample.gpuMainNs));
+        values.push_back(static_cast<jlong>(sample.presentId));
+        values.push_back(static_cast<jlong>(sample.actualPresentTimeNs));
+        values.push_back(static_cast<jlong>(sample.presentMarginNs));
+        values.push_back(static_cast<jlong>(sample.offscreenTargetSetupNs));
+        values.push_back(static_cast<jlong>(sample.flags));
+    }
+    env->SetLongArrayRegion(result, 0, length, values.data());
+    return result;
 }
 
 } // extern "C"
