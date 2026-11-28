@@ -238,6 +238,7 @@ private class TraceEventBuffer(private val capacity: Int) {
                     .put("pageIndex", int1[index])
                     .put("usesParallax", int2[index] and 1 != 0)
                     .put("darkened", int2[index] and 2 != 0)
+                    .put("prewarm", int2[index] and 4 != 0)
                     .put("bitmapLookupNs", long1[index])
                     .put("primaryUploadNs", long2[index])
                     .put("blurCreationNs", long3[index])
@@ -563,6 +564,7 @@ object WallpaperDiagnosticsRecorder {
         pageIndex: Int,
         usesParallax: Boolean,
         darkened: Boolean,
+        prewarm: Boolean,
         bitmapLookupNs: Long,
         primaryUploadNs: Long,
         blurCreationNs: Long,
@@ -578,7 +580,8 @@ object WallpaperDiagnosticsRecorder {
                 l3 = blurCreationNs,
                 l4 = blurUploadNs,
                 i1 = pageIndex,
-                i2 = (if (usesParallax) 1 else 0) or (if (darkened) 2 else 0)
+                i2 = (if (usesParallax) 1 else 0) or
+                    (if (darkened) 2 else 0) or (if (prewarm) 4 else 0)
             )
         }
     }
