@@ -232,6 +232,7 @@ internal class VulkanWallpaperRenderer(
             val mbWidth = (req.width / 2).coerceAtLeast(1)
             val mbHeight = (req.height / 2).coerceAtLeast(1)
 
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_begin_start")
             var beginStatus = VulkanNativeBridge.nativeBeginFrame(
                 nativeHandle,
                 req.frameId,
@@ -314,6 +315,10 @@ internal class VulkanWallpaperRenderer(
                 }, ASSET_RETRY_DELAY_MS)
             }
         } catch (error: Throwable) {
+            WallpaperDiagnosticsRecorder.recordFrameFailure(
+                req.frameId,
+                "${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+            )
             Log.e(TAG, "Vulkan wallpaper rendering error; resetting Vulkan state", error)
             destroyVulkan()
             if (!surface.isValid || released) return
@@ -361,6 +366,7 @@ internal class VulkanWallpaperRenderer(
             val handle = VulkanNativeBridge.nativeCreate()
             if (handle == 0L) return false
             nativeHandle = handle
+            lastNativeTraceRevision = 0L
             maxTextureSize = VulkanNativeBridge.nativeGetMaxTextureSize(handle).coerceAtLeast(2048)
             whiteTextureId = VulkanNativeBridge.nativeGetWhiteTextureId(handle)
         }
@@ -385,6 +391,7 @@ internal class VulkanWallpaperRenderer(
             VulkanNativeBridge.nativeDestroy(nativeHandle)
             nativeHandle = 0L
         }
+        lastNativeTraceRevision = 0L
     }
 
     companion object {
