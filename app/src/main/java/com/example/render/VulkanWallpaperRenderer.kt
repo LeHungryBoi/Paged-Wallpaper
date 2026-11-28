@@ -290,9 +290,11 @@ internal class VulkanWallpaperRenderer(
                     sampleStep,
                     direction
                 )
+                WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "motion_blur_recorded")
             }
 
             composer.renderOverlayAndDebug(req)
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "scene_overlay_recorded")
 
             val endStatus = VulkanNativeBridge.nativeEndFrame(nativeHandle)
             if (endStatus < 0) {
