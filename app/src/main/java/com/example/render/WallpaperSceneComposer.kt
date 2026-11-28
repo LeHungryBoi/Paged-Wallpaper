@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.opengl.Matrix as GlMatrix
 import com.example.data.model.PageItem
 import com.example.data.repository.WallpaperRepository
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.transition.TransitionRegistry
 import com.example.util.ImageProcessingUtils
 import kotlin.math.abs
@@ -363,6 +364,7 @@ internal class WallpaperSceneComposer(
                 return null
             }
         }
+        val bitmapLookupStartedAt = System.nanoTime()
         val parallax = if (usesParallax) {
             repository.getParallaxBitmap(pageIndex, frame.width, frame.height, darkened = darkened)
         } else {
@@ -370,6 +372,7 @@ internal class WallpaperSceneComposer(
                 WallpaperRepository.ParallaxBitmap(it, 0, 0)
             }
         }
+        val bitmapLookupNs = System.nanoTime() - bitmapLookupStartedAt
         val bitmap = parallax?.bitmap
         if (bitmap == null || bitmap.isRecycled) {
             val delay = if (isIntentionallyBlank) BLANK_ASSET_RETRY_NANOS else {
@@ -380,19 +383,32 @@ internal class WallpaperSceneComposer(
             return null
         }
 
+        val primaryUploadStartedAt = System.nanoTime()
         val textureId = uploadScaledBitmap(bitmap)
+        val primaryUploadNs = System.nanoTime() - primaryUploadStartedAt
         if (textureId == 0) {
+            WallpaperDiagnosticsRecorder.recordTexturePreparation(
+                pageIndex, usesParallax, darkened, bitmapLookupNs, primaryUploadNs, 0L, 0L
+            )
             missingConfiguredTextureInFrame = true
             missingAssets[slot] = MissingAsset(key, now + TRANSIENT_ASSET_RETRY_NANOS)
             return null
         }
-        var blurredTextureId = 0
+        val blurCreationStartedAt = System.nanoTime()
         val blurred = ImageProcessingUtils.createSmoothBlurredCopy(bitmap)
+        val blurCreationNs = System.nanoTime() - blurCreationStartedAt
+        var blurredTextureId = 0
+        val blurUploadStartedAt = System.nanoTime()
         try {
             blurredTextureId = uploadScaledBitmap(blurred)
         } finally {
             blurred.recycle()
         }
+        val blurUploadNs = System.nanoTime() - blurUploadStartedAt
+        WallpaperDiagnosticsRecorder.recordTexturePreparation(
+            pageIndex, usesParallax, darkened,
+            bitmapLookupNs, primaryUploadNs, blurCreationNs, blurUploadNs
+        )
         val texture = PageTexture(
             key = key,
             textureId = textureId,
