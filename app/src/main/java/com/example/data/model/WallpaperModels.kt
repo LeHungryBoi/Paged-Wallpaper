@@ -107,6 +107,11 @@ enum class BlurStyle(
         "Acrylic",
         "Vibrant frosted material with subtle micro-grain noise and soft veil"
     ),
+    SMOKED_GLASS(
+        "Smoked Glass",
+        "Smoked",
+        "Neutral charcoal glass with restrained color, soft reflections and dark edge falloff"
+    ),
     SILKY_VIGNETTE(
         "Silky Vignette",
         "Vignette",
@@ -129,6 +134,17 @@ enum class BlurStyle(
     }
 }
 
+enum class BlurTexturePattern(val displayName: String) {
+    NONE("None"),
+    FINE_GRID("Fine grid"),
+    DIAGONAL_RIBS("Diagonal ribs"),
+    DOT_MATRIX("Dot matrix"),
+    DIAMOND("Diamond etch");
+    companion object {
+        fun fromName(name: String): BlurTexturePattern =
+            values().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: NONE
+    }
+}
 enum class BlurTintMode(val displayName: String) {
     NONE("Natural"),
     SOLID("Single color"),
@@ -165,6 +181,8 @@ data class PageItem(
     val blurTintColor: Int = DEFAULT_BLUR_TINT_COLOR,
     val blurTintIntensity: Float = 0.42f,
     val blurRainbowStyle: BlurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+    val blurTexturePattern: BlurTexturePattern = BlurTexturePattern.NONE,
+    val blurTextureIntensity: Float = 0.32f,
     val cropPanX: Float = 0f,
     val cropPanY: Float = 0f,
     val cropScale: Float = 1f,
@@ -186,6 +204,8 @@ data class PageItem(
         put("blurTintColor", blurTintColor)
         put("blurTintIntensity", blurTintIntensity.toDouble())
         put("blurRainbowStyle", blurRainbowStyle.name)
+        put("blurTexturePattern", blurTexturePattern.name)
+        put("blurTextureIntensity", blurTextureIntensity.coerceIn(0f, 1f).toDouble())
         put("cropPanX", cropPanX.toDouble())
         put("cropPanY", cropPanY.toDouble())
         put("cropScale", cropScale.toDouble())
@@ -196,7 +216,7 @@ data class PageItem(
     }
 
     companion object {
-        const val DEFAULT_BLUR_TINT_COLOR = 0xFF38BDF8.toInt()
+        const val DEFAULT_BLUR_TINT_COLOR = 0xFF64717B.toInt()
         const val DEFAULT_DIM_FACTOR = 0.40f
         const val MIN_DIM_FACTOR = 0.10f
         const val MAX_DIM_FACTOR = 0.90f
@@ -233,6 +253,10 @@ data class PageItem(
                 blurRainbowStyle = BlurRainbowStyle.fromName(
                     json.optString("blurRainbowStyle", BlurRainbowStyle.DIAGONAL_PRISM.name)
                 ),
+                blurTexturePattern = BlurTexturePattern.fromName(
+                    json.optString("blurTexturePattern", BlurTexturePattern.NONE.name)
+                ),
+                blurTextureIntensity = json.optDouble("blurTextureIntensity", 0.32).toFloat().coerceIn(0f, 1f),
                 cropPanX = json.optDouble("cropPanX", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropPanY = json.optDouble("cropPanY", 0.0).toFloat().coerceIn(-1f, 1f),
                 cropScale = json.optDouble("cropScale", 1.0).toFloat().coerceIn(1f, 3f),

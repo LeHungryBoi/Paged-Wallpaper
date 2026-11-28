@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTexturePattern
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CalibrationConfig
 import com.example.data.model.CropFillMode
@@ -123,6 +124,40 @@ class ExampleUnitTest {
         val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
         assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
         assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
+    }
+
+    @Test
+    fun testGlassMaterialSettingsRoundTripAndTextureChangesRenderedPixels() {
+        val page = PageItem(pageIndex = 1, blurStyle = BlurStyle.SMOKED_GLASS,
+            blurTexturePattern = BlurTexturePattern.DIAMOND, blurTextureIntensity = 0.74f)
+        val restored = PageItem.fromJson(page.toJson())
+        assertEquals(BlurStyle.SMOKED_GLASS, restored.blurStyle)
+        assertEquals(BlurTexturePattern.DIAMOND, restored.blurTexturePattern)
+        assertEquals(0.74f, restored.blurTextureIntensity, 0.001f)
+
+        val source = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+        val sourceCanvas = Canvas(source)
+        sourceCanvas.drawColor(Color.rgb(80, 96, 112))
+        val stripe = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(220, 230, 240) }
+        for (x in 0 until 128 step 16) sourceCanvas.drawRect(x.toFloat(), 0f, x + 7f, 256f, stripe)
+        fun render(pattern: BlurTexturePattern): Bitmap {
+            val output = Bitmap.createBitmap(128, 256, Bitmap.Config.ARGB_8888)
+            ImageProcessingUtils.drawStyledBlurredBackdrop(
+                canvas = Canvas(output), srcBmp = source, srcRect = null, targetWidth = 128, targetHeight = 256,
+                blurAmount = 0.55f, blurStyle = BlurStyle.SMOKED_GLASS, blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR, blurTintIntensity = 0.4f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM, blurTexturePattern = pattern, blurTextureIntensity = 0.7f
+            )
+            return output
+        }
+        val plain = render(BlurTexturePattern.NONE)
+        val textured = render(BlurTexturePattern.DIAMOND)
+        var changedPixels = 0
+        for (y in 0 until 256 step 2) for (x in 0 until 128 step 2) {
+            if (plain.getPixel(x, y) != textured.getPixel(x, y)) changedPixels++
+        }
+        assertTrue("A selected glass texture must affect the rendered backdrop", changedPixels > 0)
+        plain.recycle(); textured.recycle(); source.recycle()
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.example.R
 import com.example.data.model.BatterySaverTrigger
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTexturePattern
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenTriggerMode
@@ -71,6 +72,7 @@ fun blurStyleShortLabelRes(style: BlurStyle): Int = when (style) {
     BlurStyle.SMOOTH_GAUSSIAN -> R.string.crop_blur_gaussian
     BlurStyle.WIN7_AERO -> R.string.crop_blur_win7
     BlurStyle.MODERN_ACRYLIC -> R.string.crop_blur_acrylic
+    BlurStyle.SMOKED_GLASS -> R.string.crop_blur_smoked
     BlurStyle.SILKY_VIGNETTE -> R.string.crop_blur_vignette
     BlurStyle.BOKEH_BLOOM -> R.string.crop_blur_bokeh
     BlurStyle.PRISM_REFRACTION -> R.string.crop_blur_prism
@@ -81,9 +83,19 @@ fun blurStyleDescRes(style: BlurStyle): Int = when (style) {
     BlurStyle.SMOOTH_GAUSSIAN -> R.string.crop_blur_gaussian_desc
     BlurStyle.WIN7_AERO -> R.string.crop_blur_win7_desc
     BlurStyle.MODERN_ACRYLIC -> R.string.crop_blur_acrylic_desc
+    BlurStyle.SMOKED_GLASS -> R.string.crop_blur_smoked_desc
     BlurStyle.SILKY_VIGNETTE -> R.string.crop_blur_vignette_desc
     BlurStyle.BOKEH_BLOOM -> R.string.crop_blur_bokeh_desc
     BlurStyle.PRISM_REFRACTION -> R.string.crop_blur_prism_desc
+}
+
+@StringRes
+fun blurTexturePatternLabelRes(pattern: BlurTexturePattern): Int = when (pattern) {
+    BlurTexturePattern.NONE -> R.string.crop_texture_none
+    BlurTexturePattern.FINE_GRID -> R.string.crop_texture_grid
+    BlurTexturePattern.DIAGONAL_RIBS -> R.string.crop_texture_diagonal
+    BlurTexturePattern.DOT_MATRIX -> R.string.crop_texture_dots
+    BlurTexturePattern.DIAMOND -> R.string.crop_texture_diamond
 }
 
 @StringRes

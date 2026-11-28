@@ -315,7 +315,7 @@
     <string name="crop_bg_blur">Background blur: %1$d%%</string>
     <string name="crop_color_tinting">Color tinting</string>
     <string name="crop_tint_none">Natural</string>
-    <string name="crop_tint_solid">Single color</string>
+    <string name="crop_tint_solid">Tinted glass</string>
     <string name="crop_tint_rainbow">Rainbow</string>
     <string name="crop_tint_swatch_cd">Select tint color</string>
     <string name="crop_tint_selected_cd">Selected tint color</string>
@@ -332,6 +332,15 @@
     <string name="crop_blur_win7_desc">Classic translucent glass with diagonal specular reflections and icy sheen</string>
     <string name="crop_blur_acrylic">Acrylic</string>
     <string name="crop_blur_acrylic_desc">Vibrant frosted material with subtle micro-grain noise and soft veil</string>
+    <string name="crop_blur_smoked">Smoked glass</string>
+    <string name="crop_blur_smoked_desc">Neutral charcoal glass with muted color, soft reflections and dark edge falloff</string>
+    <string name="crop_glass_texture">Glass texture</string>
+    <string name="crop_texture_none">None</string>
+    <string name="crop_texture_grid">Fine grid</string>
+    <string name="crop_texture_diagonal">Diagonal ribs</string>
+    <string name="crop_texture_dots">Dot matrix</string>
+    <string name="crop_texture_diamond">Diamond etch</string>
+    <string name="crop_texture_strength">Texture strength: %1$d%%</string>
     <string name="crop_blur_vignette">Vignette</string>
     <string name="crop_blur_vignette_desc">Luminous soft-blur center with velvety darkened edge falloff</string>
     <string name="crop_blur_bokeh">Bokeh</string>

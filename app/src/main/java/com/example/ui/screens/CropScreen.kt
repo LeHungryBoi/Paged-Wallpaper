@@ -116,6 +116,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.BlurRainbowStyle
 import com.example.data.model.BlurStyle
+import com.example.data.model.BlurTexturePattern
 import com.example.data.model.BlurTintMode
 import com.example.data.model.CropFillMode
 import com.example.data.model.DarkenConfig
@@ -125,6 +126,7 @@ import com.example.data.repository.WallpaperRepository
 import com.example.ui.blurRainbowStyleLabelRes
 import com.example.ui.blurStyleDescRes
 import com.example.ui.blurStyleShortLabelRes
+import com.example.ui.blurTexturePatternLabelRes
 import com.example.ui.blurTintModeLabelRes
 import com.example.ui.cropFillModeLabelRes
 import com.example.util.ImageProcessingUtils
@@ -276,6 +278,8 @@ fun MediaEditorScreen(
     var blurTintColor by remember(media.id, page.pageIndex) { mutableIntStateOf(page.blurTintColor) }
     var blurTintIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTintIntensity) }
     var blurRainbowStyle by remember(media.id, page.pageIndex) { mutableStateOf(page.blurRainbowStyle) }
+    var blurTexturePattern by remember(media.id, page.pageIndex) { mutableStateOf(page.blurTexturePattern) }
+    var blurTextureIntensity by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.blurTextureIntensity) }
     var parallaxAmount by remember(media.id, page.pageIndex) { mutableFloatStateOf(page.parallaxAmount) }
     var symmetricParallax by remember(media.id, page.pageIndex) { mutableStateOf(page.symmetricParallax) }
     var previewMode by remember(media.id, page.pageIndex, repository) {
@@ -323,7 +327,9 @@ fun MediaEditorScreen(
         blurTintMode,
         blurTintColor,
         blurTintIntensity,
-        blurRainbowStyle
+        blurRainbowStyle,
+        blurTexturePattern,
+        blurTextureIntensity
     ) {
         val source = bitmap ?: return@LaunchedEffect
         if (cropFillMode == CropFillMode.CROP) {
@@ -343,7 +349,9 @@ fun MediaEditorScreen(
                 blurTintMode = blurTintMode,
                 blurTintColor = blurTintColor,
                 blurTintIntensity = blurTintIntensity,
-                blurRainbowStyle = blurRainbowStyle
+                blurRainbowStyle = blurRainbowStyle,
+                blurTexturePattern = blurTexturePattern,
+                blurTextureIntensity = blurTextureIntensity
             )
         }
         blurredBitmap = preview
@@ -431,6 +439,8 @@ fun MediaEditorScreen(
                                     blurTintColor = blurTintColor,
                                     blurTintIntensity = blurTintIntensity,
                                     blurRainbowStyle = blurRainbowStyle,
+                                    blurTexturePattern = blurTexturePattern,
+                                    blurTextureIntensity = blurTextureIntensity,
                                     cropPanX = panX,
                                     cropPanY = panY,
                                     cropScale = zoom,
@@ -1003,7 +1013,9 @@ fun MediaEditorScreen(
                                     onClick = {
                                         cropFillMode = mode
                                         if (mode == CropFillMode.BLUR &&
-                                            (blurStyle == BlurStyle.WIN7_AERO || blurStyle == BlurStyle.MODERN_ACRYLIC)
+                                            (blurStyle == BlurStyle.WIN7_AERO ||
+                                                blurStyle == BlurStyle.MODERN_ACRYLIC ||
+                                                blurStyle == BlurStyle.SMOKED_GLASS)
                                         ) {
                                             blurStyle = BlurStyle.SMOOTH_GAUSSIAN
                                         } else if (mode == CropFillMode.GLASS &&
@@ -1036,6 +1048,7 @@ fun MediaEditorScreen(
                                                 cropFillMode = if (
                                                     style == BlurStyle.WIN7_AERO ||
                                                     style == BlurStyle.MODERN_ACRYLIC ||
+                                                    style == BlurStyle.SMOKED_GLASS ||
                                                     style == BlurStyle.PRISM_REFRACTION
                                                 ) {
                                                     CropFillMode.GLASS
@@ -1060,6 +1073,32 @@ fun MediaEditorScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                            }
+
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(stringResource(R.string.crop_glass_texture), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    BlurTexturePattern.values().forEach { pattern ->
+                                        FilterChip(
+                                            selected = blurTexturePattern == pattern,
+                                            onClick = { blurTexturePattern = pattern },
+                                            label = { Text(stringResource(blurTexturePatternLabelRes(pattern)), style = MaterialTheme.typography.labelSmall) },
+                                            modifier = Modifier.testTag("blur_texture_${pattern.name.lowercase()}")
+                                        )
+                                    }
+                                }
+                                if (blurTexturePattern != BlurTexturePattern.NONE) {
+                                    Text(stringResource(R.string.crop_texture_strength, (blurTextureIntensity * 100f).roundToInt()), style = MaterialTheme.typography.labelMedium)
+                                    Slider(
+                                        value = blurTextureIntensity,
+                                        onValueChange = { blurTextureIntensity = it },
+                                        valueRange = 0f..1f,
+                                        modifier = Modifier.testTag("blur_texture_strength_slider")
+                                    )
+                                }
                             }
 
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1195,8 +1234,8 @@ fun MediaEditorScreen(
                                         Slider(
                                             value = hsv[0],
                                             onValueChange = { hue ->
-                                                val sat = hsv[1].coerceAtLeast(0.75f)
-                                                val value = hsv[2].coerceAtLeast(0.88f)
+                                                val sat = hsv[1].coerceIn(0.10f, 0.46f)
+                                                val value = hsv[2].coerceIn(0.28f, 0.82f)
                                                 blurTintColor = android.graphics.Color.HSVToColor(
                                                     floatArrayOf(hue.coerceIn(0f, 360f), sat, value)
                                                 )
@@ -1544,20 +1583,21 @@ private fun SplitDividerRow(
 }
 
 private val TINT_SWATCH_COLORS = listOf(
-    0xFF38BDF8.toInt(), // Ice Cyan (Win7 Aero signature)
-    0xFF6366F1.toInt(), // Royal Indigo
-    0xFF10B981.toInt(), // Emerald Mint
-    0xFFF43F5E.toInt(), // Coral Rose
-    0xFFF59E0B.toInt(), // Warm Amber
-    0xFFA855F7.toInt(), // Orchid Violet
-    0xFF1E293B.toInt(), // Deep Obsidian Slate
-    0xFFF8FAFC.toInt()  // Pure Frost Pearl
+    0xFF53616D.toInt(), // Smoke graphite
+    0xFF667887.toInt(), // Blue-grey glass
+    0xFF7D898F.toInt(), // Silver smoke
+    0xFF75685D.toInt(), // Bronze smoke
+    0xFF68766C.toInt(), // Sage smoke
+    0xFF776D78.toInt(), // Plum smoke
+    0xFF3B444D.toInt(), // Deep charcoal
+    0xFFB6C0C7.toInt()  // Frosted pearl
 )
 
 private fun blurStyleIcon(style: BlurStyle): ImageVector = when (style) {
     BlurStyle.SMOOTH_GAUSSIAN -> Icons.Default.BlurOn
     BlurStyle.WIN7_AERO -> Icons.Default.AutoAwesome
     BlurStyle.MODERN_ACRYLIC -> Icons.Default.Grain
+    BlurStyle.SMOKED_GLASS -> Icons.Default.BlurOn
     BlurStyle.SILKY_VIGNETTE -> Icons.Default.Vignette
     BlurStyle.BOKEH_BLOOM -> Icons.Default.LensBlur
     BlurStyle.PRISM_REFRACTION -> Icons.Default.Flare
