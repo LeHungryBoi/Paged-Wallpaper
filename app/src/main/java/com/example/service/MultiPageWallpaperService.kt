@@ -1959,19 +1959,22 @@ class MultiPageWallpaperService : WallpaperService() {
                 nextOffset,
                 calibration
             )
-            val candidateDirection = swipeDirectionLock.previewDirection(previousOffset, nextOffset)
-            val boundaryProbeOffset = if (isAtStaticPage || crossedStaticPage) {
-                previousOffset
+            val delta = nextOffset - previousOffset
+            val newTransitionDirection = if (
+                crossedStaticPage && abs(delta) > OFFSET_EPSILON
+            ) {
+                if (delta > 0f) 1 else -1
             } else {
-                nextOffset
+                swipeDirectionLock.previewDirection(previousOffset, nextOffset)
             }
+            val boundaryProbeOffset = if (isAtStaticPage) previousOffset else nextOffset
             val boundaryIndex = transitionBoundaryIndex(
                 boundaryProbeOffset,
-                candidateDirection,
+                newTransitionDirection,
                 calibration
             )
-            val activeTransitionId = state.transitions.getOrNull(boundaryIndex)
-                ?.transitionId(forward = candidateDirection >= 0)
+            val enteringTransitionId = state.transitions.getOrNull(boundaryIndex)
+                ?.transitionId(forward = newTransitionDirection >= 0)
                 ?: state.transitionType
 
             offsetDirection = swipeDirectionLock.onOffsetChanged(
@@ -1979,7 +1982,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 nextOffset = nextOffset,
                 isAtStaticPage = isAtStaticPage,
                 crossedStaticPage = crossedStaticPage,
-                unlockImmediatelyAtStaticPage = activeTransitionId == "swipe_reveal"
+                newTransitionUnlockImmediately = enteringTransitionId == "swipe_reveal"
             )
         }
 
