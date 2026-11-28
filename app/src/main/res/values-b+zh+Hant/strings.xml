@@ -78,6 +78,7 @@
     <string name="transition_parallax_name">視差捲動</string>
     <string name="transition_parallax_classic_name">經典視差</string>
     <string name="transition_swipe_reveal_name">滑動揭露</string>
+    <string name="transition_swipe_reveal_slow_name">滑動揭露（慢速切換）</string>
     <string name="transition_swipe_reveal_stacked_name">疊層滑動揭露</string>
     <string name="transition_fade_name">交叉淡入淡出</string>
     <string name="transition_soft_blur_name">柔焦淡變</string>
