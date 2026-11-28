@@ -338,7 +338,7 @@ class ExampleUnitTest {
                 previousOffset = 0.6f,
                 nextOffset = 0.5f,
                 isAtStaticPage = true,
-                unlockImmediatelyAtStaticPage = true
+                newTransitionUnlockImmediately = true
             )
         )
         assertEquals(-1, directionLock.onOffsetChanged(0.5f, 0.49f, false))
@@ -356,7 +356,7 @@ class ExampleUnitTest {
                 nextOffset = 0.45f,
                 isAtStaticPage = false,
                 crossedStaticPage = true,
-                unlockImmediatelyAtStaticPage = true
+                newTransitionUnlockImmediately = true
             )
         )
     }
