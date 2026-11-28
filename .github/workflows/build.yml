@@ -34,9 +34,6 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Run unit tests
-        run: gradle testDebugUnitTest
-
       # app/build.gradle.kts signs the debug build with ${rootDir}/debug.keystore
       # (alias "androiddebugkey", store/key password "android"). The keystore is
       # committed so every CI APK has the same signature and updates install over
@@ -52,6 +49,9 @@ jobs:
               -keyalg RSA -keysize 2048 -validity 10000 \
               -dname "CN=Android Debug, O=Android, C=US"
           fi
+
+      - name: Run unit tests
+        run: gradle testDebugUnitTest
 
       - name: Build debug APK
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
