@@ -378,7 +378,7 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testCurrentSwipeRevealSelectionMigratesToSlowSwitchingVariant() {
+    fun testSchemaFiveKeepsExistingSwipeRevealSelectionFast() {
         val pages = listOf(PageItem(pageIndex = 0), PageItem(pageIndex = 1))
         val previousSetting = PageTransitionSetting(
             universalTransitionId = "swipe_reveal",
@@ -404,20 +404,11 @@ class ExampleUnitTest {
 
         val migrated = PresetDataMigration.migrateTransitionStorage(previousState)
 
-        assertEquals(6, migrated.schemaVersion)
-        assertEquals("swipe_reveal_slow", migrated.transitionType)
-        assertEquals(
-            "swipe_reveal_slow",
-            migrated.transitions.single().transitionId(forward = true)
-        )
-        assertEquals(
-            "swipe_reveal_slow",
-            migrated.transitions.single().transitionId(forward = false)
-        )
-        assertEquals(
-            "swipe_reveal_slow",
-            migrated.presets.single().transitions.single().universalTransitionId
-        )
+        assertEquals(7, migrated.schemaVersion)
+        assertEquals("swipe_reveal", migrated.transitionType)
+        assertEquals("swipe_reveal", migrated.transitions.single().transitionId(forward = true))
+        assertEquals("swipe_reveal", migrated.transitions.single().transitionId(forward = false))
+        assertEquals("swipe_reveal", migrated.presets.single().transitions.single().universalTransitionId)
     }
 
     @Test
@@ -447,7 +438,7 @@ class ExampleUnitTest {
 
         val migrated = PresetDataMigration.migrateTransitionStorage(previousState)
 
-        assertEquals(6, migrated.schemaVersion)
+        assertEquals(7, migrated.schemaVersion)
         assertEquals("swipe_reveal_stacked", migrated.transitionType)
         assertEquals(
             "swipe_reveal_stacked",
