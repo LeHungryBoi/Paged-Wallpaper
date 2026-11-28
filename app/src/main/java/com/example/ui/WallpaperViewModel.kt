@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.InputStream
 
 class WallpaperViewModel(application: Application) : AndroidViewModel(application) {
@@ -440,6 +441,26 @@ class WallpaperViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearDiagnosticsHistory() {
         WallpaperDiagnosticsRecorder.clearHistory()
+    }
+
+    fun exportDiagnosticsTrace(uri: Uri, onResult: (Boolean) -> Unit) {
+        val trace = WallpaperDiagnosticsRecorder.exportLatestTrace()
+        if (trace == null) {
+            onResult(false)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val success = runCatching {
+                val output = getApplication<Application>().contentResolver.openOutputStream(uri, "wt")
+                    ?: error("Could not open destination for writing")
+                output.use { stream ->
+                    stream.write(trace.toByteArray(Charsets.UTF_8))
+                }
+            }.isSuccess
+            withContext(Dispatchers.Main) {
+                onResult(success)
+            }
+        }
     }
 
     fun getDefaultEditorPreviewSplitFraction(): Float =
