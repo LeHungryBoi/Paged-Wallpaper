@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_android.h>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -14,6 +15,28 @@ namespace paperpages_vk {
 
 constexpr int kMaxFramesInFlight = 2;
 constexpr uint32_t kMaxDescriptorsPerFrame = 64;
+constexpr uint32_t kFrameTraceCapacity = 2048;
+constexpr uint64_t kTraceValueUnavailable = UINT64_MAX;
+
+struct FrameTraceSample {
+    uint64_t revision = 0;
+    uint64_t frameId = 0;
+    uint64_t requestTimeNs = 0;
+    uint64_t fenceWaitNs = kTraceValueUnavailable;
+    uint64_t acquireNs = kTraceValueUnavailable;
+    uint64_t beginCpuNs = kTraceValueUnavailable;
+    uint64_t submitNs = kTraceValueUnavailable;
+    uint64_t presentNs = kTraceValueUnavailable;
+    uint64_t endCpuNs = kTraceValueUnavailable;
+    uint64_t gpuFrameNs = kTraceValueUnavailable;
+    uint64_t gpuOffscreenNs = kTraceValueUnavailable;
+    uint64_t gpuMainNs = kTraceValueUnavailable;
+    uint64_t presentId = 0;
+    uint64_t actualPresentTimeNs = 0;
+    uint64_t presentMarginNs = kTraceValueUnavailable;
+    uint64_t offscreenTargetSetupNs = 0;
+    uint64_t flags = 0;
+};
 
 struct WallpaperPushConstants {
     float mvp[16];
@@ -55,6 +78,7 @@ struct PendingCpuTextureUpload {
 
 struct FrameSync {
     uint64_t submissionSerial = 0;
+    uint32_t traceSlotIndex = UINT32_MAX;
     std::unordered_map<uint64_t, VkDescriptorSet> compositeDescriptors;
     VkDescriptorSet blurDescriptor = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
@@ -120,6 +144,9 @@ struct VulkanEngine {
     uint64_t completedFrameSerial = 0;
     std::vector<DeferredTexture> deferredTextures;
     std::vector<PendingCpuTextureUpload> pendingCpuTextureUploads;
+    std::array<FrameTraceSample, kFrameTraceCapacity> frameTraceSamples{};
+    uint32_t nextFrameTraceSlot = 0;
+    uint64_t nextFrameTraceRevision = 1;
     uint32_t timingFenceWaitCount = 0;
     uint32_t timingAcquireCount = 0;
     uint32_t timingSubmitCount = 0;
@@ -181,7 +208,18 @@ struct VulkanEngine {
     void deleteTexture(int32_t textureId);
     void clearUserTextures();
 
-    int32_t beginFrame(bool useMotionBlur, uint32_t mbWidth, uint32_t mbHeight, float clearR, float clearG, float clearB);
+    int32_t beginFrame(
+        uint64_t traceFrameId,
+        uint64_t requestTimeNs,
+        bool useMotionBlur,
+        uint32_t mbWidth,
+        uint32_t mbHeight,
+        float clearR,
+        float clearG,
+        float clearB
+    );
+    void publishFrameTrace(FrameTraceSample& sample);
+    std::vector<FrameTraceSample> getFrameTraceUpdates(uint64_t afterRevision) const;
     void beginMainPass(float clearR, float clearG, float clearB);
     void drawQuad(
         int32_t textureId,
