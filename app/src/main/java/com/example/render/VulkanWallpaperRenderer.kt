@@ -299,6 +299,7 @@ internal class VulkanWallpaperRenderer(
             }
             WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_end_complete")
             publishNativeFrameTrace()
+            scheduleNativeTraceDrain()
 
             consecutiveFailures = 0
             val needsAssetRetry = composer.missingConfiguredTextureInFrame
@@ -344,6 +345,16 @@ internal class VulkanWallpaperRenderer(
         }
     }
 
+    private fun scheduleNativeTraceDrain() {
+        // Let the GPU fence and display compositor finish naturally. The native
+        // getter only collects already-completed results; it never waits on GPU.
+        TRACE_DRAIN_DELAYS_MS.forEach { delay ->
+            renderHandler.postDelayed({
+                if (!released) publishNativeFrameTrace()
+            }, delay)
+        }
+    }
+
     private fun ensureVulkanReady(surface: Surface, width: Int, height: Int): Boolean {
         if (!VulkanNativeBridge.isNativeLoaded) return false
         if (nativeHandle == 0L) {
@@ -384,7 +395,8 @@ internal class VulkanWallpaperRenderer(
         private const val MAX_BLUR_RADIUS = 511
         private const val MAX_BLUR_TAPS = 32
         private const val MAX_CONSECUTIVE_FAILURES = 3
-        private const val TRACE_FIELDS_PER_SAMPLE = 17
+        private val TRACE_DRAIN_DELAYS_MS = longArrayOf(24L, 64L, 128L)
+        private const val TRACE_FIELDS_PER_SAMPLE = 18
         private const val ASSET_RETRY_DELAY_MS = 110L
         private const val TRANSIENT_RETRY_DELAY_MS = 16L
     }
