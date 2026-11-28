@@ -161,6 +161,8 @@ object WallpaperDiagnosticsRecorder {
     private val lock = Any()
     private val mutableState = MutableStateFlow(WallpaperDiagnosticsState())
     val state: StateFlow<WallpaperDiagnosticsState> = mutableState.asStateFlow()
+    val isRecording: Boolean
+        get() = activeSession != null
 
     private var preferences: SharedPreferences? = null
     @Volatile
@@ -172,6 +174,7 @@ object WallpaperDiagnosticsRecorder {
     private var traceDroppedEvents = 0
     private var latestTraceJson: String? = null
     private var traceRecordedAtMillis = 0L
+    private var traceSessionStartNanos = 0L
 
     private const val MAX_TRACE_FRAMES = 2048
     private const val MAX_TRACE_EVENTS = 32768
@@ -202,6 +205,7 @@ object WallpaperDiagnosticsRecorder {
             while (traceEvents.length() > 0) traceEvents.remove(0)
             traceDroppedEvents = 0
             traceRecordedAtMillis = System.currentTimeMillis()
+            traceSessionStartNanos = System.nanoTime()
             latestTraceJson = null
             appendTraceEventLocked(
                 JSONObject()
@@ -410,6 +414,11 @@ object WallpaperDiagnosticsRecorder {
             while (index + TRACE_FIELDS_PER_SAMPLE <= values.size) {
                 val revision = values[index]
                 val frameId = values[index + 1]
+                val requestTimeNanos = values[index + 2]
+                if (requestTimeNanos < traceSessionStartNanos) {
+                    index += TRACE_FIELDS_PER_SAMPLE
+                    continue
+                }
                 val frame = traceFrames.getOrPut(frameId) { JSONObject().put("frameId", frameId) }
                 frame.put("nativeTraceRevision", revision)
                 frame.put("nativeRequestTimeNs", values[index + 2])
