@@ -246,6 +246,16 @@ data class PageItem(
             } else {
                 BlurStyle.SMOOTH_GAUSSIAN
             }
+            // Older saved pages only had the low-visibility 32% texture default and no scale
+            // field. Upgrade those settings together so existing selections get the new look.
+            val hasTextureSizing = json.has("blurTextureScale")
+            val parsedTexturePattern = BlurTexturePattern.fromName(
+                json.optString("blurTexturePattern", BlurTexturePattern.NONE.name)
+            )
+            val savedTextureIntensity = json.optDouble(
+                "blurTextureIntensity",
+                DEFAULT_BLUR_TEXTURE_INTENSITY.toDouble()
+            ).toFloat().coerceIn(0f, 1f)
             return PageItem(
                 pageIndex = json.optInt("pageIndex", 0),
                 originalId = json.optString("originalId").takeIf { it.isNotEmpty() },
@@ -266,10 +276,12 @@ data class PageItem(
                 blurRainbowStyle = BlurRainbowStyle.fromName(
                     json.optString("blurRainbowStyle", BlurRainbowStyle.DIAGONAL_PRISM.name)
                 ),
-                blurTexturePattern = BlurTexturePattern.fromName(
-                    json.optString("blurTexturePattern", BlurTexturePattern.NONE.name)
-                ),
-                blurTextureIntensity = json.optDouble("blurTextureIntensity", DEFAULT_BLUR_TEXTURE_INTENSITY.toDouble()).toFloat().coerceIn(0f, 1f),
+                blurTexturePattern = parsedTexturePattern,
+                blurTextureIntensity = if (hasTextureSizing) {
+                    savedTextureIntensity
+                } else {
+                    DEFAULT_BLUR_TEXTURE_INTENSITY
+                },
                 blurTextureScale = json.optDouble("blurTextureScale", DEFAULT_BLUR_TEXTURE_SCALE.toDouble()).toFloat().coerceIn(0.5f, 3f),
                 blurTextureMaskBlurAmount = json.optDouble("blurTextureMaskBlurAmount", DEFAULT_BLUR_TEXTURE_MASK_BLUR.toDouble()).toFloat().coerceIn(0f, 1f),
                 blurTextureMaskTintColor = json.optInt("blurTextureMaskTintColor", DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR),
