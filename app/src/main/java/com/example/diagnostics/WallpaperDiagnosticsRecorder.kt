@@ -175,10 +175,17 @@ object WallpaperDiagnosticsRecorder {
     private var latestTraceJson: String? = null
     private var traceRecordedAtMillis = 0L
     private var traceSessionStartNanos = 0L
+    private var lastTraceOffset: Float? = null
+    private var lastOffsetCallbackTraceNs = 0L
+    private var offsetMotionDirection = 0
+    private var offsetMotionActive = false
+    private var lastSmoothingSampleNs = 0L
 
     private const val MAX_TRACE_FRAMES = 2048
     private const val MAX_TRACE_EVENTS = 32768
     private const val TRACE_FIELDS_PER_SAMPLE = 18
+    private const val MOTION_IDLE_GAP_NANOS = 120_000_000L
+    private const val SMOOTHING_SAMPLE_INTERVAL_NANOS = 16_666_667L
 
     fun initialize(context: Context) {
         synchronized(lock) {
@@ -206,6 +213,11 @@ object WallpaperDiagnosticsRecorder {
             traceDroppedEvents = 0
             traceRecordedAtMillis = System.currentTimeMillis()
             traceSessionStartNanos = System.nanoTime()
+            lastTraceOffset = null
+            lastOffsetCallbackTraceNs = 0L
+            offsetMotionDirection = 0
+            offsetMotionActive = false
+            lastSmoothingSampleNs = 0L
             latestTraceJson = null
             appendTraceEventLocked(
                 JSONObject()
@@ -275,13 +287,63 @@ object WallpaperDiagnosticsRecorder {
             val session = activeSession ?: return
             val nowNanos = SystemClock.elapsedRealtimeNanos()
             session.recordOffsetUpdate(xOffset, isVisible, nowNanos)
+            val traceNow = System.nanoTime()
+            val previousOffset = lastTraceOffset
+            val delta = previousOffset?.let { xOffset - it } ?: 0f
+            val direction = when {
+                delta > 0.0001f -> 1
+                delta < -0.0001f -> -1
+                else -> 0
+            }
+            if (offsetMotionActive && lastOffsetCallbackTraceNs > 0L &&
+                traceNow - lastOffsetCallbackTraceNs > MOTION_IDLE_GAP_NANOS
+            ) {
+                appendTraceEventLocked(
+                    JSONObject()
+                        .put("type", "motion_stop")
+                        .put("timeNs", lastOffsetCallbackTraceNs)
+                        .put("detectedAtNs", traceNow)
+                        .put("idleGapNs", traceNow - lastOffsetCallbackTraceNs)
+                        .put("reason", "offset_callback_gap")
+                )
+                offsetMotionActive = false
+                offsetMotionDirection = 0
+            }
+            if (direction != 0) {
+                if (!offsetMotionActive) {
+                    appendTraceEventLocked(
+                        JSONObject()
+                            .put("type", "motion_start")
+                            .put("timeNs", traceNow)
+                            .put("source", "launcher_offset")
+                            .put("direction", direction)
+                    )
+                    offsetMotionActive = true
+                } else if (offsetMotionDirection != 0 && direction != offsetMotionDirection) {
+                    appendTraceEventLocked(
+                        JSONObject()
+                            .put("type", "motion_reversal")
+                            .put("timeNs", traceNow)
+                            .put("previousDirection", offsetMotionDirection)
+                            .put("direction", direction)
+                            .put("previousOffset", previousOffset?.toDouble())
+                            .put("xOffset", xOffset.toDouble())
+                    )
+                }
+                offsetMotionDirection = direction
+            }
             appendTraceEventLocked(
                 JSONObject()
                     .put("type", "offset")
-                    .put("timeNs", System.nanoTime())
+                    .put("timeNs", traceNow)
                     .put("xOffset", xOffset.toDouble())
+                    .put("previousXOffset", previousOffset?.toDouble())
+                    .put("delta", delta.toDouble())
+                    .put("direction", direction)
                     .put("visible", isVisible)
             )
+            lastTraceOffset = xOffset
+            lastOffsetCallbackTraceNs = traceNow
             publishIfDue(session, nowNanos)
         }
     }
@@ -374,6 +436,37 @@ object WallpaperDiagnosticsRecorder {
                     .put("y", y.toDouble())
                     .put("xOffset", xOffset.toDouble())
                     .put("edgeOverScrollFraction", edgeOverScrollFraction.toDouble())
+            )
+        }
+    }
+
+    /**
+     * Samples the actual Choreographer-driven interpolation at a capped 60 Hz.
+     * The trace remains useful on 120/165 Hz panels without allocating an event
+     * for every animation callback.
+     */
+    fun recordSmoothingStep(
+        targetXOffset: Float,
+        renderedXOffset: Float,
+        smoothingFraction: Float,
+        elapsedNanos: Long
+    ) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            val now = System.nanoTime()
+            if (lastSmoothingSampleNs != 0L &&
+                now - lastSmoothingSampleNs < SMOOTHING_SAMPLE_INTERVAL_NANOS
+            ) return
+            lastSmoothingSampleNs = now
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "smoothing_step")
+                    .put("timeNs", now)
+                    .put("targetXOffset", targetXOffset.toDouble())
+                    .put("renderedXOffset", renderedXOffset.toDouble())
+                    .put("error", (targetXOffset - renderedXOffset).toDouble())
+                    .put("smoothingFraction", smoothingFraction.toDouble())
+                    .put("elapsedNs", elapsedNanos)
             )
         }
     }
