@@ -295,9 +295,9 @@ internal class WallpaperSceneComposer(
             val page = frame.state.pages.find { it.pageIndex == pageIndex }
             val modes = modesByPage[pageIndex] ?: setOf(false)
             modes.forEach { usesParallax ->
-                getPageTexture(frame, pageIndex, usesParallax, darkened = false)
+                getPageTexture(frame, pageIndex, usesParallax, darkened = false, isPrewarm = true)
                 if (frame.state.darken.isEnabled && repository.shouldDarkenPage(page, frame.state.darken)) {
-                    getPageTexture(frame, pageIndex, usesParallax, darkened = true)
+                    getPageTexture(frame, pageIndex, usesParallax, darkened = true, isPrewarm = true)
                 }
             }
         }
@@ -340,7 +340,8 @@ internal class WallpaperSceneComposer(
         frame: GpuFrameRequest,
         pageIndex: Int,
         usesParallax: Boolean,
-        darkened: Boolean
+        darkened: Boolean,
+        isPrewarm: Boolean = false
     ): PageTexture? {
         val slot = AssetSlot(pageIndex, usesParallax, darkened)
         val page = frame.state.pages.find { it.pageIndex == pageIndex }
@@ -388,7 +389,8 @@ internal class WallpaperSceneComposer(
         val primaryUploadNs = System.nanoTime() - primaryUploadStartedAt
         if (textureId == 0) {
             WallpaperDiagnosticsRecorder.recordTexturePreparation(
-                pageIndex, usesParallax, darkened, bitmapLookupNs, primaryUploadNs, 0L, 0L
+                pageIndex, usesParallax, darkened, isPrewarm,
+                bitmapLookupNs, primaryUploadNs, 0L, 0L
             )
             missingConfiguredTextureInFrame = true
             missingAssets[slot] = MissingAsset(key, now + TRANSIENT_ASSET_RETRY_NANOS)
@@ -406,7 +408,7 @@ internal class WallpaperSceneComposer(
         }
         val blurUploadNs = System.nanoTime() - blurUploadStartedAt
         WallpaperDiagnosticsRecorder.recordTexturePreparation(
-            pageIndex, usesParallax, darkened,
+            pageIndex, usesParallax, darkened, isPrewarm,
             bitmapLookupNs, primaryUploadNs, blurCreationNs, blurUploadNs
         )
         val texture = PageTexture(
