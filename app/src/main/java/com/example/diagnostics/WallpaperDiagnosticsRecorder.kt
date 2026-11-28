@@ -170,7 +170,7 @@ object WallpaperDiagnosticsRecorder {
     private var lastPublishedAtNanos = 0L
     private var wallpaperVisible = false
     private val traceFrames = LinkedHashMap<Long, JSONObject>()
-    private val traceEvents = JSONArray()
+    private var traceEvents = JSONArray()
     private var traceDroppedEvents = 0
     private var latestTraceJson: String? = null
     private var traceRecordedAtMillis = 0L
@@ -196,13 +196,13 @@ object WallpaperDiagnosticsRecorder {
         synchronized(lock) {
             val nowNanos = SystemClock.elapsedRealtimeNanos()
             val history = mutableState.value.history
-            activeSession = WallpaperDiagnosticsSession(
+            val session = WallpaperDiagnosticsSession(
                 nowNanos,
                 System.currentTimeMillis(),
                 wallpaperVisible
             )
             traceFrames.clear()
-            while (traceEvents.length() > 0) traceEvents.remove(0)
+            traceEvents = JSONArray()
             traceDroppedEvents = 0
             traceRecordedAtMillis = System.currentTimeMillis()
             traceSessionStartNanos = System.nanoTime()
@@ -210,12 +210,13 @@ object WallpaperDiagnosticsRecorder {
             appendTraceEventLocked(
                 JSONObject()
                     .put("type", "session_start")
-                    .put("timeNs", System.nanoTime())
+                    .put("timeNs", traceSessionStartNanos)
             )
+            activeSession = session
             lastPublishedAtNanos = nowNanos
             mutableState.value = WallpaperDiagnosticsState(
                 isRecording = true,
-                current = activeSession?.snapshot(nowNanos),
+                current = session.snapshot(nowNanos),
                 history = history,
                 hasTrace = false
             )
@@ -226,6 +227,7 @@ object WallpaperDiagnosticsRecorder {
         synchronized(lock) {
             val session = activeSession ?: return
             val result = session.snapshot(SystemClock.elapsedRealtimeNanos())
+            activeSession = null
             appendTraceEventLocked(
                 JSONObject()
                     .put("type", "session_stop")
@@ -233,7 +235,6 @@ object WallpaperDiagnosticsRecorder {
             )
             latestTraceJson = buildTraceJson(result)
             val history = (listOf(result) + mutableState.value.history).take(MAX_HISTORY_SIZE)
-            activeSession = null
             preferences?.edit()
                 ?.putString(HISTORY_KEY, serializeHistory(history))
                 ?.apply()
