@@ -174,7 +174,7 @@ object WallpaperDiagnosticsRecorder {
     private var traceRecordedAtMillis = 0L
 
     private const val MAX_TRACE_FRAMES = 2048
-    private const val MAX_TRACE_EVENTS = 8192
+    private const val MAX_TRACE_EVENTS = 32768
     private const val TRACE_FIELDS_PER_SAMPLE = 18
 
     fun initialize(context: Context) {
