@@ -685,10 +685,11 @@ class MultiPageWallpaperService : WallpaperService() {
                 }
             }
 
-            offsetDirection = swipeDirectionLock.onOffsetChanged(
-                previousOffset = renderedXOffset,
+            updateSwipeDirectionLock(
+                previousOffset = previousXOffset,
                 nextOffset = nextXOffset,
-                isAtStaticPage = isAtStaticPageOffset(nextXOffset, calib)
+                calibration = calib,
+                state = repository.appState.value
             )
 
             if (offsetChanged && xOffsetStep > 0f) {
@@ -778,10 +779,11 @@ class MultiPageWallpaperService : WallpaperService() {
                     if (entryTransitionController.isActive) {
                         entryTransitionController.interrupt()
                     }
-                    offsetDirection = swipeDirectionLock.onOffsetChanged(
+                    updateSwipeDirectionLock(
                         previousOffset = renderedXOffset,
                         nextOffset = currentXOffset,
-                        isAtStaticPage = isAtStaticPageOffset(currentXOffset, calib)
+                        calibration = calib,
+                        state = repository.appState.value
                     )
                 }
                 if (isVisible) {
@@ -1943,6 +1945,104 @@ class MultiPageWallpaperService : WallpaperService() {
             }
 
             setPageTransition(0, 0, 0f)
+        }
+
+        private fun updateSwipeDirectionLock(
+            previousOffset: Float,
+            nextOffset: Float,
+            calibration: CalibrationConfig,
+            state: WallpaperAppState
+        ) {
+            val isAtStaticPage = isAtDirectionBoundaryOffset(nextOffset, calibration)
+            val crossedStaticPage = hasCrossedDirectionBoundary(
+                previousOffset,
+                nextOffset,
+                calibration
+            )
+            val candidateDirection = swipeDirectionLock.previewDirection(previousOffset, nextOffset)
+            val boundaryProbeOffset = if (isAtStaticPage || crossedStaticPage) {
+                previousOffset
+            } else {
+                nextOffset
+            }
+            val boundaryIndex = transitionBoundaryIndex(
+                boundaryProbeOffset,
+                candidateDirection,
+                calibration
+            )
+            val activeTransitionId = state.transitions.getOrNull(boundaryIndex)
+                ?.transitionId(forward = candidateDirection >= 0)
+                ?: state.transitionType
+
+            offsetDirection = swipeDirectionLock.onOffsetChanged(
+                previousOffset = previousOffset,
+                nextOffset = nextOffset,
+                isAtStaticPage = isAtStaticPage,
+                crossedStaticPage = crossedStaticPage,
+                unlockImmediatelyAtStaticPage = activeTransitionId == "swipe_reveal"
+            )
+        }
+
+        private fun pageOffsetAnchors(calibration: CalibrationConfig): List<Float> {
+            val count = calibration.pageCount.coerceAtLeast(1)
+            return if (calibration.customOffsets.size >= count) {
+                calibration.customOffsets.take(count)
+            } else {
+                List(count) { index ->
+                    if (count <= 1) 0f else index.toFloat() / (count - 1).toFloat()
+                }
+            }
+        }
+
+        private fun isAtDirectionBoundaryOffset(
+            offset: Float,
+            calibration: CalibrationConfig
+        ): Boolean = pageOffsetAnchors(calibration).any { anchor ->
+            abs(offset - anchor) <= STATIC_OFFSET_TOLERANCE
+        }
+
+        private fun hasCrossedDirectionBoundary(
+            previousOffset: Float,
+            nextOffset: Float,
+            calibration: CalibrationConfig
+        ): Boolean {
+            if (abs(nextOffset - previousOffset) <= OFFSET_EPSILON) return false
+            return pageOffsetAnchors(calibration).any { anchor ->
+                val before = previousOffset - anchor
+                val after = nextOffset - anchor
+                (before < -STATIC_OFFSET_TOLERANCE && after > STATIC_OFFSET_TOLERANCE) ||
+                    (before > STATIC_OFFSET_TOLERANCE && after < -STATIC_OFFSET_TOLERANCE) ||
+                    (abs(before) <= STATIC_OFFSET_TOLERANCE &&
+                        abs(after) > STATIC_OFFSET_TOLERANCE)
+            }
+        }
+
+        private fun transitionBoundaryIndex(
+            offset: Float,
+            direction: Int,
+            calibration: CalibrationConfig
+        ): Int {
+            val anchors = pageOffsetAnchors(calibration)
+            val count = anchors.size
+            if (count <= 1) return 0
+
+            val nearestAnchorIndex = anchors.indices.minByOrNull { index ->
+                abs(offset - anchors[index])
+            }
+            if (nearestAnchorIndex != null &&
+                abs(offset - anchors[nearestAnchorIndex]) <= STATIC_OFFSET_TOLERANCE
+            ) {
+                return if (direction >= 0) {
+                    nearestAnchorIndex.coerceAtMost(count - 2)
+                } else {
+                    (nearestAnchorIndex - 1).coerceAtLeast(0)
+                }
+            }
+
+            for (index in 0 until count - 1) {
+                if (offset < anchors[index + 1]) return index
+            }
+            return count - 2
         }
 
         private fun isAtStaticPageOffset(
