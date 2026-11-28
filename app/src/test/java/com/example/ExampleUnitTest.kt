@@ -267,6 +267,50 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun testBackdropPreviewUsesSelectedPatternSize() {
+        val source = Bitmap.createBitmap(96, 192, Bitmap.Config.ARGB_8888)
+        Canvas(source).drawColor(Color.rgb(100, 120, 140))
+
+        fun render(scale: Float): Bitmap =
+            ImageProcessingUtils.renderBackdropPreviewBitmap(
+                srcBmp = source,
+                targetWidth = 128,
+                targetHeight = 256,
+                blurAmount = 0.25f,
+                blurStyle = BlurStyle.SMOOTH_GAUSSIAN,
+                blurTintMode = BlurTintMode.NONE,
+                blurTintColor = PageItem.DEFAULT_BLUR_TINT_COLOR,
+                blurTintIntensity = 0f,
+                blurRainbowStyle = BlurRainbowStyle.DIAGONAL_PRISM,
+                blurTexturePattern = BlurTexturePattern.DOT_MATRIX,
+                blurTextureIntensity = 1f,
+                blurTextureScale = scale,
+                blurTextureMaskBlurAmount = 0f,
+                blurTextureMaskTintColor = PageItem.DEFAULT_BLUR_TEXTURE_MASK_TINT_COLOR,
+                blurTextureMaskTintIntensity = 0f
+            )
+
+        val smallPattern = render(0.5f)
+        val largePattern = render(3f)
+        var changedPixels = 0
+        for (y in 0 until 256 step 2) {
+            for (x in 0 until 128 step 2) {
+                if (smallPattern.getPixel(x, y) != largePattern.getPixel(x, y)) {
+                    changedPixels++
+                }
+            }
+        }
+
+        assertTrue(
+            "Changing pattern size must change the editor backdrop preview",
+            changedPixels > 0
+        )
+        smallPattern.recycle()
+        largePattern.recycle()
+        source.recycle()
+    }
+
+    @Test
     fun testOriginalMediaSerializationKeepsOnlySourceMetadata() {
         val media = OriginalMedia(
             id = "media",
