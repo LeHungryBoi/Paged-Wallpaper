@@ -344,6 +344,7 @@ internal class VulkanWallpaperRenderer(
     }
 
     private fun publishNativeFrameTrace() {
+        if (!WallpaperDiagnosticsRecorder.isRecording) return
         val handle = nativeHandle
         if (handle == 0L) return
         val updates = VulkanNativeBridge.nativeGetFrameTrace(handle, lastNativeTraceRevision)
@@ -357,11 +358,12 @@ internal class VulkanWallpaperRenderer(
     }
 
     private fun scheduleNativeTraceDrain() {
+        if (!WallpaperDiagnosticsRecorder.isRecording) return
         // Let the GPU fence and display compositor finish naturally. The native
         // getter only collects already-completed results; it never waits on GPU.
         TRACE_DRAIN_DELAYS_MS.forEach { delay ->
             renderHandler.postDelayed({
-                if (!released) publishNativeFrameTrace()
+                if (!released && WallpaperDiagnosticsRecorder.isRecording) publishNativeFrameTrace()
             }, delay)
         }
     }
