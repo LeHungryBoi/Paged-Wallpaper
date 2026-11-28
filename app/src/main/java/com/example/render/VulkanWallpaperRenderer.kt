@@ -50,6 +50,7 @@ internal class VulkanWallpaperRenderer(
     private var consecutiveFailures = 0
     private var lastNativeTraceRevision = 0L
     private var nativeTraceDrainScheduled = false
+    private var scheduledPrewarmKey: String? = null
 
     private val drawSink = object : VulkanDrawSink {
         override val maxTextureSize: Int
@@ -164,6 +165,7 @@ internal class VulkanWallpaperRenderer(
 
     override fun onSurfaceDestroyed() {
         windowSurface = null
+        scheduledPrewarmKey = null
         synchronized(frameLock) { pendingFrame = null }
         renderHandler.post {
             boundSurface = null
@@ -308,6 +310,7 @@ internal class VulkanWallpaperRenderer(
             scheduleNativeTraceDrain()
 
             consecutiveFailures = 0
+            schedulePageTexturePrewarm(req)
             val needsAssetRetry = composer.missingConfiguredTextureInFrame
             mainHandler.post {
                 if (!released) frame.onSubmitted(req)
@@ -340,6 +343,41 @@ internal class VulkanWallpaperRenderer(
                 }, TRANSIENT_RETRY_DELAY_MS)
             }
         }
+    }
+
+    private fun schedulePageTexturePrewarm(frame: GpuFrameRequest) {
+        val key = listOf(
+            frame.width,
+            frame.height,
+            repository.bitmapGeneration,
+            repository.darkenedBitmapGeneration,
+            frame.state.pages.hashCode(),
+            frame.state.transitions.hashCode(),
+            frame.state.darken.hashCode()
+        ).joinToString(":")
+        if (scheduledPrewarmKey == key) return
+        scheduledPrewarmKey = key
+        renderHandler.postDelayed(
+            { runPageTexturePrewarm(frame, key) },
+            PAGE_TEXTURE_PREWARM_DELAY_MS
+        )
+    }
+
+    private fun runPageTexturePrewarm(frame: GpuFrameRequest, key: String) {
+        if (released || scheduledPrewarmKey != key || nativeHandle == 0L) return
+        val hasPendingFrame = synchronized(frameLock) { pendingFrame != null }
+        if (hasPendingFrame) {
+            renderHandler.postDelayed(
+                { runPageTexturePrewarm(frame, key) },
+                PAGE_TEXTURE_PREWARM_RETRY_MS
+            )
+            return
+        }
+
+        val startedAt = System.nanoTime()
+        composer.prewarmConfiguredPages(frame)
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000.0
+        Log.i(TAG, "Page texture prewarm completed in %.2f ms".format(elapsedMs))
     }
 
     private fun publishNativeFrameTrace() {
@@ -412,6 +450,8 @@ internal class VulkanWallpaperRenderer(
         private const val MAX_BLUR_TAPS = 32
         private const val MAX_CONSECUTIVE_FAILURES = 3
         private const val TRACE_DRAIN_DELAY_MS = 64L
+        private const val PAGE_TEXTURE_PREWARM_DELAY_MS = 500L
+        private const val PAGE_TEXTURE_PREWARM_RETRY_MS = 120L
         private const val TRACE_FIELDS_PER_SAMPLE = 18
         private const val ASSET_RETRY_DELAY_MS = 110L
         private const val TRANSIENT_RETRY_DELAY_MS = 16L
