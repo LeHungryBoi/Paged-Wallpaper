@@ -240,10 +240,22 @@ object WallpaperDiagnosticsRecorder {
             val session = activeSession ?: return
             val result = session.snapshot(SystemClock.elapsedRealtimeNanos())
             activeSession = null
+            val stopTraceNow = System.nanoTime()
+            if (offsetMotionActive) {
+                appendTraceEventLocked(
+                    JSONObject()
+                        .put("type", "motion_stop")
+                        .put("timeNs", stopTraceNow)
+                        .put("lastOffsetCallbackNs", lastOffsetCallbackTraceNs)
+                        .put("reason", "recording_stopped")
+                )
+                offsetMotionActive = false
+                offsetMotionDirection = 0
+            }
             appendTraceEventLocked(
                 JSONObject()
                     .put("type", "session_stop")
-                    .put("timeNs", System.nanoTime())
+                    .put("timeNs", stopTraceNow)
             )
             latestTraceJson = buildTraceJson(result)
             val history = (listOf(result) + mutableState.value.history).take(MAX_HISTORY_SIZE)
