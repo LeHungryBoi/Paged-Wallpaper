@@ -284,8 +284,9 @@ internal class WallpaperSceneComposer(
         addMode(0, true)
         addMode(lastPageIndex, true)
 
-        frame.state.transitions.forEachIndexed { boundaryIndex, setting ->
-            val transitionId = setting.transitionId(frame.swipeForward)
+        for (boundaryIndex in 0 until lastPageIndex) {
+            val setting = frame.state.transitions.getOrNull(boundaryIndex)
+            val transitionId = setting?.transitionId(frame.swipeForward) ?: frame.state.transitionType
             val usesParallax = TransitionRegistry.get(transitionId).supportsParallax
             addMode(boundaryIndex, usesParallax)
             addMode(boundaryIndex + 1, usesParallax)
