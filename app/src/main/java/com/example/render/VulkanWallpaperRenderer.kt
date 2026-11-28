@@ -454,7 +454,7 @@ internal class VulkanWallpaperRenderer(
         private const val CLEAR_G = 22f / 255f
         private const val CLEAR_B = 34f / 255f
         private const val MAX_BLUR_RADIUS = 511
-        private const val MAX_BLUR_TAPS = 32
+        private const val MAX_BLUR_TAPS = 16
         private const val MAX_CONSECUTIVE_FAILURES = 3
         private const val TRACE_DRAIN_DELAY_MS = 64L
         private const val PAGE_TEXTURE_PREWARM_DELAY_MS = 500L
