@@ -18,6 +18,7 @@ fun transitionNameRes(transitionId: String): Int = when (transitionId.lowercase(
     "parallax" -> R.string.transition_parallax_name
     "parallax_classic" -> R.string.transition_parallax_classic_name
     "swipe_reveal" -> R.string.transition_swipe_reveal_name
+    "swipe_reveal_slow" -> R.string.transition_swipe_reveal_slow_name
     "swipe_reveal_stacked" -> R.string.transition_swipe_reveal_stacked_name
     "fade" -> R.string.transition_fade_name
     "soft_blur" -> R.string.transition_soft_blur_name
