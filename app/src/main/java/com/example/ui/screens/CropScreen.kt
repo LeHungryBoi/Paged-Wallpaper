@@ -1673,6 +1673,7 @@ private val TINT_SWATCH_COLORS = listOf(
 )
 
 private val TEXTURE_TINT_SWATCH_COLORS = listOf(
+    0xFF53616D.toInt(),
     0xFF41505D.toInt(),
     0xFF596B78.toInt(),
     0xFF777F84.toInt(),
