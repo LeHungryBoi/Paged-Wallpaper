@@ -124,6 +124,23 @@ class ExampleUnitTest {
         val legacyPage = PageItem.fromJson(org.json.JSONObject().put("pageIndex", 0))
         assertEquals(CropFillMode.BLUR, legacyPage.cropFillMode)
         assertEquals(0f, legacyPage.parallaxAmount, 0.001f)
+
+        val legacyTexturePage = PageItem.fromJson(
+            org.json.JSONObject()
+                .put("pageIndex", 0)
+                .put("blurTexturePattern", "DOT_MATRIX")
+                .put("blurTextureIntensity", 0.32)
+        )
+        assertEquals(
+            PageItem.DEFAULT_BLUR_TEXTURE_INTENSITY,
+            legacyTexturePage.blurTextureIntensity,
+            0.001f
+        )
+        assertEquals(
+            PageItem.DEFAULT_BLUR_TEXTURE_SCALE,
+            legacyTexturePage.blurTextureScale,
+            0.001f
+        )
     }
 
     @Test
