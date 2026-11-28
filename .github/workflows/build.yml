@@ -50,8 +50,8 @@ jobs:
               -dname "CN=Android Debug, O=Android, C=US"
           fi
 
-      - name: Run swipe direction-lock unit tests
-        run: gradle --no-configuration-cache testDebugUnitTest --tests com.example.render.SwipeDirectionLockTest
+      - name: Run swipe and settings-migration unit tests
+        run: gradle --no-configuration-cache testDebugUnitTest --tests com.example.render.SwipeDirectionLockTest --tests com.example.data.migration.PresetDataMigrationTest
 
       - name: Build debug APK
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
