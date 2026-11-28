@@ -315,7 +315,7 @@
     <string name="crop_bg_blur">背景模糊：%1$d%%</string>
     <string name="crop_color_tinting">背景著色</string>
     <string name="crop_tint_none">原色</string>
-    <string name="crop_tint_solid">單色</string>
+    <string name="crop_tint_solid">染色玻璃</string>
     <string name="crop_tint_rainbow">彩虹</string>
     <string name="crop_tint_swatch_cd">選擇著色顏色</string>
     <string name="crop_tint_selected_cd">已選著色顏色</string>
@@ -332,6 +332,15 @@
     <string name="crop_blur_win7_desc">經典半透明玻璃，帶有斜向高光反射與冰透質感</string>
     <string name="crop_blur_acrylic">壓克力</string>
     <string name="crop_blur_acrylic_desc">細膩微粒噪點與柔光遮罩構成的現代磨砂材質</string>
+    <string name="crop_blur_smoked">煙燻玻璃</string>
+    <string name="crop_blur_smoked_desc">中性炭灰玻璃色調，搭配柔和反光與暗色邊緣</string>
+    <string name="crop_glass_texture">玻璃紋理</string>
+    <string name="crop_texture_none">無</string>
+    <string name="crop_texture_grid">細網格</string>
+    <string name="crop_texture_diagonal">斜向刻紋</string>
+    <string name="crop_texture_dots">點陣</string>
+    <string name="crop_texture_diamond">菱格蝕刻</string>
+    <string name="crop_texture_strength">紋理強度：%1$d%%</string>
     <string name="crop_blur_vignette">絲滑暗角</string>
     <string name="crop_blur_vignette_desc">中心柔和通透，邊緣呈現絲絨般的暗角過渡</string>
     <string name="crop_blur_bokeh">散景光斑</string>
