@@ -52,6 +52,7 @@ jobs:
 
       - name: Run unit tests
         run: |
+          set +e
           # The Robolectric classpath can hit transient Maven Central HTTP 429s.
           # Retry those network failures without Gradle's configuration cache
           # (the KSP test task cannot currently serialize its provider graph there).
