@@ -47,7 +47,8 @@ data class WallpaperDiagnosticsResult(
 data class WallpaperDiagnosticsState(
     val isRecording: Boolean = false,
     val current: WallpaperDiagnosticsResult? = null,
-    val history: List<WallpaperDiagnosticsResult> = emptyList()
+    val history: List<WallpaperDiagnosticsResult> = emptyList(),
+    val hasTrace: Boolean = false
 )
 
 internal class WallpaperDiagnosticsSession(
@@ -166,13 +167,25 @@ object WallpaperDiagnosticsRecorder {
     private var activeSession: WallpaperDiagnosticsSession? = null
     private var lastPublishedAtNanos = 0L
     private var wallpaperVisible = false
+    private val traceFrames = LinkedHashMap<Long, JSONObject>()
+    private val traceEvents = JSONArray()
+    private var traceDroppedEvents = 0
+    private var latestTraceJson: String? = null
+    private var traceRecordedAtMillis = 0L
+
+    private const val MAX_TRACE_FRAMES = 2048
+    private const val MAX_TRACE_EVENTS = 8192
+    private const val TRACE_FIELDS_PER_SAMPLE = 17
 
     fun initialize(context: Context) {
         synchronized(lock) {
             if (preferences != null) return
             val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             preferences = prefs
-            mutableState.value = WallpaperDiagnosticsState(history = loadHistory(prefs))
+            mutableState.value = WallpaperDiagnosticsState(
+                history = loadHistory(prefs),
+                hasTrace = latestTraceJson != null
+            )
         }
     }
 
@@ -185,11 +198,22 @@ object WallpaperDiagnosticsRecorder {
                 System.currentTimeMillis(),
                 wallpaperVisible
             )
+            traceFrames.clear()
+            while (traceEvents.length() > 0) traceEvents.remove(0)
+            traceDroppedEvents = 0
+            traceRecordedAtMillis = System.currentTimeMillis()
+            latestTraceJson = null
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "session_start")
+                    .put("timeNs", System.nanoTime())
+            )
             lastPublishedAtNanos = nowNanos
             mutableState.value = WallpaperDiagnosticsState(
                 isRecording = true,
                 current = activeSession?.snapshot(nowNanos),
-                history = history
+                history = history,
+                hasTrace = false
             )
         }
     }
@@ -198,12 +222,21 @@ object WallpaperDiagnosticsRecorder {
         synchronized(lock) {
             val session = activeSession ?: return
             val result = session.snapshot(SystemClock.elapsedRealtimeNanos())
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "session_stop")
+                    .put("timeNs", System.nanoTime())
+            )
+            latestTraceJson = buildTraceJson(result)
             val history = (listOf(result) + mutableState.value.history).take(MAX_HISTORY_SIZE)
             activeSession = null
             preferences?.edit()
                 ?.putString(HISTORY_KEY, serializeHistory(history))
                 ?.apply()
-            mutableState.value = WallpaperDiagnosticsState(history = history)
+            mutableState.value = WallpaperDiagnosticsState(
+                history = history,
+                hasTrace = latestTraceJson != null
+            )
             Log.i(
                 TAG,
                 "Recording complete: durationMs=${result.durationMillis}, " +
@@ -220,6 +253,8 @@ object WallpaperDiagnosticsRecorder {
         }
     }
 
+    fun exportLatestTrace(): String? = synchronized(lock) { latestTraceJson }
+
     fun clearHistory() {
         synchronized(lock) {
             preferences?.edit()
@@ -235,18 +270,216 @@ object WallpaperDiagnosticsRecorder {
             val session = activeSession ?: return
             val nowNanos = SystemClock.elapsedRealtimeNanos()
             session.recordOffsetUpdate(xOffset, isVisible, nowNanos)
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "offset")
+                    .put("timeNs", System.nanoTime())
+                    .put("xOffset", xOffset.toDouble())
+                    .put("visible", isVisible)
+            )
             publishIfDue(session, nowNanos)
         }
     }
 
-    fun recordFrameSubmitted(fromOffsetUpdate: Boolean, isVisible: Boolean) {
+    fun recordFrameSubmitted(
+        fromOffsetUpdate: Boolean,
+        isVisible: Boolean,
+        frameId: Long = -1L
+    ) {
         if (activeSession == null) return
         synchronized(lock) {
             val session = activeSession ?: return
             val nowNanos = SystemClock.elapsedRealtimeNanos()
             session.recordFrameSubmitted(fromOffsetUpdate, isVisible, nowNanos)
+            val traceNow = System.nanoTime()
+            if (frameId >= 0L) traceFrames[frameId]?.put("submittedCallbackNs", traceNow)
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "frame_submitted_callback")
+                    .put("timeNs", traceNow)
+                    .put("frameId", frameId)
+                    .put("fromOffsetUpdate", fromOffsetUpdate)
+                    .put("visible", isVisible)
+            )
             publishIfDue(session, nowNanos)
         }
+    }
+
+    fun recordFrameRequested(
+        frameId: Long,
+        requestTimeNanos: Long,
+        fromOffsetUpdate: Boolean,
+        xOffset: Float,
+        pageA: Int,
+        pageB: Int,
+        progress: Float,
+        edgeOverScrollFraction: Float,
+        motionBlurRadius: Int
+    ) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            traceFrames[frameId] = JSONObject()
+                .put("frameId", frameId)
+                .put("requestTimeNs", requestTimeNanos)
+                .put("fromOffsetUpdate", fromOffsetUpdate)
+                .put("xOffset", xOffset.toDouble())
+                .put("pageA", pageA)
+                .put("pageB", pageB)
+                .put("progress", progress.toDouble())
+                .put("edgeOverScrollFraction", edgeOverScrollFraction.toDouble())
+                .put("motionBlurRadius", motionBlurRadius)
+            trimTraceFramesLocked()
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "frame_requested")
+                    .put("timeNs", requestTimeNanos)
+                    .put("frameId", frameId)
+                    .put("fromOffsetUpdate", fromOffsetUpdate)
+            )
+        }
+    }
+
+    fun recordFrameCoalesced(fromOffsetUpdate: Boolean) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "frame_request_coalesced")
+                    .put("timeNs", System.nanoTime())
+                    .put("fromOffsetUpdate", fromOffsetUpdate)
+            )
+        }
+    }
+
+    fun recordTouchEvent(
+        action: Int,
+        x: Float,
+        y: Float,
+        xOffset: Float,
+        edgeOverScrollFraction: Float
+    ) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "touch")
+                    .put("timeNs", System.nanoTime())
+                    .put("action", action)
+                    .put("x", x.toDouble())
+                    .put("y", y.toDouble())
+                    .put("xOffset", xOffset.toDouble())
+                    .put("edgeOverScrollFraction", edgeOverScrollFraction.toDouble())
+            )
+        }
+    }
+
+    fun recordFrameRenderStage(frameId: Long, stage: String) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            val now = System.nanoTime()
+            traceFrames[frameId]?.put("$" + "{stage}Ns", now)
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "render_stage")
+                    .put("timeNs", now)
+                    .put("frameId", frameId)
+                    .put("stage", stage)
+            )
+        }
+    }
+
+    fun recordFrameFailure(frameId: Long, reason: String) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            val now = System.nanoTime()
+            traceFrames[frameId]?.put("failure", reason)
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "frame_failure")
+                    .put("timeNs", now)
+                    .put("frameId", frameId)
+                    .put("reason", reason)
+            )
+        }
+    }
+
+    fun recordNativeFrameTrace(values: LongArray) {
+        if (activeSession == null || values.isEmpty()) return
+        synchronized(lock) {
+            var index = 0
+            while (index + TRACE_FIELDS_PER_SAMPLE <= values.size) {
+                val revision = values[index]
+                val frameId = values[index + 1]
+                val frame = traceFrames.getOrPut(frameId) { JSONObject().put("frameId", frameId) }
+                frame.put("nativeTraceRevision", revision)
+                frame.put("nativeRequestTimeNs", values[index + 2])
+                putOptionalLong(frame, "fenceWaitNs", values[index + 3])
+                putOptionalLong(frame, "acquireNs", values[index + 4])
+                putOptionalLong(frame, "vkBeginCpuNs", values[index + 5])
+                putOptionalLong(frame, "queueSubmitNs", values[index + 6])
+                putOptionalLong(frame, "queuePresentCallNs", values[index + 7])
+                putOptionalLong(frame, "vkEndCpuNs", values[index + 8])
+                putOptionalLong(frame, "gpuFrameNs", values[index + 9])
+                putOptionalLong(frame, "gpuOffscreenNs", values[index + 10])
+                putOptionalLong(frame, "gpuMainNs", values[index + 11])
+                frame.put("presentId", values[index + 12])
+                if (values[index + 13] != 0L) frame.put("actualPresentTimeDeviceNs", values[index + 13])
+                putOptionalLong(frame, "presentMarginNs", values[index + 14])
+                putOptionalLong(frame, "offscreenTargetSetupNs", values[index + 15])
+                frame.put("nativeFlags", values[index + 16])
+                trimTraceFramesLocked()
+                index += TRACE_FIELDS_PER_SAMPLE
+            }
+        }
+    }
+
+    private fun putOptionalLong(target: JSONObject, key: String, value: Long) {
+        if (value >= 0L) target.put(key, value) else target.put(key, JSONObject.NULL)
+    }
+
+    private fun trimTraceFramesLocked() {
+        while (traceFrames.size > MAX_TRACE_FRAMES) {
+            val iterator = traceFrames.entries.iterator()
+            if (!iterator.hasNext()) break
+            iterator.next()
+            iterator.remove()
+        }
+    }
+
+    private fun appendTraceEventLocked(event: JSONObject) {
+        if (traceEvents.length() >= MAX_TRACE_EVENTS) {
+            traceDroppedEvents++
+        } else {
+            traceEvents.put(event)
+        }
+    }
+
+    private fun buildTraceJson(result: WallpaperDiagnosticsResult): String {
+        val frames = JSONArray()
+        traceFrames.values.forEach { frames.put(it) }
+        val summary = JSONObject()
+            .put("durationMillis", result.durationMillis)
+            .put("visibleDurationNanos", result.visibleDurationNanos)
+            .put("visibleOffsetCallbacks", result.visibleOffsetCallbacks)
+            .put("changedOffsetCallbacks", result.changedOffsetCallbacks)
+            .put("visibleFramesSubmitted", result.visibleFramesSubmitted)
+            .put("offsetDrivenFramesSubmitted", result.offsetDrivenFramesSubmitted)
+            .put("averageOffsetCallbackHz", result.averageOffsetCallbackHz.toDouble())
+            .put("averageFrameSubmissionHz", result.averageFrameSubmissionHz.toDouble())
+        return JSONObject()
+            .put("format", "paperpages-frame-trace")
+            .put("schemaVersion", 1)
+            .put("recordedAtMillis", traceRecordedAtMillis)
+            .put("clockDomain", "System.nanoTime / CLOCK_MONOTONIC")
+            .put("summary", summary)
+            .put("frames", frames)
+            .put("events", traceEvents)
+            .put("droppedEvents", traceDroppedEvents)
+            .put(
+                "notes",
+                "Durations are nanoseconds. actualPresentTimeDeviceNs and presentMarginNs use Vulkan display-timing clock semantics and must not be subtracted from System.nanoTime timestamps."
+            )
+            .toString()
     }
 
     fun recordVisibilityChanged(isVisible: Boolean) {
@@ -255,6 +488,12 @@ object WallpaperDiagnosticsRecorder {
             val session = activeSession ?: return
             val nowNanos = SystemClock.elapsedRealtimeNanos()
             session.recordVisibilityChanged(isVisible, nowNanos)
+            appendTraceEventLocked(
+                JSONObject()
+                    .put("type", "visibility")
+                    .put("timeNs", System.nanoTime())
+                    .put("visible", isVisible)
+            )
             publishIfDue(session, nowNanos)
         }
     }
@@ -265,7 +504,8 @@ object WallpaperDiagnosticsRecorder {
         mutableState.value = WallpaperDiagnosticsState(
             isRecording = true,
             current = session.snapshot(nowNanos),
-            history = mutableState.value.history
+            history = mutableState.value.history,
+            hasTrace = latestTraceJson != null
         )
     }
 
