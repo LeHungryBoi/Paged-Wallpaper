@@ -690,7 +690,7 @@ object WallpaperDiagnosticsRecorder {
         traceEventBuffer.appendJsonTo(orderedEvents)
         orderedEvents.sortBy { it.optLong("timeNs", 0L) }
         val events = JSONArray()
-        orderedEvents.forEach(events::put)
+        orderedEvents.forEach { events.put(it) }
         val summary = JSONObject()
             .put("durationMillis", result.durationMillis)
             .put("visibleDurationNanos", result.visibleDurationNanos)
