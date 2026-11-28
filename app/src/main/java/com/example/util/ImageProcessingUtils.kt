@@ -203,7 +203,11 @@ object ImageProcessingUtils {
             blurTintIntensity = blurTintIntensity,
             blurRainbowStyle = blurRainbowStyle,
             blurTexturePattern = blurTexturePattern,
-            blurTextureIntensity = blurTextureIntensity
+            blurTextureIntensity = blurTextureIntensity,
+            blurTextureScale = blurTextureScale,
+            blurTextureMaskBlurAmount = blurTextureMaskBlurAmount,
+            blurTextureMaskTintColor = blurTextureMaskTintColor,
+            blurTextureMaskTintIntensity = blurTextureMaskTintIntensity
         )
         return outBmp
     }
@@ -448,11 +452,16 @@ object ImageProcessingUtils {
         val workH = (safeH * workScale).roundToInt().coerceAtLeast(8)
 
         val workBmp = Bitmap.createBitmap(workW, workH, Bitmap.Config.ARGB_8888)
+        var patternSourceBitmap: Bitmap? = null
         var bloomBmp: Bitmap? = null
         try {
             val workCanvas = Canvas(workBmp)
             val samplePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             workCanvas.drawBitmap(srcBmp, srcRect, Rect(0, 0, workW, workH), samplePaint)
+            if (blurTexturePattern != BlurTexturePattern.NONE) {
+                patternSourceBitmap = workBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    ?: throw IllegalStateException("Could not preserve the sharp pattern source")
+            }
 
             // Apply genuine multi-pass Stack Blur (2 passes approximate a smooth Gaussian curve).
             if (clampedBlur > 0.01f) {
@@ -659,7 +668,7 @@ object ImageProcessingUtils {
                 canvas = canvas,
                 width = safeW,
                 height = safeH,
-                sourceBlurredBitmap = workBmp,
+                sourceUnblurredBitmap = patternSourceBitmap ?: workBmp,
                 pattern = blurTexturePattern,
                 strength = blurTextureIntensity,
                 scale = blurTextureScale,
@@ -668,6 +677,7 @@ object ImageProcessingUtils {
                 maskTintIntensity = blurTextureMaskTintIntensity
             )
         } finally {
+            patternSourceBitmap?.recycle()
             bloomBmp?.recycle()
             workBmp.recycle()
         }
@@ -682,7 +692,7 @@ object ImageProcessingUtils {
         canvas: Canvas,
         width: Int,
         height: Int,
-        sourceBlurredBitmap: Bitmap,
+        sourceUnblurredBitmap: Bitmap,
         pattern: BlurTexturePattern,
         strength: Float,
         scale: Float,
@@ -693,16 +703,16 @@ object ImageProcessingUtils {
         val clampedStrength = strength.coerceIn(0f, 1f)
         if (pattern == BlurTexturePattern.NONE || clampedStrength <= 0.005f) return
 
-        val workTileSize = textureTileSize(sourceBlurredBitmap.width, sourceBlurredBitmap.height, scale)
+        val workTileSize = textureTileSize(sourceUnblurredBitmap.width, sourceUnblurredBitmap.height, scale)
         val displayTileSize = textureTileSize(width, height, scale)
 
-        // Masked material treatment: duplicate the already-blurred source, optionally blur it
-        // further, tint it, then keep only pixels covered by the repeating pattern geometry.
-        if (maskBlurAmount > 0.005f || maskTintIntensity > 0.005f) {
-            val effectBitmap = sourceBlurredBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        // Build the pattern region from the original, unblurred source. A value of 0%
+        // therefore really is sharp; higher values apply blur independently of the backdrop.
+        run {
+            val effectBitmap = sourceUnblurredBitmap.copy(Bitmap.Config.ARGB_8888, true)
             try {
                 val maxRadius = (min(effectBitmap.width, effectBitmap.height) / 2 - 1).coerceAtLeast(1)
-                val radius = (maskBlurAmount.coerceIn(0f, 1f) * 20f).roundToInt().coerceIn(0, maxRadius)
+                val radius = (maskBlurAmount.coerceIn(0f, 1f) * 32f).roundToInt().coerceIn(0, maxRadius)
                 if (radius > 0) fastBlur(effectBitmap, radius)
 
                 val effectCanvas = Canvas(effectBitmap)
@@ -731,9 +741,9 @@ object ImageProcessingUtils {
                     maskPaint
                 )
 
-                val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-                    alpha = (clampedStrength * 255f).roundToInt().coerceIn(0, 255)
-                }
+                // The masked source is an actual independent layer, not a translucent
+                // overlay of the already-blurred backdrop. Strength controls the etched finish.
+                val effectPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
                 canvas.drawBitmap(effectBitmap, null, Rect(0, 0, width, height), effectPaint)
             } finally {
                 effectBitmap.recycle()
