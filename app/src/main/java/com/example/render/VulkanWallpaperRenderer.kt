@@ -49,6 +49,7 @@ internal class VulkanWallpaperRenderer(
     private var boundHeight = 0
     private var consecutiveFailures = 0
     private var lastNativeTraceRevision = 0L
+    private var nativeTraceDrainScheduled = false
 
     private val drawSink = object : VulkanDrawSink {
         override val maxTextureSize: Int
@@ -270,7 +271,6 @@ internal class VulkanWallpaperRenderer(
             if (beginStatus != 0) {
                 throw IllegalStateException("Vulkan nativeBeginFrame failed with status=$beginStatus")
             }
-            publishNativeFrameTrace()
             WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_begin_complete")
 
             composer.renderWallpaper(req)
@@ -305,7 +305,6 @@ internal class VulkanWallpaperRenderer(
                 throw IllegalStateException("Vulkan nativeEndFrame failed with status=$endStatus")
             }
             WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_end_complete")
-            publishNativeFrameTrace()
             scheduleNativeTraceDrain()
 
             consecutiveFailures = 0
@@ -358,14 +357,16 @@ internal class VulkanWallpaperRenderer(
     }
 
     private fun scheduleNativeTraceDrain() {
-        if (!WallpaperDiagnosticsRecorder.isRecording) return
-        // Let the GPU fence and display compositor finish naturally. The native
-        // getter only collects already-completed results; it never waits on GPU.
-        TRACE_DRAIN_DELAYS_MS.forEach { delay ->
-            renderHandler.postDelayed({
-                if (!released && WallpaperDiagnosticsRecorder.isRecording) publishNativeFrameTrace()
-            }, delay)
-        }
+        if (!WallpaperDiagnosticsRecorder.isRecording || nativeTraceDrainScheduled) return
+        nativeTraceDrainScheduled = true
+        // Coalesce diagnostics reads so capture stays low-overhead even at high refresh rates.
+        // The native getter only collects already-completed results; it never waits on GPU.
+        renderHandler.postDelayed({
+            nativeTraceDrainScheduled = false
+            if (!released && WallpaperDiagnosticsRecorder.isRecording) {
+                publishNativeFrameTrace()
+            }
+        }, TRACE_DRAIN_DELAY_MS)
     }
 
     private fun ensureVulkanReady(surface: Surface, width: Int, height: Int): Boolean {
@@ -410,7 +411,7 @@ internal class VulkanWallpaperRenderer(
         private const val MAX_BLUR_RADIUS = 511
         private const val MAX_BLUR_TAPS = 32
         private const val MAX_CONSECUTIVE_FAILURES = 3
-        private val TRACE_DRAIN_DELAYS_MS = longArrayOf(24L, 64L, 128L)
+        private const val TRACE_DRAIN_DELAY_MS = 64L
         private const val TRACE_FIELDS_PER_SAMPLE = 18
         private const val ASSET_RETRY_DELAY_MS = 110L
         private const val TRANSIENT_RETRY_DELAY_MS = 16L
