@@ -730,7 +730,14 @@ object ImageProcessingUtils {
             BlurTintMode.NONE -> Unit
 
             BlurTintMode.SOLID -> {
-                val r = Color.red(tintColor); val g = Color.green(tintColor); val b = Color.blue(tintColor)
+                // Older pages may still have a highly saturated saved tint. Desaturate at the
+                // renderer boundary so every saved preset gets the same smoked-glass treatment.
+                val hsv = FloatArray(3)
+                Color.colorToHSV(tintColor, hsv)
+                hsv[1] = hsv[1].coerceAtMost(0.46f)
+                hsv[2] = hsv[2].coerceAtMost(0.85f)
+                val mutedTint = Color.HSVToColor(hsv)
+                val r = Color.red(mutedTint); val g = Color.green(mutedTint); val b = Color.blue(mutedTint)
                 // A translucent tinted pane, not a high-saturation color wash.
                 val alpha = (intensity * 104f).roundToInt().coerceIn(0, 112)
                 canvas.drawColor(Color.argb(alpha, r, g, b))
