@@ -160,6 +160,7 @@ private class TraceEventBuffer(private val capacity: Int) {
     private val long1 = LongArray(capacity)
     private val long2 = LongArray(capacity)
     private val long3 = LongArray(capacity)
+    private val long4 = LongArray(capacity)
     private val int1 = IntArray(capacity)
     private val int2 = IntArray(capacity)
     private val flags = IntArray(capacity)
@@ -174,7 +175,7 @@ private class TraceEventBuffer(private val capacity: Int) {
     fun clear() { size = 0 }
 
     fun append(
-        type: Byte, timeNs: Long, l1: Long = 0L, l2: Long = 0L, l3: Long = 0L,
+        type: Byte, timeNs: Long, l1: Long = 0L, l2: Long = 0L, l3: Long = 0L, l4: Long = 0L,
         i1: Int = 0, i2: Int = 0, eventFlags: Int = 0,
         f1: Float = 0f, f2: Float = 0f, f3: Float = 0f, f4: Float = 0f,
         text: String? = null
@@ -186,6 +187,7 @@ private class TraceEventBuffer(private val capacity: Int) {
         long1[index] = l1
         long2[index] = l2
         long3[index] = l3
+        long4[index] = l4
         int1[index] = i1
         int2[index] = i2
         flags[index] = eventFlags
@@ -232,6 +234,14 @@ private class TraceEventBuffer(private val capacity: Int) {
                         else it.put("previousXOffset", JSONObject.NULL)
                     }
                 9 -> event.put("type", "visibility").put("visible", flags[index] and 1 != 0)
+                10 -> event.put("type", "texture_preparation")
+                    .put("pageIndex", int1[index])
+                    .put("usesParallax", int2[index] and 1 != 0)
+                    .put("darkened", int2[index] and 2 != 0)
+                    .put("bitmapLookupNs", long1[index])
+                    .put("primaryUploadNs", long2[index])
+                    .put("blurCreationNs", long3[index])
+                    .put("blurUploadNs", long4[index])
             }
             output.add(event)
         }
@@ -545,6 +555,30 @@ object WallpaperDiagnosticsRecorder {
                 4, now, l1 = elapsedNanos,
                 f1 = targetXOffset, f2 = renderedXOffset,
                 f3 = targetXOffset - renderedXOffset, f4 = smoothingFraction
+            )
+        }
+    }
+
+    fun recordTexturePreparation(
+        pageIndex: Int,
+        usesParallax: Boolean,
+        darkened: Boolean,
+        bitmapLookupNs: Long,
+        primaryUploadNs: Long,
+        blurCreationNs: Long,
+        blurUploadNs: Long
+    ) {
+        if (activeSession == null) return
+        synchronized(lock) {
+            appendHotTraceEventLocked(
+                10,
+                System.nanoTime(),
+                l1 = bitmapLookupNs,
+                l2 = primaryUploadNs,
+                l3 = blurCreationNs,
+                l4 = blurUploadNs,
+                i1 = pageIndex,
+                i2 = (if (usesParallax) 1 else 0) or (if (darkened) 2 else 0)
             )
         }
     }
