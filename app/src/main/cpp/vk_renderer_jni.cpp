@@ -265,7 +265,7 @@ Java_com_example_render_VulkanNativeBridge_nativeGetFrameTrace(
     if (engine == nullptr) return env->NewLongArray(0);
 
     const auto samples = engine->getFrameTraceUpdates(static_cast<uint64_t>(afterRevision));
-    constexpr jsize kFieldsPerSample = 17;
+    constexpr jsize kFieldsPerSample = 18;
     const jsize length = static_cast<jsize>(samples.size() * kFieldsPerSample);
     jlongArray result = env->NewLongArray(length);
     if (result == nullptr || length == 0) return result;
@@ -288,6 +288,7 @@ Java_com_example_render_VulkanNativeBridge_nativeGetFrameTrace(
         values.push_back(static_cast<jlong>(sample.presentId));
         values.push_back(static_cast<jlong>(sample.actualPresentTimeNs));
         values.push_back(static_cast<jlong>(sample.presentMarginNs));
+        values.push_back(static_cast<jlong>(sample.refreshCycleDurationNs));
         values.push_back(static_cast<jlong>(sample.offscreenTargetSetupNs));
         values.push_back(static_cast<jlong>(sample.flags));
     }
