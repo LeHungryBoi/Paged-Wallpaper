@@ -34,6 +34,7 @@ struct FrameTraceSample {
     uint64_t presentId = 0;
     uint64_t actualPresentTimeNs = 0;
     uint64_t presentMarginNs = kTraceValueUnavailable;
+    uint64_t refreshCycleDurationNs = 0;
     uint64_t offscreenTargetSetupNs = 0;
     uint64_t flags = 0;
 };
@@ -219,7 +220,7 @@ struct VulkanEngine {
         float clearB
     );
     void publishFrameTrace(FrameTraceSample& sample);
-    std::vector<FrameTraceSample> getFrameTraceUpdates(uint64_t afterRevision) const;
+    std::vector<FrameTraceSample> getFrameTraceUpdates(uint64_t afterRevision);
     void beginMainPass(float clearR, float clearG, float clearB);
     void drawQuad(
         int32_t textureId,
