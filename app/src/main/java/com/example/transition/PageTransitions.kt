@@ -210,18 +210,27 @@ open class ParallaxScrollTransition(
 class ClassicParallaxScrollTransition : ParallaxScrollTransition(useClassicIncomingTravel = true)
 
 open class SwipeRevealTransition(
-    private val followsSwipeDirection: Boolean
+    private val followsSwipeDirection: Boolean,
+    private val slowSwitching: Boolean = false
 ) : PageTransitionRenderer {
-    override val id: String =
-        if (followsSwipeDirection) "swipe_reveal" else "swipe_reveal_stacked"
-    override val displayName: String =
-        if (followsSwipeDirection) "Swipe to Reveal" else "Swipe to Reveal Stacked"
-    override val description: String =
-        if (followsSwipeDirection) {
-            "The page being swiped away stays on top and reveals the incoming page"
-        } else {
+    override val id: String = when {
+        !followsSwipeDirection -> "swipe_reveal_stacked"
+        slowSwitching -> "swipe_reveal_slow"
+        else -> "swipe_reveal"
+    }
+    override val displayName: String = when {
+        !followsSwipeDirection -> "Swipe to Reveal Stacked"
+        slowSwitching -> "Swipe to Reveal Slow Switching"
+        else -> "Swipe to Reveal"
+    }
+    override val description: String = when {
+        !followsSwipeDirection ->
             "The left page stays on top of the right page while sliding away"
-        }
+        slowSwitching ->
+            "The reveal layer order stays locked until the page transition fully settles"
+        else ->
+            "The reveal layer order follows each page transition and resets at page boundaries"
+    }
     override val supportsParallax: Boolean = true
     override val supportsRevealImageMotion: Boolean = true
 
@@ -348,6 +357,9 @@ open class SwipeRevealTransition(
 }
 
 class SwipeToRevealTransition : SwipeRevealTransition(followsSwipeDirection = true)
+
+class SwipeToRevealSlowSwitchingTransition :
+    SwipeRevealTransition(followsSwipeDirection = true, slowSwitching = true)
 
 class SwipeToRevealStackedTransition : SwipeRevealTransition(followsSwipeDirection = false)
 
@@ -639,6 +651,7 @@ object TransitionRegistry {
         ParallaxScrollTransition(),
         ClassicParallaxScrollTransition(),
         SwipeToRevealTransition(),
+        SwipeToRevealSlowSwitchingTransition(),
         SwipeToRevealStackedTransition(),
         CrossFadeTransition(),
         SoftBlurTransition(),
