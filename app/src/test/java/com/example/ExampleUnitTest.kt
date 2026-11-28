@@ -939,7 +939,7 @@ class ExampleUnitTest {
             )
         )
 
-        assertEquals(5, migrated.schemaVersion)
+        assertEquals(6, migrated.schemaVersion)
         assertEquals("parallax", migrated.transitions.single().universalTransitionId)
         assertEquals("parallax", migrated.transitions.single().rightTransitionId)
         assertEquals("fade", migrated.transitions.single().leftTransitionId)
