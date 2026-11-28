@@ -175,7 +175,7 @@ object WallpaperDiagnosticsRecorder {
 
     private const val MAX_TRACE_FRAMES = 2048
     private const val MAX_TRACE_EVENTS = 8192
-    private const val TRACE_FIELDS_PER_SAMPLE = 17
+    private const val TRACE_FIELDS_PER_SAMPLE = 18
 
     fun initialize(context: Context) {
         synchronized(lock) {
@@ -425,8 +425,9 @@ object WallpaperDiagnosticsRecorder {
                 frame.put("presentId", values[index + 12])
                 if (values[index + 13] != 0L) frame.put("actualPresentTimeDeviceNs", values[index + 13])
                 putOptionalLong(frame, "presentMarginNs", values[index + 14])
-                putOptionalLong(frame, "offscreenTargetSetupNs", values[index + 15])
-                frame.put("nativeFlags", values[index + 16])
+                frame.put("refreshCycleDurationNs", values[index + 15])
+                putOptionalLong(frame, "offscreenTargetSetupNs", values[index + 16])
+                frame.put("nativeFlags", values[index + 17])
                 trimTraceFramesLocked()
                 index += TRACE_FIELDS_PER_SAMPLE
             }
