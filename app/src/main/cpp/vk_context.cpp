@@ -56,6 +56,15 @@ VkShaderModule VulkanEngine::createShaderModule(const uint32_t* code, size_t siz
 
 bool VulkanEngine::initDevice() {
     if (device != VK_NULL_HANDLE) return true;
+    timestampValidBits = 0;
+    timestampPeriodNs = 0.0;
+    gpuTimestampsEnabled = false;
+    displayTimingExtensionEnabled = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    pfnGetRefreshCycleDurationGOOGLE = nullptr;
+    pfnGetPastPresentationTimingGOOGLE = nullptr;
 
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -97,13 +106,22 @@ bool VulkanEngine::initDevice() {
         std::vector<VkQueueFamilyProperties> qProps(qCount);
         vkGetPhysicalDeviceQueueFamilyProperties(gpu, &qCount, qProps.data());
         for (uint32_t i = 0; i < qCount; ++i) {
-            if (qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            if ((qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0) continue;
+            // Keep the first graphics queue as a fallback, but prefer one that
+            // can provide timestamp queries for GPU-side frame diagnostics.
+            if (physicalDevice == VK_NULL_HANDLE) {
                 physicalDevice = gpu;
                 graphicsQueueFamily = i;
+                timestampValidBits = qProps[i].timestampValidBits;
+            }
+            if (qProps[i].timestampValidBits > 0) {
+                physicalDevice = gpu;
+                graphicsQueueFamily = i;
+                timestampValidBits = qProps[i].timestampValidBits;
                 break;
             }
         }
-        if (physicalDevice != VK_NULL_HANDLE) break;
+        if (timestampValidBits > 0) break;
     }
 
     if (physicalDevice == VK_NULL_HANDLE) {
@@ -115,6 +133,8 @@ bool VulkanEngine::initDevice() {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(physicalDevice, &props);
     maxImageDimension2D = props.limits.maxImageDimension2D;
+    timestampPeriodNs = static_cast<double>(props.limits.timestampPeriod);
+    gpuTimestampsEnabled = timestampValidBits > 0 && timestampPeriodNs > 0.0;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProps);
 
     float priority = 1.0f;
@@ -124,13 +144,32 @@ bool VulkanEngine::initDevice() {
     queueInfo.queueCount = 1;
     queueInfo.pQueuePriorities = &priority;
 
-    const char* devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    bool hasGoogleDisplayTiming = false;
+    uint32_t availableDeviceExtensionCount = 0;
+    if (vkEnumerateDeviceExtensionProperties(
+            physicalDevice, nullptr, &availableDeviceExtensionCount, nullptr) == VK_SUCCESS &&
+        availableDeviceExtensionCount > 0) {
+        std::vector<VkExtensionProperties> availableDeviceExtensions(availableDeviceExtensionCount);
+        if (vkEnumerateDeviceExtensionProperties(
+                physicalDevice, nullptr, &availableDeviceExtensionCount, availableDeviceExtensions.data()) == VK_SUCCESS) {
+            for (const auto& extension : availableDeviceExtensions) {
+                if (std::strcmp(extension.extensionName, VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME) == 0) {
+                    hasGoogleDisplayTiming = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    std::vector<const char*> devExts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    if (hasGoogleDisplayTiming) devExts.push_back(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME);
+
     VkDeviceCreateInfo devInfo{};
     devInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     devInfo.queueCreateInfoCount = 1;
     devInfo.pQueueCreateInfos = &queueInfo;
-    devInfo.enabledExtensionCount = 1;
-    devInfo.ppEnabledExtensionNames = devExts;
+    devInfo.enabledExtensionCount = static_cast<uint32_t>(devExts.size());
+    devInfo.ppEnabledExtensionNames = devExts.data();
 
     if (vkCreateDevice(physicalDevice, &devInfo, nullptr, &device) != VK_SUCCESS) {
         LOGE("vkCreateDevice failed");
@@ -138,6 +177,19 @@ bool VulkanEngine::initDevice() {
         return false;
     }
     vkGetDeviceQueue(device, graphicsQueueFamily, 0, &graphicsQueue);
+    if (hasGoogleDisplayTiming) {
+        pfnGetRefreshCycleDurationGOOGLE = reinterpret_cast<PFN_vkGetRefreshCycleDurationGOOGLE>(
+            vkGetDeviceProcAddr(device, "vkGetRefreshCycleDurationGOOGLE")
+        );
+        pfnGetPastPresentationTimingGOOGLE = reinterpret_cast<PFN_vkGetPastPresentationTimingGOOGLE>(
+            vkGetDeviceProcAddr(device, "vkGetPastPresentationTimingGOOGLE")
+        );
+        displayTimingExtensionEnabled =
+            pfnGetRefreshCycleDurationGOOGLE != nullptr &&
+            pfnGetPastPresentationTimingGOOGLE != nullptr;
+    }
+    LOGI("Vulkan display timing %s",
+         displayTimingExtensionEnabled ? "enabled" : "unavailable");
 
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -275,7 +327,8 @@ bool VulkanEngine::initDevice() {
         cmdAlloc.commandPool = commandPool;
         cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cmdAlloc.commandBufferCount = 1;
-        if (vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].commandBuffer) != VK_SUCCESS) {
+        if (vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].commandBuffer) != VK_SUCCESS ||
+            vkAllocateCommandBuffers(device, &cmdAlloc, &frames[i].uploadCommandBuffer) != VK_SUCCESS) {
             destroyDevice();
             return false;
         }
@@ -304,6 +357,33 @@ bool VulkanEngine::initDevice() {
         }
     }
 
+    if (gpuTimestampsEnabled) {
+        for (auto& frame : frames) {
+            VkQueryPoolCreateInfo queryInfo{};
+            queryInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+            queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            queryInfo.queryCount = 3;
+            if (vkCreateQueryPool(device, &queryInfo, nullptr, &frame.timestampQueryPool) != VK_SUCCESS) {
+                gpuTimestampsEnabled = false;
+                for (auto& createdFrame : frames) {
+                    if (createdFrame.timestampQueryPool != VK_NULL_HANDLE) {
+                        vkDestroyQueryPool(device, createdFrame.timestampQueryPool, nullptr);
+                        createdFrame.timestampQueryPool = VK_NULL_HANDLE;
+                    }
+                }
+                LOGI("GPU timestamp queries disabled: query-pool creation failed");
+                break;
+            }
+        }
+    }
+    if (gpuTimestampsEnabled) {
+        LOGI("GPU timestamp queries enabled (queue=%u validBits=%u periodNs=%.3f)",
+             graphicsQueueFamily, timestampValidBits, timestampPeriodNs);
+    } else {
+        LOGI("GPU timestamp queries unavailable (queue=%u validBits=%u)",
+             graphicsQueueFamily, timestampValidBits);
+    }
+
     const uint32_t whitePixel = 0xFFFFFFFFu;
     whiteTextureId = uploadRgbaTexture(&whitePixel, 1, 1);
     if (whiteTextureId == 0) {
@@ -311,7 +391,8 @@ bool VulkanEngine::initDevice() {
         return false;
     }
 
-    LOGI("Initialized Vulkan device (%s, maxTex=%u)", props.deviceName, maxImageDimension2D);
+    LOGI("Initialized Vulkan device (%s, maxTex=%u, gpuTimestamps=%s)",
+         props.deviceName, maxImageDimension2D, gpuTimestampsEnabled ? "yes" : "no");
     return true;
 }
 
@@ -498,13 +579,14 @@ void VulkanEngine::destroyDevice() {
             if (kv.second.memory) vkFreeMemory(device, kv.second.memory, nullptr);
         }
         textures.clear();
+        for (const auto& deferred : deferredTextures) {
+            if (deferred.texture.view) vkDestroyImageView(device, deferred.texture.view, nullptr);
+            if (deferred.texture.image) vkDestroyImage(device, deferred.texture.image, nullptr);
+            if (deferred.texture.memory) vkFreeMemory(device, deferred.texture.memory, nullptr);
+        }
+        deferredTextures.clear();
         whiteTextureId = 0;
         destroyOffscreenTarget();
-        if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
-        if (stagingMemory) vkFreeMemory(device, stagingMemory, nullptr);
-        stagingBuffer = VK_NULL_HANDLE;
-        stagingMemory = VK_NULL_HANDLE;
-        stagingCapacity = 0;
         if (quadBuffer) vkDestroyBuffer(device, quadBuffer, nullptr);
         if (quadMemory) vkFreeMemory(device, quadMemory, nullptr);
         quadBuffer = VK_NULL_HANDLE;
@@ -521,11 +603,15 @@ void VulkanEngine::destroyDevice() {
         if (compositeSetLayout) vkDestroyDescriptorSetLayout(device, compositeSetLayout, nullptr);
         if (blurSetLayout) vkDestroyDescriptorSetLayout(device, blurSetLayout, nullptr);
         if (pipelineCache) vkDestroyPipelineCache(device, pipelineCache, nullptr);
+        pendingCpuTextureUploads.clear();
         for (auto& f : frames) {
+            if (f.uploadStagingBuffer) vkDestroyBuffer(device, f.uploadStagingBuffer, nullptr);
+            if (f.uploadStagingMemory) vkFreeMemory(device, f.uploadStagingMemory, nullptr);
             if (f.descriptorPool) vkDestroyDescriptorPool(device, f.descriptorPool, nullptr);
             if (f.inFlight) vkDestroyFence(device, f.inFlight, nullptr);
             if (f.imageAvailable) vkDestroySemaphore(device, f.imageAvailable, nullptr);
             if (f.renderFinished) vkDestroySemaphore(device, f.renderFinished, nullptr);
+            if (f.timestampQueryPool) vkDestroyQueryPool(device, f.timestampQueryPool, nullptr);
             f = FrameSync{};
         }
         if (commandPool) vkDestroyCommandPool(device, commandPool, nullptr);
@@ -537,6 +623,15 @@ void VulkanEngine::destroyDevice() {
         instance = VK_NULL_HANDLE;
     }
     physicalDevice = VK_NULL_HANDLE;
+    timestampValidBits = 0;
+    timestampPeriodNs = 0.0;
+    gpuTimestampsEnabled = false;
+    displayTimingExtensionEnabled = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    pfnGetRefreshCycleDurationGOOGLE = nullptr;
+    pfnGetPastPresentationTimingGOOGLE = nullptr;
 }
 
 } // namespace paperpages_vk

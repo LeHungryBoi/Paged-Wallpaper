@@ -11,6 +11,7 @@ import android.graphics.Typeface
 import android.opengl.Matrix as GlMatrix
 import com.example.data.model.PageItem
 import com.example.data.repository.WallpaperRepository
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import com.example.transition.TransitionRegistry
 import com.example.util.ImageProcessingUtils
 import kotlin.math.abs
@@ -264,6 +265,47 @@ internal class WallpaperSceneComposer(
         }
     }
 
+    /**
+     * Loads every configured page texture into the renderer cache while the wallpaper is idle.
+     * Both sides of each boundary use the transition's required asset mode; edge pages also
+     * retain the parallax variant for overscroll. The cache owns the resulting GPU textures
+     * until dimensions or bitmap generations change.
+     */
+    fun prewarmConfiguredPages(frame: GpuFrameRequest) {
+        val pageIndices = frame.state.pages.map { it.pageIndex }.distinct()
+        if (pageIndices.isEmpty()) return
+
+        val modesByPage = mutableMapOf<Int, MutableSet<Boolean>>()
+        fun addMode(pageIndex: Int, usesParallax: Boolean) {
+            modesByPage.getOrPut(pageIndex) { mutableSetOf() }.add(usesParallax)
+        }
+
+        val lastPageIndex = frame.state.calibration.pageCount.coerceAtLeast(1) - 1
+        addMode(0, true)
+        addMode(lastPageIndex, true)
+
+        for (boundaryIndex in 0 until lastPageIndex) {
+            val setting = frame.state.transitions.getOrNull(boundaryIndex)
+            for (swipeForward in listOf(true, false)) {
+                val transitionId = setting?.transitionId(swipeForward) ?: frame.state.transitionType
+                val usesParallax = TransitionRegistry.get(transitionId).supportsParallax
+                addMode(boundaryIndex, usesParallax)
+                addMode(boundaryIndex + 1, usesParallax)
+            }
+        }
+
+        pageIndices.forEach { pageIndex ->
+            val page = frame.state.pages.find { it.pageIndex == pageIndex }
+            val modes = modesByPage[pageIndex] ?: setOf(false)
+            modes.forEach { usesParallax ->
+                getPageTexture(frame, pageIndex, usesParallax, darkened = false, isPrewarm = true)
+                if (frame.state.darken.isEnabled && repository.shouldDarkenPage(page, frame.state.darken)) {
+                    getPageTexture(frame, pageIndex, usesParallax, darkened = true, isPrewarm = true)
+                }
+            }
+        }
+    }
+
     fun renderOverlayAndDebug(frame: GpuFrameRequest) {
         if (frame.entryBlackFadeAlpha > 0.004f) {
             drawRect(
@@ -301,7 +343,8 @@ internal class WallpaperSceneComposer(
         frame: GpuFrameRequest,
         pageIndex: Int,
         usesParallax: Boolean,
-        darkened: Boolean
+        darkened: Boolean,
+        isPrewarm: Boolean = false
     ): PageTexture? {
         val slot = AssetSlot(pageIndex, usesParallax, darkened)
         val page = frame.state.pages.find { it.pageIndex == pageIndex }
@@ -325,6 +368,7 @@ internal class WallpaperSceneComposer(
                 return null
             }
         }
+        val bitmapLookupStartedAt = System.nanoTime()
         val parallax = if (usesParallax) {
             repository.getParallaxBitmap(pageIndex, frame.width, frame.height, darkened = darkened)
         } else {
@@ -332,6 +376,7 @@ internal class WallpaperSceneComposer(
                 WallpaperRepository.ParallaxBitmap(it, 0, 0)
             }
         }
+        val bitmapLookupNs = System.nanoTime() - bitmapLookupStartedAt
         val bitmap = parallax?.bitmap
         if (bitmap == null || bitmap.isRecycled) {
             val delay = if (isIntentionallyBlank) BLANK_ASSET_RETRY_NANOS else {
@@ -342,19 +387,33 @@ internal class WallpaperSceneComposer(
             return null
         }
 
+        val primaryUploadStartedAt = System.nanoTime()
         val textureId = uploadScaledBitmap(bitmap)
+        val primaryUploadNs = System.nanoTime() - primaryUploadStartedAt
         if (textureId == 0) {
+            WallpaperDiagnosticsRecorder.recordTexturePreparation(
+                pageIndex, usesParallax, darkened, isPrewarm,
+                bitmapLookupNs, primaryUploadNs, 0L, 0L
+            )
             missingConfiguredTextureInFrame = true
             missingAssets[slot] = MissingAsset(key, now + TRANSIENT_ASSET_RETRY_NANOS)
             return null
         }
-        var blurredTextureId = 0
+        val blurCreationStartedAt = System.nanoTime()
         val blurred = ImageProcessingUtils.createSmoothBlurredCopy(bitmap)
+        val blurCreationNs = System.nanoTime() - blurCreationStartedAt
+        var blurredTextureId = 0
+        val blurUploadStartedAt = System.nanoTime()
         try {
             blurredTextureId = uploadScaledBitmap(blurred)
         } finally {
             blurred.recycle()
         }
+        val blurUploadNs = System.nanoTime() - blurUploadStartedAt
+        WallpaperDiagnosticsRecorder.recordTexturePreparation(
+            pageIndex, usesParallax, darkened, isPrewarm,
+            bitmapLookupNs, primaryUploadNs, blurCreationNs, blurUploadNs
+        )
         val texture = PageTexture(
             key = key,
             textureId = textureId,

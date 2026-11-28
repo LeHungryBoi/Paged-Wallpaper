@@ -51,6 +51,8 @@ internal object VulkanNativeBridge {
     @JvmStatic
     external fun nativeBeginFrame(
         handle: Long,
+        traceFrameId: Long,
+        requestTimeNanos: Long,
         useMotionBlur: Boolean,
         mbWidth: Int,
         mbHeight: Int,
@@ -95,4 +97,7 @@ internal object VulkanNativeBridge {
 
     @JvmStatic
     external fun nativeEndFrame(handle: Long): Int
+
+    @JvmStatic
+    external fun nativeGetFrameTrace(handle: Long, afterRevision: Long): LongArray
 }

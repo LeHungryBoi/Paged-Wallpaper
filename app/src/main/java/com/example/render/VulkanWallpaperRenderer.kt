@@ -7,6 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.example.data.repository.WallpaperRepository
+import com.example.diagnostics.WallpaperDiagnosticsRecorder
 import kotlin.math.ceil
 
 internal class VulkanWallpaperRenderer(
@@ -47,6 +48,9 @@ internal class VulkanWallpaperRenderer(
     private var boundWidth = 0
     private var boundHeight = 0
     private var consecutiveFailures = 0
+    private var lastNativeTraceRevision = 0L
+    private var nativeTraceDrainScheduled = false
+    private var scheduledPrewarmKey: String? = null
 
     private val drawSink = object : VulkanDrawSink {
         override val maxTextureSize: Int
@@ -161,6 +165,7 @@ internal class VulkanWallpaperRenderer(
 
     override fun onSurfaceDestroyed() {
         windowSurface = null
+        scheduledPrewarmKey = null
         synchronized(frameLock) { pendingFrame = null }
         renderHandler.post {
             boundSurface = null
@@ -210,11 +215,17 @@ internal class VulkanWallpaperRenderer(
             next
         }
         if (frame == null || released) return
-        val surface = windowSurface ?: return
-        if (!surface.isValid) return
+        val req = frame.request
+        WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "render_thread_start")
+        val surface = windowSurface
+        if (surface == null || !surface.isValid) {
+            WallpaperDiagnosticsRecorder.recordFrameFailure(req.frameId, "renderer_surface_unavailable")
+            return
+        }
 
         try {
-            if (!ensureVulkanReady(surface, frame.request.width, frame.request.height)) {
+            if (!ensureVulkanReady(surface, req.width, req.height)) {
+                WallpaperDiagnosticsRecorder.recordFrameFailure(req.frameId, "vulkan_unavailable")
                 Log.w(TAG, "Vulkan unavailable on this device/surface; falling back to OpenGL ES")
                 destroyVulkan()
                 mainHandler.post {
@@ -223,14 +234,22 @@ internal class VulkanWallpaperRenderer(
                 return
             }
 
-            val req = frame.request
             composer.setupOrtho(req.width, req.height)
             val useMotionBlur = req.motionBlurRadius > 0 && req.motionBlurDirection != 0
             val mbWidth = (req.width / 2).coerceAtLeast(1)
             val mbHeight = (req.height / 2).coerceAtLeast(1)
 
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_begin_start")
             var beginStatus = VulkanNativeBridge.nativeBeginFrame(
-                nativeHandle, useMotionBlur, mbWidth, mbHeight, CLEAR_R, CLEAR_G, CLEAR_B
+                nativeHandle,
+                req.frameId,
+                req.frameTimeNanos,
+                useMotionBlur,
+                mbWidth,
+                mbHeight,
+                CLEAR_R,
+                CLEAR_G,
+                CLEAR_B
             )
             if (beginStatus == 1) {
                 if (!VulkanNativeBridge.nativeOnSurfaceChanged(nativeHandle, surface, req.width, req.height)) {
@@ -240,14 +259,24 @@ internal class VulkanWallpaperRenderer(
                 boundWidth = req.width
                 boundHeight = req.height
                 beginStatus = VulkanNativeBridge.nativeBeginFrame(
-                    nativeHandle, useMotionBlur, mbWidth, mbHeight, CLEAR_R, CLEAR_G, CLEAR_B
+                    nativeHandle,
+                    req.frameId,
+                    req.frameTimeNanos,
+                    useMotionBlur,
+                    mbWidth,
+                    mbHeight,
+                    CLEAR_R,
+                    CLEAR_G,
+                    CLEAR_B
                 )
             }
             if (beginStatus != 0) {
                 throw IllegalStateException("Vulkan nativeBeginFrame failed with status=$beginStatus")
             }
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_begin_complete")
 
             composer.renderWallpaper(req)
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "scene_recorded")
 
             if (useMotionBlur) {
                 VulkanNativeBridge.nativeBeginMainPass(nativeHandle, CLEAR_R, CLEAR_G, CLEAR_B)
@@ -267,16 +296,21 @@ internal class VulkanWallpaperRenderer(
                     sampleStep,
                     direction
                 )
+                WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "motion_blur_recorded")
             }
 
             composer.renderOverlayAndDebug(req)
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "scene_overlay_recorded")
 
             val endStatus = VulkanNativeBridge.nativeEndFrame(nativeHandle)
             if (endStatus < 0) {
                 throw IllegalStateException("Vulkan nativeEndFrame failed with status=$endStatus")
             }
+            WallpaperDiagnosticsRecorder.recordFrameRenderStage(req.frameId, "vk_end_complete")
+            scheduleNativeTraceDrain()
 
             consecutiveFailures = 0
+            schedulePageTexturePrewarm(frame)
             val needsAssetRetry = composer.missingConfiguredTextureInFrame
             mainHandler.post {
                 if (!released) frame.onSubmitted(req)
@@ -289,6 +323,10 @@ internal class VulkanWallpaperRenderer(
                 }, ASSET_RETRY_DELAY_MS)
             }
         } catch (error: Throwable) {
+            WallpaperDiagnosticsRecorder.recordFrameFailure(
+                req.frameId,
+                "${error.javaClass.simpleName}: ${error.message.orEmpty()}"
+            )
             Log.e(TAG, "Vulkan wallpaper rendering error; resetting Vulkan state", error)
             destroyVulkan()
             if (!surface.isValid || released) return
@@ -307,12 +345,82 @@ internal class VulkanWallpaperRenderer(
         }
     }
 
+    private fun schedulePageTexturePrewarm(pending: PendingFrame) {
+        val frame = pending.request
+        val key = listOf(
+            frame.width,
+            frame.height,
+            repository.bitmapGeneration,
+            repository.darkenedBitmapGeneration,
+            frame.state.pages.hashCode(),
+            frame.state.transitions.hashCode(),
+            frame.state.darken.hashCode()
+        ).joinToString(":")
+        if (scheduledPrewarmKey == key) return
+        scheduledPrewarmKey = key
+        renderHandler.postDelayed(
+            { runPageTexturePrewarm(pending, key) },
+            PAGE_TEXTURE_PREWARM_DELAY_MS
+        )
+    }
+
+    private fun runPageTexturePrewarm(pending: PendingFrame, key: String) {
+        if (released || scheduledPrewarmKey != key || nativeHandle == 0L) return
+        val frame = pending.request
+        val hasPendingFrame = synchronized(frameLock) { pendingFrame != null }
+        if (hasPendingFrame) {
+            renderHandler.postDelayed(
+                { runPageTexturePrewarm(pending, key) },
+                PAGE_TEXTURE_PREWARM_RETRY_MS
+            )
+            return
+        }
+
+        val startedAt = System.nanoTime()
+        composer.prewarmConfiguredPages(frame)
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000.0
+        Log.i(TAG, "Page texture prewarm completed in %.2f ms".format(elapsedMs))
+        // Queue one inexpensive frame so nativeBeginFrame submits the staged
+        // texture uploads before the user reaches a page for the first time.
+        mainHandler.post {
+            if (!released && windowSurface?.isValid == true) pending.onRetryNeeded()
+        }
+    }
+
+    private fun publishNativeFrameTrace() {
+        if (!WallpaperDiagnosticsRecorder.isRecording) return
+        val handle = nativeHandle
+        if (handle == 0L) return
+        val updates = VulkanNativeBridge.nativeGetFrameTrace(handle, lastNativeTraceRevision)
+        if (updates.isEmpty()) return
+        WallpaperDiagnosticsRecorder.recordNativeFrameTrace(updates)
+        var index = 0
+        while (index + TRACE_FIELDS_PER_SAMPLE <= updates.size) {
+            lastNativeTraceRevision = maxOf(lastNativeTraceRevision, updates[index])
+            index += TRACE_FIELDS_PER_SAMPLE
+        }
+    }
+
+    private fun scheduleNativeTraceDrain() {
+        if (!WallpaperDiagnosticsRecorder.isRecording || nativeTraceDrainScheduled) return
+        nativeTraceDrainScheduled = true
+        // Coalesce diagnostics reads so capture stays low-overhead even at high refresh rates.
+        // The native getter only collects already-completed results; it never waits on GPU.
+        renderHandler.postDelayed({
+            nativeTraceDrainScheduled = false
+            if (!released && WallpaperDiagnosticsRecorder.isRecording) {
+                publishNativeFrameTrace()
+            }
+        }, TRACE_DRAIN_DELAY_MS)
+    }
+
     private fun ensureVulkanReady(surface: Surface, width: Int, height: Int): Boolean {
         if (!VulkanNativeBridge.isNativeLoaded) return false
         if (nativeHandle == 0L) {
             val handle = VulkanNativeBridge.nativeCreate()
             if (handle == 0L) return false
             nativeHandle = handle
+            lastNativeTraceRevision = 0L
             maxTextureSize = VulkanNativeBridge.nativeGetMaxTextureSize(handle).coerceAtLeast(2048)
             whiteTextureId = VulkanNativeBridge.nativeGetWhiteTextureId(handle)
         }
@@ -337,6 +445,7 @@ internal class VulkanWallpaperRenderer(
             VulkanNativeBridge.nativeDestroy(nativeHandle)
             nativeHandle = 0L
         }
+        lastNativeTraceRevision = 0L
     }
 
     companion object {
@@ -345,8 +454,12 @@ internal class VulkanWallpaperRenderer(
         private const val CLEAR_G = 22f / 255f
         private const val CLEAR_B = 34f / 255f
         private const val MAX_BLUR_RADIUS = 511
-        private const val MAX_BLUR_TAPS = 32
+        private const val MAX_BLUR_TAPS = 16
         private const val MAX_CONSECUTIVE_FAILURES = 3
+        private const val TRACE_DRAIN_DELAY_MS = 64L
+        private const val PAGE_TEXTURE_PREWARM_DELAY_MS = 500L
+        private const val PAGE_TEXTURE_PREWARM_RETRY_MS = 120L
+        private const val TRACE_FIELDS_PER_SAMPLE = 18
         private const val ASSET_RETRY_DELAY_MS = 110L
         private const val TRANSIENT_RETRY_DELAY_MS = 16L
     }

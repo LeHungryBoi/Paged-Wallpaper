@@ -4,6 +4,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -139,7 +142,8 @@ fun SettingsScreen(
             WallpaperRecordingDashboardCard(
                 diagnostics = diagnostics,
                 isWallpaperActive = isWallpaperActive,
-                onClearHistory = viewModel::clearDiagnosticsHistory
+                onClearHistory = viewModel::clearDiagnosticsHistory,
+                onExportTrace = viewModel::exportDiagnosticsTrace
             )
         }
     }
@@ -343,8 +347,22 @@ private fun DebugOverlaysDashboardCard(
 private fun WallpaperRecordingDashboardCard(
     diagnostics: WallpaperDiagnosticsState,
     isWallpaperActive: Boolean,
-    onClearHistory: () -> Unit
+    onClearHistory: () -> Unit,
+    onExportTrace: (Uri, (Boolean) -> Unit) -> Unit
 ) {
+    val context = LocalContext.current
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            onExportTrace(uri) { success ->
+                val message = context.getString(
+                    if (success) R.string.recording_export_success else R.string.recording_export_failed
+                )
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
     var showHistoryDialog by remember { mutableStateOf(false) }
     var showClearConfirmDialog by remember { mutableStateOf(false) }
 
@@ -471,6 +489,17 @@ private fun WallpaperRecordingDashboardCard(
                     Spacer(modifier = Modifier.size(6.dp))
                     Text(stringResource(R.string.recording_clear_history))
                 }
+            }
+
+            OutlinedButton(
+                onClick = { exportLauncher.launch("paperpages-frame-trace.json") },
+                enabled = diagnostics.hasTrace && !diagnostics.isRecording,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("export_frame_trace_button")
+            ) {
+                Text(stringResource(R.string.recording_export_trace))
             }
         }
     )

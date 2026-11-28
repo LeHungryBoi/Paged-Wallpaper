@@ -2,12 +2,60 @@
 
 #include <android/log.h>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <utility>
 
 #define LOG_TAG "PaperPagesVK"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 namespace paperpages_vk {
+
+namespace {
+using SteadyClock = std::chrono::steady_clock;
+uint64_t elapsedNs(SteadyClock::time_point start) {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(SteadyClock::now() - start).count()
+    );
+}
+}
+
+void VulkanEngine::publishFrameTrace(FrameTraceSample& sample) {
+    sample.revision = nextFrameTraceRevision++;
+    if (nextFrameTraceRevision == 0) nextFrameTraceRevision = 1;
+}
+
+std::vector<FrameTraceSample> VulkanEngine::getFrameTraceUpdates(uint64_t afterRevision) {
+    // This getter is also a non-blocking final drain: collect query results only
+    // for frame slots whose submission fences have already signaled.
+    if (device != VK_NULL_HANDLE) {
+        for (auto& frame : frames) {
+            if (frame.timestampPending &&
+                frame.inFlight != VK_NULL_HANDLE &&
+                vkGetFenceStatus(device, frame.inFlight) == VK_SUCCESS) {
+                collectGpuTimestamps(frame);
+            }
+        }
+        collectDisplayTimingSamples();
+    }
+
+    std::vector<FrameTraceSample> updates;
+    updates.reserve(kFrameTraceCapacity);
+    for (const auto& sample : frameTraceSamples) {
+        if (sample.revision > afterRevision && sample.frameId != 0) {
+            updates.push_back(sample);
+        }
+    }
+    std::sort(
+        updates.begin(),
+        updates.end(),
+        [](const FrameTraceSample& left, const FrameTraceSample& right) {
+            return left.revision < right.revision;
+        }
+    );
+    return updates;
+}
 
 bool VulkanEngine::isSrgbSwapchain() const {
     return swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB ||
@@ -32,6 +80,9 @@ void VulkanEngine::destroySwapchainResources() {
         vkDestroySwapchainKHR(device, swapchain, nullptr);
         swapchain = VK_NULL_HANDLE;
     }
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
 }
 
 void VulkanEngine::destroyOffscreenTarget() {
@@ -188,6 +239,22 @@ bool VulkanEngine::bindSurface(ANativeWindow* newWindow, uint32_t width, uint32_
     swapchain = newSwapchain;
     swapchainExtent = extent;
     swapchainOutOfDate = false;
+    displayRefreshDurationNs = 0;
+    nextPresentId = 1;
+    lastActualPresentTimeNs = 0;
+    if (displayTimingExtensionEnabled && pfnGetRefreshCycleDurationGOOGLE != nullptr) {
+        VkRefreshCycleDurationGOOGLE refreshCycle{};
+        const VkResult timingResult =
+            pfnGetRefreshCycleDurationGOOGLE(device, swapchain, &refreshCycle);
+        if (timingResult == VK_SUCCESS && refreshCycle.refreshDuration > 0) {
+            displayRefreshDurationNs = refreshCycle.refreshDuration;
+            LOGI("vk_display_timing refresh_ms=%.3f hz=%.2f",
+                 displayRefreshDurationNs / 1e6,
+                 1e9 / static_cast<double>(displayRefreshDurationNs));
+        } else {
+            LOGI("vk_display_timing refresh query unavailable: %d", timingResult);
+        }
+    }
 
     uint32_t scImgCount = 0;
     vkGetSwapchainImagesKHR(device, swapchain, &scImgCount, nullptr);
@@ -221,39 +288,145 @@ bool VulkanEngine::bindSurface(ANativeWindow* newWindow, uint32_t width, uint32_
     return true;
 }
 
-bool VulkanEngine::ensureStagingBuffer(VkDeviceSize size) {
-    if (stagingBuffer != VK_NULL_HANDLE && stagingCapacity >= size) return true;
-    vkDeviceWaitIdle(device);
-    if (stagingBuffer) vkDestroyBuffer(device, stagingBuffer, nullptr);
-    if (stagingMemory) vkFreeMemory(device, stagingMemory, nullptr);
-    stagingBuffer = VK_NULL_HANDLE;
-    stagingMemory = VK_NULL_HANDLE;
-    stagingCapacity = 0;
+bool VulkanEngine::ensureFrameStagingBuffer(FrameSync& frame, VkDeviceSize size) {
+    if (size == 0) return true;
+    if (frame.uploadStagingBuffer != VK_NULL_HANDLE && frame.uploadStagingCapacity >= size) return true;
 
-    VkBufferCreateInfo bufInfo{};
-    bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufInfo.size = size;
-    bufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    bufInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &bufInfo, nullptr, &stagingBuffer) != VK_SUCCESS) return false;
+    const VkDeviceSize growthTarget = frame.uploadStagingCapacity == 0
+        ? static_cast<VkDeviceSize>(256 * 1024)
+        : (frame.uploadStagingCapacity > UINT64_MAX / 2 ? size : frame.uploadStagingCapacity * 2);
+    const VkDeviceSize newCapacity = std::max(size, growthTarget);
 
-    VkMemoryRequirements req{};
-    vkGetBufferMemoryRequirements(device, stagingBuffer, &req);
-    uint32_t memIdx = findMemoryType(
-        req.memoryTypeBits,
+    VkBuffer newBuffer = VK_NULL_HANDLE;
+    VkDeviceMemory newMemory = VK_NULL_HANDLE;
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = newCapacity;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &newBuffer) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, newBuffer, &requirements);
+    const uint32_t memoryType = findMemoryType(
+        requirements.memoryTypeBits,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
     );
-    if (memIdx == UINT32_MAX) return false;
-    VkMemoryAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc.allocationSize = req.size;
-    alloc.memoryTypeIndex = memIdx;
-    if (vkAllocateMemory(device, &alloc, nullptr, &stagingMemory) != VK_SUCCESS ||
-        vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0) != VK_SUCCESS) {
+    if (memoryType == UINT32_MAX) {
+        vkDestroyBuffer(device, newBuffer, nullptr);
         return false;
     }
-    stagingCapacity = size;
+
+    VkMemoryAllocateInfo allocation{};
+    allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = memoryType;
+    if (vkAllocateMemory(device, &allocation, nullptr, &newMemory) != VK_SUCCESS ||
+        vkBindBufferMemory(device, newBuffer, newMemory, 0) != VK_SUCCESS) {
+        if (newMemory != VK_NULL_HANDLE) vkFreeMemory(device, newMemory, nullptr);
+        vkDestroyBuffer(device, newBuffer, nullptr);
+        return false;
+    }
+
+    // Preserve already-staged texture bytes if another upload grows this buffer.
+    if (frame.uploadStagingUsed > 0) {
+        void* oldMapped = nullptr;
+        void* newMapped = nullptr;
+        if (frame.uploadStagingMemory == VK_NULL_HANDLE ||
+            vkMapMemory(device, frame.uploadStagingMemory, 0, frame.uploadStagingUsed, 0, &oldMapped) != VK_SUCCESS) {
+            vkFreeMemory(device, newMemory, nullptr);
+            vkDestroyBuffer(device, newBuffer, nullptr);
+            return false;
+        }
+        if (vkMapMemory(device, newMemory, 0, frame.uploadStagingUsed, 0, &newMapped) != VK_SUCCESS) {
+            vkUnmapMemory(device, frame.uploadStagingMemory);
+            vkFreeMemory(device, newMemory, nullptr);
+            vkDestroyBuffer(device, newBuffer, nullptr);
+            return false;
+        }
+        std::memcpy(newMapped, oldMapped, static_cast<size_t>(frame.uploadStagingUsed));
+        vkUnmapMemory(device, newMemory);
+        vkUnmapMemory(device, frame.uploadStagingMemory);
+    }
+
+    if (frame.uploadStagingBuffer != VK_NULL_HANDLE) vkDestroyBuffer(device, frame.uploadStagingBuffer, nullptr);
+    if (frame.uploadStagingMemory != VK_NULL_HANDLE) vkFreeMemory(device, frame.uploadStagingMemory, nullptr);
+    frame.uploadStagingBuffer = newBuffer;
+    frame.uploadStagingMemory = newMemory;
+    frame.uploadStagingCapacity = requirements.size;
+    return frame.uploadStagingCapacity >= size;
+}
+
+bool VulkanEngine::stagePendingCpuUploads(FrameSync& frame) {
+    if (pendingCpuTextureUploads.empty()) return true;
+
+    VkDeviceSize totalBytes = 0;
+    for (const auto& upload : pendingCpuTextureUploads) {
+        const VkDeviceSize size = static_cast<VkDeviceSize>(upload.pixels.size());
+        if (size == 0 || size > UINT64_MAX - totalBytes) return false;
+        totalBytes += size;
+    }
+    if (!ensureFrameStagingBuffer(frame, totalBytes)) return false;
+
+    void* mapped = nullptr;
+    if (vkMapMemory(device, frame.uploadStagingMemory, 0, totalBytes, 0, &mapped) != VK_SUCCESS) return false;
+
+    VkDeviceSize offset = 0;
+    frame.pendingUploads.reserve(frame.pendingUploads.size() + pendingCpuTextureUploads.size());
+    for (const auto& upload : pendingCpuTextureUploads) {
+        const VkDeviceSize size = static_cast<VkDeviceSize>(upload.pixels.size());
+        std::memcpy(
+            static_cast<uint8_t*>(mapped) + static_cast<size_t>(offset),
+            upload.pixels.data(),
+            upload.pixels.size()
+        );
+        frame.pendingUploads.push_back({upload.image, offset, upload.width, upload.height});
+        offset += size;
+    }
+    vkUnmapMemory(device, frame.uploadStagingMemory);
+    frame.uploadStagingUsed = offset;
+    pendingCpuTextureUploads.clear();
     return true;
+}
+
+bool VulkanEngine::recordPendingTextureUploads(FrameSync& frame) {
+    if (frame.pendingUploads.empty()) return true;
+    if (frame.uploadCommandBuffer == VK_NULL_HANDLE ||
+        frame.uploadStagingBuffer == VK_NULL_HANDLE ||
+        frame.uploadStagingUsed == 0) return false;
+
+    if (vkResetCommandBuffer(frame.uploadCommandBuffer, 0) != VK_SUCCESS) return false;
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(frame.uploadCommandBuffer, &beginInfo) != VK_SUCCESS) return false;
+
+    for (const auto& upload : frame.pendingUploads) {
+        transitionImageLayout(
+            frame.uploadCommandBuffer, upload.image,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, VK_ACCESS_TRANSFER_WRITE_BIT
+        );
+
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = upload.stagingOffset;
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {upload.width, upload.height, 1};
+        vkCmdCopyBufferToImage(
+            frame.uploadCommandBuffer, frame.uploadStagingBuffer, upload.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy
+        );
+
+        transitionImageLayout(
+            frame.uploadCommandBuffer, upload.image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
+        );
+    }
+
+    return vkEndCommandBuffer(frame.uploadCommandBuffer) == VK_SUCCESS;
 }
 
 void VulkanEngine::transitionImageLayout(
@@ -280,14 +453,9 @@ void VulkanEngine::transitionImageLayout(
 }
 
 int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint32_t height) {
+    const auto uploadStartedAt = SteadyClock::now();
     if (device == VK_NULL_HANDLE || pixels == nullptr || width == 0 || height == 0) return 0;
     const VkDeviceSize byteSize = static_cast<VkDeviceSize>(width) * height * 4;
-    if (!ensureStagingBuffer(byteSize)) return 0;
-
-    void* mapped = nullptr;
-    if (vkMapMemory(device, stagingMemory, 0, byteSize, 0, &mapped) != VK_SUCCESS) return 0;
-    std::memcpy(mapped, pixels, byteSize);
-    vkUnmapMemory(device, stagingMemory);
 
     VkFormat fmt = preferredTextureFormat();
     VkImageCreateInfo imgInfo{};
@@ -305,69 +473,24 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
 
     GpuTexture tex{};
     if (vkCreateImage(device, &imgInfo, nullptr, &tex.image) != VK_SUCCESS) return 0;
-
     VkMemoryRequirements memReq{};
     vkGetImageMemoryRequirements(device, tex.image, &memReq);
-    uint32_t memIdx = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const uint32_t memIdx = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (memIdx == UINT32_MAX) {
         vkDestroyImage(device, tex.image, nullptr);
         return 0;
     }
+
     VkMemoryAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.allocationSize = memReq.size;
     alloc.memoryTypeIndex = memIdx;
     if (vkAllocateMemory(device, &alloc, nullptr, &tex.memory) != VK_SUCCESS ||
         vkBindImageMemory(device, tex.image, tex.memory, 0) != VK_SUCCESS) {
-        if (tex.memory) vkFreeMemory(device, tex.memory, nullptr);
+        if (tex.memory != VK_NULL_HANDLE) vkFreeMemory(device, tex.memory, nullptr);
         vkDestroyImage(device, tex.image, nullptr);
         return 0;
     }
-
-    VkCommandBufferAllocateInfo cmdAlloc{};
-    cmdAlloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdAlloc.commandPool = commandPool;
-    cmdAlloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdAlloc.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &cmdAlloc, &cmd);
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
-
-    transitionImageLayout(
-        cmd, tex.image,
-        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, VK_ACCESS_TRANSFER_WRITE_BIT
-    );
-
-    VkBufferImageCopy region{};
-    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    region.imageExtent = {width, height, 1};
-    vkCmdCopyBufferToImage(cmd, stagingBuffer, tex.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-    transitionImageLayout(
-        cmd, tex.image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
-    );
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    VkFence fence = VK_NULL_HANDLE;
-    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, 0};
-    vkCreateFence(device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-    vkDestroyFence(device, fence, nullptr);
-    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -384,31 +507,240 @@ int32_t VulkanEngine::uploadRgbaTexture(const void* pixels, uint32_t width, uint
     tex.id = nextTextureId++;
     tex.width = width;
     tex.height = height;
+    if (recordingFrame) {
+        FrameSync& frame = frames[currentFrame];
+        if (byteSize > UINT64_MAX - frame.uploadStagingUsed ||
+            !ensureFrameStagingBuffer(frame, frame.uploadStagingUsed + byteSize)) {
+            destroyTextureResources(tex);
+            return 0;
+        }
+
+        void* mapped = nullptr;
+        const VkDeviceSize endOffset = frame.uploadStagingUsed + byteSize;
+        if (vkMapMemory(device, frame.uploadStagingMemory, 0, endOffset, 0, &mapped) != VK_SUCCESS) {
+            destroyTextureResources(tex);
+            return 0;
+        }
+        const VkDeviceSize offset = frame.uploadStagingUsed;
+        std::memcpy(
+            static_cast<uint8_t*>(mapped) + static_cast<size_t>(offset),
+            pixels,
+            static_cast<size_t>(byteSize)
+        );
+        vkUnmapMemory(device, frame.uploadStagingMemory);
+        frame.pendingUploads.push_back({tex.image, offset, width, height});
+        frame.uploadStagingUsed = endOffset;
+    } else {
+        PendingCpuTextureUpload pending{};
+        pending.textureId = tex.id;
+        pending.image = tex.image;
+        pending.width = width;
+        pending.height = height;
+        pending.pixels.resize(static_cast<size_t>(byteSize));
+        std::memcpy(pending.pixels.data(), pixels, static_cast<size_t>(byteSize));
+        pendingCpuTextureUploads.push_back(std::move(pending));
+    }
+
     textures.emplace(tex.id, tex);
+    // CPU time covers image creation and staging/enqueue. GPU copy work is
+    // batched into rendering and protected by that frame's existing fence.
+    recordTimingSample("upload", elapsedNs(uploadStartedAt));
     return tex.id;
 }
 
+void VulkanEngine::recordTimingSample(const char* label, uint64_t elapsed) {
+    uint64_t* samples = nullptr;
+    uint32_t* count = nullptr;
+    if (std::strcmp(label, "fence_wait") == 0) { samples = timingFenceWaitNs; count = &timingFenceWaitCount; }
+    else if (std::strcmp(label, "acquire") == 0) { samples = timingAcquireNs; count = &timingAcquireCount; }
+    else if (std::strcmp(label, "submit") == 0) { samples = timingSubmitNs; count = &timingSubmitCount; }
+    else if (std::strcmp(label, "present") == 0) { samples = timingPresentNs; count = &timingPresentCount; }
+    else if (std::strcmp(label, "upload") == 0) { samples = timingUploadNs; count = &timingUploadCount; }
+    else if (std::strcmp(label, "gpu_frame") == 0) { samples = timingGpuFrameNs; count = &timingGpuFrameCount; }
+    else if (std::strcmp(label, "gpu_offscreen") == 0) { samples = timingGpuOffscreenNs; count = &timingGpuOffscreenCount; }
+    else if (std::strcmp(label, "gpu_main") == 0) { samples = timingGpuMainNs; count = &timingGpuMainCount; }
+    else if (std::strcmp(label, "display_interval") == 0) { samples = timingDisplayIntervalNs; count = &timingDisplayIntervalCount; }
+    else if (std::strcmp(label, "present_margin") == 0) { samples = timingPresentMarginNs; count = &timingPresentMarginCount; }
+    if (samples == nullptr || count == nullptr) return;
+
+    samples[*count] = elapsed;
+    ++(*count);
+    if (*count < 120) return;
+
+    uint64_t sorted[120];
+    std::copy(samples, samples + 120, sorted);
+    std::sort(sorted, sorted + 120);
+    LOGI("vk_timing %s_ms p50=%.3f p95=%.3f p99=%.3f",
+         label,
+         sorted[59] / 1e6,
+         sorted[113] / 1e6,
+         sorted[118] / 1e6);
+    *count = 0;
+}
+
+void VulkanEngine::collectDisplayTimingSamples() {
+    if (!displayTimingExtensionEnabled ||
+        pfnGetPastPresentationTimingGOOGLE == nullptr ||
+        swapchain == VK_NULL_HANDLE) {
+        return;
+    }
+
+    uint32_t timingCount = 0;
+    VkResult result = pfnGetPastPresentationTimingGOOGLE(device, swapchain, &timingCount, nullptr);
+    if (result != VK_SUCCESS || timingCount == 0) return;
+
+    std::vector<VkPastPresentationTimingGOOGLE> timings(timingCount);
+    result = pfnGetPastPresentationTimingGOOGLE(device, swapchain, &timingCount, timings.data());
+    if (result != VK_SUCCESS && result != VK_INCOMPLETE) return;
+    timings.resize(timingCount);
+    std::sort(
+        timings.begin(),
+        timings.end(),
+        [](const VkPastPresentationTimingGOOGLE& left, const VkPastPresentationTimingGOOGLE& right) {
+            return left.actualPresentTime < right.actualPresentTime;
+        }
+    );
+
+    for (const auto& timing : timings) {
+        if (timing.actualPresentTime == 0 ||
+            timing.actualPresentTime <= lastActualPresentTimeNs) {
+            continue;
+        }
+        if (lastActualPresentTimeNs != 0) {
+            recordTimingSample(
+                "display_interval",
+                timing.actualPresentTime - lastActualPresentTimeNs
+            );
+        }
+        recordTimingSample("present_margin", timing.presentMargin);
+        for (auto& sample : frameTraceSamples) {
+            if (sample.frameId != 0 && sample.presentId == timing.presentID) {
+                sample.actualPresentTimeNs = timing.actualPresentTime;
+                sample.presentMarginNs = timing.presentMargin;
+                publishFrameTrace(sample);
+                break;
+            }
+        }
+        lastActualPresentTimeNs = timing.actualPresentTime;
+    }
+}
+
+void VulkanEngine::collectGpuTimestamps(FrameSync& frame) {
+    if (!gpuTimestampsEnabled ||
+        frame.timestampQueryPool == VK_NULL_HANDLE ||
+        !frame.timestampPending) {
+        return;
+    }
+
+    uint64_t timestamps[3]{};
+    const VkResult result = vkGetQueryPoolResults(
+        device,
+        frame.timestampQueryPool,
+        0,
+        3,
+        sizeof(timestamps),
+        timestamps,
+        sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT
+    );
+    frame.timestampPending = false;
+    if (result != VK_SUCCESS) {
+        if (result != VK_NOT_READY) {
+            LOGE("vkGetQueryPoolResults failed: %d", result);
+        }
+        return;
+    }
+
+    const uint64_t timestampMask = timestampValidBits >= 64
+        ? UINT64_MAX
+        : ((uint64_t{1} << timestampValidBits) - 1u);
+    const auto elapsedTicks = [timestampMask](uint64_t start, uint64_t end) {
+        return (end - start) & timestampMask;
+    };
+    const auto ticksToNs = [this](uint64_t ticks) {
+        return static_cast<uint64_t>(static_cast<double>(ticks) * timestampPeriodNs);
+    };
+
+    const uint64_t gpuFrameNs = ticksToNs(elapsedTicks(timestamps[0], timestamps[2]));
+    recordTimingSample("gpu_frame", gpuFrameNs);
+    uint64_t gpuOffscreenNs = kTraceValueUnavailable;
+    uint64_t gpuMainNs = 0;
+    if (frame.timestampHasOffscreenPass) {
+        gpuOffscreenNs = ticksToNs(elapsedTicks(timestamps[0], timestamps[1]));
+        gpuMainNs = ticksToNs(elapsedTicks(timestamps[1], timestamps[2]));
+        recordTimingSample("gpu_offscreen", gpuOffscreenNs);
+        recordTimingSample("gpu_main", gpuMainNs);
+    } else {
+        gpuMainNs = gpuFrameNs;
+        recordTimingSample("gpu_main", gpuMainNs);
+    }
+
+    if (frame.traceSlotIndex < kFrameTraceCapacity) {
+        FrameTraceSample& trace = frameTraceSamples[frame.traceSlotIndex];
+        trace.gpuFrameNs = gpuFrameNs;
+        trace.gpuOffscreenNs = gpuOffscreenNs;
+        trace.gpuMainNs = gpuMainNs;
+        trace.flags |= 1ull;
+        if (frame.timestampHasOffscreenPass) trace.flags |= (1ull << 1);
+        publishFrameTrace(trace);
+    }
+}
+
+void VulkanEngine::destroyTextureResources(const GpuTexture& texture) {
+    if (texture.view) vkDestroyImageView(device, texture.view, nullptr);
+    if (texture.image) vkDestroyImage(device, texture.image, nullptr);
+    if (texture.memory) vkFreeMemory(device, texture.memory, nullptr);
+}
+
+void VulkanEngine::collectDeferredTextures() {
+    auto it = deferredTextures.begin();
+    while (it != deferredTextures.end()) {
+        if (it->retireAfterSerial <= completedFrameSerial) {
+            destroyTextureResources(it->texture);
+            it = deferredTextures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void VulkanEngine::deleteTexture(int32_t textureId) {
-    if (textureId == 0 || textureId == whiteTextureId) return;
+    if (textureId == 0 || textureId == whiteTextureId || device == VK_NULL_HANDLE) return;
     auto it = textures.find(textureId);
     if (it == textures.end()) return;
-    vkDeviceWaitIdle(device);
-    if (it->second.view) vkDestroyImageView(device, it->second.view, nullptr);
-    if (it->second.image) vkDestroyImage(device, it->second.image, nullptr);
-    if (it->second.memory) vkFreeMemory(device, it->second.memory, nullptr);
+    if (!recordingFrame) {
+        pendingCpuTextureUploads.erase(
+            std::remove_if(
+                pendingCpuTextureUploads.begin(),
+                pendingCpuTextureUploads.end(),
+                [textureId](const PendingCpuTextureUpload& upload) { return upload.textureId == textureId; }
+            ),
+            pendingCpuTextureUploads.end()
+        );
+    }
+    const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
+    deferredTextures.push_back({it->second, retireAfter});
     textures.erase(it);
 }
 
 void VulkanEngine::clearUserTextures() {
     if (device == VK_NULL_HANDLE) return;
-    vkDeviceWaitIdle(device);
+    if (!recordingFrame) {
+        pendingCpuTextureUploads.erase(
+            std::remove_if(
+                pendingCpuTextureUploads.begin(),
+                pendingCpuTextureUploads.end(),
+                [this](const PendingCpuTextureUpload& upload) { return upload.textureId != whiteTextureId; }
+            ),
+            pendingCpuTextureUploads.end()
+        );
+    }
+    const uint64_t retireAfter = submittedFrameSerial + (recordingFrame ? 1u : 0u);
     for (auto it = textures.begin(); it != textures.end();) {
         if (it->first == whiteTextureId) {
             ++it;
         } else {
-            if (it->second.view) vkDestroyImageView(device, it->second.view, nullptr);
-            if (it->second.image) vkDestroyImage(device, it->second.image, nullptr);
-            if (it->second.memory) vkFreeMemory(device, it->second.memory, nullptr);
+            deferredTextures.push_back({it->second, retireAfter});
             it = textures.erase(it);
         }
     }
@@ -416,7 +748,22 @@ void VulkanEngine::clearUserTextures() {
 
 bool VulkanEngine::ensureOffscreenTarget(uint32_t width, uint32_t height) {
     if (blurImage != VK_NULL_HANDLE && blurWidth == width && blurHeight == height) return true;
-    vkDeviceWaitIdle(device);
+
+    const auto setupStartedAt = SteadyClock::now();
+    const bool replacingTarget =
+        blurFramebuffer != VK_NULL_HANDLE ||
+        blurView != VK_NULL_HANDLE ||
+        blurImage != VK_NULL_HANDLE ||
+        blurMemory != VK_NULL_HANDLE;
+    if (replacingTarget) {
+        const auto idleWaitStartedAt = SteadyClock::now();
+        vkDeviceWaitIdle(device);
+        LOGI("vk_timing offscreen_target_wait_idle_ms value=%.3f",
+             elapsedNs(idleWaitStartedAt) / 1e6);
+    }
+    // The first target has no previous GPU users, so a device-wide idle wait
+    // is unnecessary. Only replacement needs to retire references to the old
+    // image, view, and framebuffer before destroying them.
     destroyOffscreenTarget();
 
     VkImageCreateInfo imgInfo{};
@@ -462,10 +809,14 @@ bool VulkanEngine::ensureOffscreenTarget(uint32_t width, uint32_t height) {
 
     blurWidth = width;
     blurHeight = height;
+    LOGI("vk_timing offscreen_target_setup_ms total=%.3f replacing=%d",
+         elapsedNs(setupStartedAt) / 1e6, replacingTarget ? 1 : 0);
     return true;
 }
 
 int32_t VulkanEngine::beginFrame(
+    uint64_t traceFrameId,
+    uint64_t requestTimeNs,
     bool useMotionBlur,
     uint32_t mbWidth,
     uint32_t mbHeight,
@@ -473,15 +824,25 @@ int32_t VulkanEngine::beginFrame(
     float clearG,
     float clearB
 ) {
+    const auto beginStartedAt = SteadyClock::now();
     if (device == VK_NULL_HANDLE || swapchain == VK_NULL_HANDLE) return -1;
     if (swapchainOutOfDate) return 1;
 
     FrameSync& frame = frames[currentFrame];
+    const auto fenceWaitStartedAt = SteadyClock::now();
     vkWaitForFences(device, 1, &frame.inFlight, VK_TRUE, UINT64_MAX);
+    const uint64_t fenceWaitNs = elapsedNs(fenceWaitStartedAt);
+    recordTimingSample("fence_wait", fenceWaitNs);
+    // The frame fence guarantees these timestamp results are ready. Never wait
+    // on query availability separately; a missing result is simply skipped.
+    collectGpuTimestamps(frame);
 
+    const auto acquireStartedAt = SteadyClock::now();
     VkResult acq = vkAcquireNextImageKHR(
         device, swapchain, UINT64_MAX, frame.imageAvailable, VK_NULL_HANDLE, &activeImageIndex
     );
+    const uint64_t acquireNs = elapsedNs(acquireStartedAt);
+    recordTimingSample("acquire", acquireNs);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR) {
         swapchainOutOfDate = true;
         return 1;
@@ -490,12 +851,29 @@ int32_t VulkanEngine::beginFrame(
         return -1;
     }
 
-    vkResetFences(device, 1, &frame.inFlight);
+    completedFrameSerial = std::max(completedFrameSerial, frame.submissionSerial);
+    collectDeferredTextures();
+    collectDisplayTimingSamples();
+
+    // This slot's previous submission is finished, so its staging data is safe
+    // to recycle. CPU uploads created outside a frame are staged here.
+    frame.uploadStagingUsed = 0;
+    frame.pendingUploads.clear();
+    if (!stagePendingCpuUploads(frame)) {
+        LOGE("Failed to stage pending texture uploads");
+        return -1;
+    }
+
     vkResetDescriptorPool(device, frame.descriptorPool, 0);
+    frame.compositeDescriptors.clear();
+    frame.blurDescriptor = VK_NULL_HANDLE;
     vkResetCommandBuffer(frame.commandBuffer, 0);
 
+    uint64_t offscreenTargetSetupNs = 0;
     if (useMotionBlur && mbWidth > 0 && mbHeight > 0) {
+        const auto offscreenSetupStartedAt = SteadyClock::now();
         if (!ensureOffscreenTarget(mbWidth, mbHeight)) return -1;
+        offscreenTargetSetupNs = elapsedNs(offscreenSetupStartedAt);
     }
 
     VkCommandBufferBeginInfo beginInfo{};
@@ -505,6 +883,35 @@ int32_t VulkanEngine::beginFrame(
 
     recordingFrame = true;
     usingOffscreenPass = useMotionBlur && blurFramebuffer != VK_NULL_HANDLE;
+
+    const uint32_t traceSlot = nextFrameTraceSlot++ % kFrameTraceCapacity;
+    FrameTraceSample& trace = frameTraceSamples[traceSlot];
+    trace = FrameTraceSample{};
+    trace.frameId = traceFrameId;
+    trace.requestTimeNs = requestTimeNs;
+    trace.fenceWaitNs = fenceWaitNs;
+    trace.acquireNs = acquireNs;
+    trace.beginCpuNs = elapsedNs(beginStartedAt);
+    trace.offscreenTargetSetupNs = offscreenTargetSetupNs;
+    trace.refreshCycleDurationNs = displayRefreshDurationNs;
+    if (usingOffscreenPass) trace.flags |= (1ull << 1);
+    frame.traceSlotIndex = traceSlot;
+    publishFrameTrace(trace);
+
+    if (gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE) {
+        vkCmdResetQueryPool(frame.commandBuffer, frame.timestampQueryPool, 0, 3);
+        vkCmdWriteTimestamp(
+            frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.timestampQueryPool, 0
+        );
+        frame.timestampHasOffscreenPass = usingOffscreenPass;
+        // Without an offscreen pass, use the start marker as the main-pass
+        // baseline so gpu_main reports the whole render workload.
+        if (!usingOffscreenPass) {
+            vkCmdWriteTimestamp(
+                frame.commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, frame.timestampQueryPool, 1
+            );
+        }
+    }
 
     VkClearValue clearVal{};
     clearVal.color = {{clearR, clearG, clearB, 1.0f}};
@@ -554,6 +961,12 @@ void VulkanEngine::beginMainPass(float clearR, float clearG, float clearB) {
         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT
     );
 
+    if (gpuTimestampsEnabled && frames[currentFrame].timestampQueryPool != VK_NULL_HANDLE) {
+        vkCmdWriteTimestamp(
+            cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frames[currentFrame].timestampQueryPool, 1
+        );
+    }
+
     VkClearValue clearVal{};
     clearVal.color = {{clearR, clearG, clearB, 1.0f}};
     VkRenderPassBeginInfo rpBegin{};
@@ -597,32 +1010,43 @@ void VulkanEngine::drawQuad(
     if (darkIt == textures.end()) darkIt = primaryIt;
 
     FrameSync& frame = frames[currentFrame];
+    const int32_t primaryId = textureId != 0 ? textureId : whiteTextureId;
+    const int32_t darkId = darkTextureId != 0 && darkMix > 0.001f ? darkTextureId : primaryId;
+    const uint64_t descriptorKey =
+        (static_cast<uint64_t>(static_cast<uint32_t>(primaryId)) << 32) |
+        static_cast<uint32_t>(darkId);
     VkDescriptorSet descSet = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = frame.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &compositeSetLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
+    auto cachedDescriptor = frame.compositeDescriptors.find(descriptorKey);
+    if (cachedDescriptor != frame.compositeDescriptors.end()) {
+        descSet = cachedDescriptor->second;
+    } else {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = frame.descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &compositeSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
 
-    VkDescriptorImageInfo imgInfos[2]{
-        {linearSampler, primaryIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-        {linearSampler, darkIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
-    };
-    VkWriteDescriptorSet writes[2]{};
-    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet = descSet;
-    writes[0].dstBinding = 0;
-    writes[0].descriptorCount = 1;
-    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[0].pImageInfo = &imgInfos[0];
-    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet = descSet;
-    writes[1].dstBinding = 1;
-    writes[1].descriptorCount = 1;
-    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[1].pImageInfo = &imgInfos[1];
-    vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        VkDescriptorImageInfo imgInfos[2]{
+            {linearSampler, primaryIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {linearSampler, darkIt->second.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}
+        };
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = descSet;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &imgInfos[0];
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = descSet;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo = &imgInfos[1];
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+        frame.compositeDescriptors.emplace(descriptorKey, descSet);
+    }
 
     WallpaperPushConstants pc{};
     std::memcpy(pc.mvp, mvp, sizeof(pc.mvp));
@@ -654,23 +1078,26 @@ void VulkanEngine::drawQuad(
 void VulkanEngine::drawMotionBlurPass(const float* mvp, int32_t radius, float sampleStep, float direction) {
     if (!recordingFrame || blurView == VK_NULL_HANDLE) return;
     FrameSync& frame = frames[currentFrame];
-    VkDescriptorSet descSet = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool = frame.descriptorPool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &blurSetLayout;
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
+    VkDescriptorSet descSet = frame.blurDescriptor;
+    if (descSet == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = frame.descriptorPool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &blurSetLayout;
+        if (vkAllocateDescriptorSets(device, &allocInfo, &descSet) != VK_SUCCESS) return;
 
-    VkDescriptorImageInfo imgInfo{linearSampler, blurView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    VkWriteDescriptorSet write{};
-    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet = descSet;
-    write.dstBinding = 0;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &imgInfo;
-    vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        VkDescriptorImageInfo imgInfo{linearSampler, blurView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = descSet;
+        write.dstBinding = 0;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &imgInfo;
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        frame.blurDescriptor = descSet;
+    }
 
     MotionBlurPushConstants pc{};
     std::memcpy(pc.mvp, mvp, sizeof(pc.mvp));
@@ -692,11 +1119,38 @@ void VulkanEngine::drawMotionBlurPass(const float* mvp, int32_t radius, float sa
 }
 
 int32_t VulkanEngine::endFrame() {
+    const auto endStartedAt = SteadyClock::now();
     if (!recordingFrame) return -1;
     recordingFrame = false;
     FrameSync& frame = frames[currentFrame];
+    const bool endingOffscreenPass = usingOffscreenPass;
     vkCmdEndRenderPass(frame.commandBuffer);
+    if (gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE) {
+        if (endingOffscreenPass) {
+            // Covers the early-out path where the offscreen pass was recorded
+            // but the caller did not transition to the swapchain pass.
+            vkCmdWriteTimestamp(
+                frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.timestampQueryPool, 1
+            );
+        }
+        vkCmdWriteTimestamp(
+            frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.timestampQueryPool, 2
+        );
+    }
     if (vkEndCommandBuffer(frame.commandBuffer) != VK_SUCCESS) return -1;
+
+    const bool hasPendingUploads = !frame.pendingUploads.empty();
+    if (hasPendingUploads && !recordPendingTextureUploads(frame)) {
+        LOGE("Failed to record batched texture uploads");
+        return -1;
+    }
+
+    // Submit transfers before rendering on the same queue. The image barriers
+    // above make transfer writes visible to fragment sampling in the draw pass.
+    VkCommandBuffer submitCommandBuffers[2]{};
+    uint32_t submitCommandBufferCount = 0;
+    if (hasPendingUploads) submitCommandBuffers[submitCommandBufferCount++] = frame.uploadCommandBuffer;
+    submitCommandBuffers[submitCommandBufferCount++] = frame.commandBuffer;
 
     VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
@@ -704,20 +1158,62 @@ int32_t VulkanEngine::endFrame() {
     submit.waitSemaphoreCount = 1;
     submit.pWaitSemaphores = &frame.imageAvailable;
     submit.pWaitDstStageMask = &waitStage;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &frame.commandBuffer;
+    submit.commandBufferCount = submitCommandBufferCount;
+    submit.pCommandBuffers = submitCommandBuffers;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &frame.renderFinished;
-    if (vkQueueSubmit(graphicsQueue, 1, &submit, frame.inFlight) != VK_SUCCESS) return -1;
+    // Keep the fence signaled while recording so early returns cannot strand
+    // this frame slot in an unsignaled state.
+    if (vkResetFences(device, 1, &frame.inFlight) != VK_SUCCESS) return -1;
+    const auto submitStartedAt = SteadyClock::now();
+    if (vkQueueSubmit(graphicsQueue, 1, &submit, frame.inFlight) != VK_SUCCESS) {
+        VkFenceCreateInfo signaledFence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, nullptr, VK_FENCE_CREATE_SIGNALED_BIT};
+        vkDestroyFence(device, frame.inFlight, nullptr);
+        frame.inFlight = VK_NULL_HANDLE;
+        vkCreateFence(device, &signaledFence, nullptr, &frame.inFlight);
+        return -1;
+    }
+    frame.submissionSerial = ++submittedFrameSerial;
+    frame.timestampPending = gpuTimestampsEnabled && frame.timestampQueryPool != VK_NULL_HANDLE;
+    if (hasPendingUploads) frame.pendingUploads.clear();
+    const uint64_t submitNs = elapsedNs(submitStartedAt);
+    recordTimingSample("submit", submitNs);
+
+    VkPresentTimeGOOGLE presentTime{};
+    VkPresentTimesInfoGOOGLE presentTimesInfo{};
+    if (displayTimingExtensionEnabled) {
+        presentTime.presentID = nextPresentId++;
+        if (nextPresentId == 0) nextPresentId = 1;
+        // Keep desiredPresentTime at zero: collect display feedback without
+        // changing the existing FIFO presentation scheduling policy.
+        presentTimesInfo.sType = VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE;
+        presentTimesInfo.swapchainCount = 1;
+        presentTimesInfo.pTimes = &presentTime;
+    }
 
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    if (displayTimingExtensionEnabled) present.pNext = &presentTimesInfo;
     present.waitSemaphoreCount = 1;
     present.pWaitSemaphores = &frame.renderFinished;
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain;
     present.pImageIndices = &activeImageIndex;
+    const auto presentStartedAt = SteadyClock::now();
     VkResult res = vkQueuePresentKHR(graphicsQueue, &present);
+    const uint64_t presentNs = elapsedNs(presentStartedAt);
+    recordTimingSample("present", presentNs);
+
+    if (frame.traceSlotIndex < kFrameTraceCapacity) {
+        FrameTraceSample& trace = frameTraceSamples[frame.traceSlotIndex];
+        trace.submitNs = submitNs;
+        trace.presentNs = presentNs;
+        trace.endCpuNs = elapsedNs(endStartedAt);
+        trace.presentId = displayTimingExtensionEnabled ? presentTime.presentID : 0;
+        if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) trace.flags |= (1ull << 2);
+        if (displayTimingExtensionEnabled) trace.flags |= (1ull << 3);
+        publishFrameTrace(trace);
+    }
     currentFrame = (currentFrame + 1) % kMaxFramesInFlight;
 
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {

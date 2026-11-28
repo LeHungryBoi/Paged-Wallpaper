@@ -723,6 +723,13 @@ class MultiPageWallpaperService : WallpaperService() {
 
         override fun onTouchEvent(event: MotionEvent) {
             super.onTouchEvent(event)
+            WallpaperDiagnosticsRecorder.recordTouchEvent(
+                action = event.actionMasked,
+                x = event.x,
+                y = event.y,
+                xOffset = currentXOffset,
+                edgeOverScrollFraction = edgeOverScrollController.overScrollFraction
+            )
             if (engineDestroyed || !isVisible) return
             if (suppressedForRecents) {
                 if (edgeOverScrollController.isTouchActive || edgeOverScrollController.hasActiveFraction()) {
@@ -1071,6 +1078,13 @@ class MultiPageWallpaperService : WallpaperService() {
                 offsetChangedInStep = abs(renderedXOffset - prevRendered) > 0f
             }
 
+            WallpaperDiagnosticsRecorder.recordSmoothingStep(
+                targetXOffset = currentXOffset,
+                renderedXOffset = renderedXOffset,
+                smoothingFraction = smoothingFraction,
+                elapsedNanos = elapsedNanos
+            )
+
             if (entryTransitionController.isActive) {
                 if (repository.appState.value.resumeFadeEnabled) {
                     val clampedStepNanos = elapsedNanos.coerceAtMost(MAX_ENTRY_STEP_NANOS)
@@ -1138,7 +1152,11 @@ class MultiPageWallpaperService : WallpaperService() {
             }
             val holder = surfaceHolder ?: return
             if (!holder.surface.isValid) return
-            val frameId = renderFrameGate.beginFrame(fromOffsetUpdate) ?: return
+            val frameId = renderFrameGate.beginFrame(fromOffsetUpdate)
+            if (frameId == null) {
+                WallpaperDiagnosticsRecorder.recordFrameCoalesced(fromOffsetUpdate)
+                return
+            }
             val state = repository.appState.value
             val frameTimeNanos = System.nanoTime()
             val continuousPagePosition = getPagePosition(renderedXOffset, state)
@@ -1211,6 +1229,7 @@ class MultiPageWallpaperService : WallpaperService() {
                 progress = progress,
                 pagePosition = pagePosition,
                 continuousPagePosition = continuousPagePosition,
+                frameId = frameId,
                 frameTimeNanos = frameTimeNanos,
                 fromOffsetUpdate = fromOffsetUpdate,
                 isVisible = isVisible,
@@ -1227,6 +1246,17 @@ class MultiPageWallpaperService : WallpaperService() {
                 density = resources.displayMetrics.density,
                 frameDebugColor = frameDebugColors[frameDebugSequenceIndex],
                 edgeOverScrollFraction = edgeOverScrollController.overScrollFraction
+            )
+            WallpaperDiagnosticsRecorder.recordFrameRequested(
+                frameId = frameId,
+                requestTimeNanos = frameTimeNanos,
+                fromOffsetUpdate = fromOffsetUpdate,
+                xOffset = renderedXOffset,
+                pageA = pageA,
+                pageB = pageB,
+                progress = progress,
+                edgeOverScrollFraction = edgeOverScrollController.overScrollFraction,
+                motionBlurRadius = request.motionBlurRadius
             )
             val renderer = getGpuRenderer()
             if (renderer != null) {
@@ -1305,7 +1335,8 @@ class MultiPageWallpaperService : WallpaperService() {
             }
             WallpaperDiagnosticsRecorder.recordFrameSubmitted(
                 fromOffsetUpdate = request.fromOffsetUpdate,
-                isVisible = request.isVisible
+                isVisible = request.isVisible,
+                frameId = frameId
             )
             lastMotionBlurPagePosition = request.pagePosition
             lastMotionBlurFrameTimeNanos = request.frameTimeNanos
@@ -1349,6 +1380,7 @@ class MultiPageWallpaperService : WallpaperService() {
         }
 
         private fun onGpuRenderingFailed(frameId: Long) {
+            WallpaperDiagnosticsRecorder.recordFrameFailure(frameId, "gpu_renderer_failed")
             if (engineDestroyed || gpuRenderingFailed || !renderFrameGate.isCurrent(frameId)) return
             gpuRenderingFailed = true
             gpuRenderer?.release()

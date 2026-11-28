@@ -53,6 +53,32 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug -PappVersionCode=${{ github.run_number }} -PappVersionName=1.0.${{ github.run_number }}
 
+      # PR builds do not publish GitHub Releases, so expose the APK as a run artifact.
+      - name: Upload PR debug APK artifact
+        id: upload_pr_apk
+        if: github.ref_name != github.event.repository.default_branch
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: paged-wallpaper-pr-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 1
+
+      # Put the artifact's direct GitHub download page in the run summary.
+      - name: Add APK download link to build summary
+        if: github.ref_name != github.event.repository.default_branch
+        env:
+          APK_ARTIFACT_URL: ${{ steps.upload_pr_apk.outputs.artifact-url }}
+          APK_ARTIFACT_ID: ${{ steps.upload_pr_apk.outputs.artifact-id }}
+        run: |
+          {
+            echo "## APK download"
+            echo
+            echo "[**Download debug APK**]($APK_ARTIFACT_URL)"
+            echo
+            echo "Artifact: `paged-wallpaper-pr-debug-apk` (ID: `$APK_ARTIFACT_ID`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Publish APK GitHub release
         if: github.ref_name == github.event.repository.default_branch
         env:
@@ -112,3 +138,53 @@ jobs:
               });
               core.info(`Deleted old APK release and tag: ${release.tag_name}`);
             }
+
+  # Artifact retention is repository-wide, so serialize cleanup across branches.
+  # A separate job avoids races between two PR builds finishing at nearly the same time.
+  cleanup-pr-apk-artifacts:
+    needs: build
+    if: ${{ needs.build.result == 'success' && github.ref_name != github.event.repository.default_branch }}
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: pr-apk-artifact-retention-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      actions: write
+    steps:
+      - name: Keep only the latest three PR APK artifacts
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'paged-wallpaper-pr-debug-apk',
+                per_page: 100
+              }
+            );
+
+            const apkArtifacts = artifacts
+              .filter((artifact) =>
+                artifact.name === 'paged-wallpaper-pr-debug-apk' &&
+                !artifact.expired
+              )
+              .sort((a, b) =>
+                Date.parse(b.created_at) - Date.parse(a.created_at) ||
+                b.id - a.id
+              );
+
+            const staleArtifacts = apkArtifacts.slice(3);
+            core.info(`Found ${apkArtifacts.length} active PR APK artifacts; keeping ${Math.min(3, apkArtifacts.length)}.`);
+
+            for (const artifact of staleArtifacts) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+              core.info(`Deleted artifact ${artifact.id} from run ${artifact.workflow_run?.id ?? 'unknown'} (created ${artifact.created_at}, ${artifact.size_in_bytes} bytes).`);
+            }
+
+            core.info(`Removed ${staleArtifacts.length} old PR APK artifacts.`);
