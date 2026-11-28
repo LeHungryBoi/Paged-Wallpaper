@@ -149,11 +149,12 @@ class ExampleUnitTest {
     @Test
     fun testTransitionRegistry() {
         val registry = TransitionRegistry
-        assertEquals(10, registry.transitions.size)
+        assertEquals(11, registry.transitions.size)
         assertNotNull(registry.get("scroll"))
         assertNotNull(registry.get("parallax"))
         assertNotNull(registry.get("parallax_classic"))
         assertNotNull(registry.get("swipe_reveal"))
+        assertNotNull(registry.get("swipe_reveal_slow"))
         assertNotNull(registry.get("swipe_reveal_stacked"))
         assertNotNull(registry.get("fade"))
         assertNotNull(registry.get("depth"))
@@ -163,6 +164,7 @@ class ExampleUnitTest {
         assertEquals("Parallax Scroll", registry.get("parallax").displayName)
         assertEquals("Classic Parallax", registry.get("parallax_classic").displayName)
         assertEquals("Swipe to Reveal", registry.get("swipe_reveal").displayName)
+        assertEquals("Swipe to Reveal Slow Switching", registry.get("swipe_reveal_slow").displayName)
         assertEquals("Swipe to Reveal Stacked", registry.get("swipe_reveal_stacked").displayName)
     }
 
@@ -313,16 +315,93 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun testSwipeDirectionStaysLockedUntilTheStaticPageHasSettled() {
+    fun testSwipeDirectionStaysLockedUntilSettledForSlowSwitching() {
         val directionLock = SwipeDirectionLock()
 
         assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.6f, false))
         assertEquals(1, directionLock.onOffsetChanged(0.6f, 0.55f, false))
         assertEquals(1, directionLock.onOffsetChanged(0.55f, 0.5f, true))
+        // Moving away again before the settling frame must not cancel the pending unlock.
         assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.49f, false))
-        assertEquals(1, directionLock.onOffsetChanged(0.49f, 0.5f, true))
         assertEquals(1, directionLock.onFrameSettled())
+        assertEquals(-1, directionLock.onOffsetChanged(0.49f, 0.48f, false))
+    }
+
+    @Test
+    fun testSwipeDirectionUnlocksImmediatelyAtStaticPageForFastReveal() {
+        val directionLock = SwipeDirectionLock()
+
+        assertEquals(1, directionLock.onOffsetChanged(0.5f, 0.6f, false))
+        assertEquals(
+            0,
+            directionLock.onOffsetChanged(
+                previousOffset = 0.6f,
+                nextOffset = 0.5f,
+                isAtStaticPage = true,
+                unlockImmediatelyAtStaticPage = true
+            )
+        )
         assertEquals(-1, directionLock.onOffsetChanged(0.5f, 0.49f, false))
+    }
+
+    @Test
+    fun testFastRevealDirectionCanRestartWhenAFrameCrossesPageBoundary() {
+        val directionLock = SwipeDirectionLock()
+
+        assertEquals(1, directionLock.onOffsetChanged(0.4f, 0.45f, false))
+        assertEquals(
+            -1,
+            directionLock.onOffsetChanged(
+                previousOffset = 0.55f,
+                nextOffset = 0.45f,
+                isAtStaticPage = false,
+                crossedStaticPage = true,
+                unlockImmediatelyAtStaticPage = true
+            )
+        )
+    }
+
+    @Test
+    fun testCurrentSwipeRevealSelectionMigratesToSlowSwitchingVariant() {
+        val pages = listOf(PageItem(pageIndex = 0), PageItem(pageIndex = 1))
+        val previousSetting = PageTransitionSetting(
+            universalTransitionId = "swipe_reveal",
+            leftTransitionId = "swipe_reveal",
+            rightTransitionId = "swipe_reveal",
+            separateDirections = true
+        )
+        val previousPreset = WallpaperPreset(
+            id = "preset",
+            name = "Preset",
+            pages = pages,
+            transitions = listOf(previousSetting)
+        )
+        val previousState = WallpaperAppState(
+            pages = pages,
+            calibration = CalibrationConfig(pageCount = 2),
+            transitionType = "swipe_reveal",
+            transitions = listOf(previousSetting),
+            presets = listOf(previousPreset),
+            activePresetId = previousPreset.id,
+            schemaVersion = 5
+        )
+
+        val migrated = PresetDataMigration.migrateTransitionStorage(previousState)
+
+        assertEquals(6, migrated.schemaVersion)
+        assertEquals("swipe_reveal_slow", migrated.transitionType)
+        assertEquals(
+            "swipe_reveal_slow",
+            migrated.transitions.single().transitionId(forward = true)
+        )
+        assertEquals(
+            "swipe_reveal_slow",
+            migrated.transitions.single().transitionId(forward = false)
+        )
+        assertEquals(
+            "swipe_reveal_slow",
+            migrated.presets.single().transitions.single().universalTransitionId
+        )
     }
 
     @Test
@@ -352,7 +431,7 @@ class ExampleUnitTest {
 
         val migrated = PresetDataMigration.migrateTransitionStorage(previousState)
 
-        assertEquals(5, migrated.schemaVersion)
+        assertEquals(6, migrated.schemaVersion)
         assertEquals("swipe_reveal_stacked", migrated.transitionType)
         assertEquals(
             "swipe_reveal_stacked",
