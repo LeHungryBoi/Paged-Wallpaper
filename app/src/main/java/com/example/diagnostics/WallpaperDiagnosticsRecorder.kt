@@ -377,7 +377,7 @@ object WallpaperDiagnosticsRecorder {
         if (activeSession == null) return
         synchronized(lock) {
             val now = System.nanoTime()
-            traceFrames[frameId]?.put("$" + "{stage}Ns", now)
+            traceFrames[frameId]?.put(stage + "Ns", now)
             appendTraceEventLocked(
                 JSONObject()
                     .put("type", "render_stage")
